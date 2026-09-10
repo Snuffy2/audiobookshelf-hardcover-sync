@@ -401,6 +401,14 @@ func (s *Service) setASINInCache(asin string, book *models.HardcoverBook) {
 	s.persistentCache.Set(asin, book)
 }
 
+func asinCacheKey(asin, readingFormat, audnexusRegion string) string {
+	region := strings.ToLower(strings.TrimSpace(audnexusRegion))
+	if region == "" {
+		region = "us"
+	}
+	return strings.Join([]string{asin, readingFormat, region}, "|")
+}
+
 // clearASINCache clears only the in-memory ASIN cache (persistent cache remains)
 func (s *Service) clearASINCache() {
 	s.asinCacheMutex.Lock()
@@ -4957,6 +4965,7 @@ func (s *Service) findBookInHardcoverByTitleAuthor(ctx context.Context, book mod
 // Callers must carry the item's reading format on ctx via hardcover.WithReadingFormat.
 func (s *Service) findBookInHardcover(ctx context.Context, book models.AudiobookshelfBook) (*models.HardcoverBook, error) {
 	var lookupErr error
+	cacheKey := asinCacheKey(book.Media.Metadata.ASIN, hardcoverReadingFormat(book), s.config.Audiobookshelf.AudnexusRegion)
 	// Create a logger with book context
 	logCtx := map[string]interface{}{
 		"book_id": book.ID,
@@ -4977,7 +4986,7 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 	// 1. First try to find by ASIN if available
 	if book.Media.Metadata.ASIN != "" {
 		// Check ASIN cache first
-		if cachedBook, exists := s.getASINFromCache(book.Media.Metadata.ASIN); exists {
+		if cachedBook, exists := s.getASINFromCache(cacheKey); exists {
 			if cachedBook == nil {
 				// This ASIN was previously looked up with no result
 				log.Debug("Found negative ASIN cache result, skipping API call", map[string]interface{}{
@@ -5056,7 +5065,7 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 			log.Warn(fmt.Sprintf("Search by ASIN failed, will try other methods: %v", err), nil)
 		} else if hcBook != nil {
 			// Cache the ASIN lookup result for future use
-			s.setASINInCache(book.Media.Metadata.ASIN, hcBook)
+			s.setASINInCache(cacheKey, hcBook)
 			log.Debug("Cached ASIN lookup result", map[string]interface{}{
 				"asin":       book.Media.Metadata.ASIN,
 				"book_id":    hcBook.ID,
@@ -5099,7 +5108,7 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 			return hcBook, nil
 		} else {
 			// Cache a successful lookup with no result to avoid repeated lookups
-			s.setASINInCache(book.Media.Metadata.ASIN, nil)
+			s.setASINInCache(cacheKey, nil)
 			log.Debug("Cached negative ASIN lookup result", map[string]interface{}{
 				"asin": book.Media.Metadata.ASIN,
 			})
