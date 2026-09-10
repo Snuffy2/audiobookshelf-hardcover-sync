@@ -180,6 +180,64 @@ func TestGraphQLQuery_BookByASIN(t *testing.T) {
 	assert.Equal(t, 12345, *edition.AudioSeconds, "Audio seconds should match the mock response")
 }
 
+func TestSearchBookByASINUsesProductionQueryWithNumericASIN(t *testing.T) {
+	type graphqlRequest struct {
+		Query     string                 `json:"query"`
+		Variables map[string]interface{} `json:"variables"`
+	}
+
+	requestCh := make(chan graphqlRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request graphqlRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestCh <- request
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"books": [{
+					"id": 281093,
+					"title": "Permanent Record",
+					"book_status_id": 1,
+					"canonical_id": null,
+					"editions": [{
+						"id": 30404119,
+						"asin": "1250622689",
+						"isbn_13": "9781250622686",
+						"isbn_10": "1250622689",
+						"reading_format_id": 2,
+						"audio_seconds": 41472,
+						"book_mappings": []
+					}]
+				}]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := CreateTestClient(server)
+	ctx := WithAudnexRegion(WithReadingFormat(context.Background(), "audiobook"), "us")
+	book, err := client.SearchBookByASIN(ctx, "1250622689")
+
+	require.NoError(t, err)
+	require.NotNil(t, book)
+	assert.Equal(t, "281093", book.ID)
+	assert.Equal(t, "Permanent Record", book.Title)
+	assert.Equal(t, "30404119", book.EditionID)
+	assert.Equal(t, "1250622689", book.EditionASIN)
+	assert.Equal(t, "9781250622686", book.EditionISBN13)
+
+	request := <-requestCh
+	assert.Contains(t, request.Query, "query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!)")
+	assert.Contains(t, request.Query, "{ editions: { asin: { _eq: $asin }, reading_format: { id: { _eq: $format_id } } } }")
+	assert.Equal(t, "1250622689", request.Variables["asin"])
+	assert.Equal(t, "1250622689:us", request.Variables["asin_us"])
+	assert.Equal(t, float64(2), request.Variables["format_id"])
+}
+
 func TestGraphQLQuery_RetriesOn429ThenSucceeds(t *testing.T) {
 	logger.Setup(logger.Config{Level: "debug", Format: "json"})
 	log := logger.Get()
