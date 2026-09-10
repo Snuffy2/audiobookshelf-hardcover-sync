@@ -4978,6 +4978,14 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 	if book.Media.Metadata.ASIN != "" {
 		// Check ASIN cache first
 		if cachedBook, exists := s.getASINFromCache(book.Media.Metadata.ASIN); exists {
+			if cachedBook == nil {
+				// This ASIN was previously looked up with no result
+				log.Debug("Found negative ASIN cache result, skipping API call", map[string]interface{}{
+					"asin": book.Media.Metadata.ASIN,
+				})
+				// Continue to ISBN lookup
+				goto isbnLookup
+			}
 			log.Debug("Found book in ASIN cache", map[string]interface{}{
 				"asin":       book.Media.Metadata.ASIN,
 				"book_id":    cachedBook.ID,
@@ -5089,9 +5097,16 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 			})
 
 			return hcBook, nil
+		} else {
+			// Cache a successful lookup with no result to avoid repeated lookups
+			s.setASINInCache(book.Media.Metadata.ASIN, nil)
+			log.Debug("Cached negative ASIN lookup result", map[string]interface{}{
+				"asin": book.Media.Metadata.ASIN,
+			})
 		}
 	}
 
+isbnLookup:
 	// 2. Try to find by ISBN if available
 	if book.Media.Metadata.ISBN != "" {
 		log.Debug(fmt.Sprintf("Searching for book by ISBN: %s", book.Media.Metadata.ISBN), nil)
