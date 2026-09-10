@@ -750,14 +750,15 @@ func TestFindBookInHardcoverDoesNotCacheASINAPIFailures(t *testing.T) {
 		assert.Error(t, err)
 	}
 
-	_, inMemory := svc.asinCache[asin]
-	_, persisted := svc.persistentCache.Get(asin)
+	cacheKey := asinCacheKey(asin, "audiobook", "")
+	_, inMemory := svc.asinCache[cacheKey]
+	_, persisted := svc.persistentCache.Get(cacheKey)
 	assert.False(t, inMemory)
 	assert.False(t, persisted)
 	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 2)
 }
 
-func TestFindBookInHardcoverCachesNegativeASINLookups(t *testing.T) {
+func TestFindBookInHardcoverCachesNegativeASINLookupsByContext(t *testing.T) {
 	svc, mockClient := createTestService()
 	svc.persistentCache = NewPersistentASINCache(t.TempDir())
 
@@ -765,7 +766,7 @@ func TestFindBookInHardcoverCachesNegativeASINLookups(t *testing.T) {
 	book := toAudiobookshelfBook(createTestBook("test-book", "", "", asin, ""))
 	mockClient.On("SearchBookByASIN", mock.Anything, asin).
 		Return((*models.HardcoverBook)(nil), nil).
-		Once()
+		Times(3)
 
 	for range 2 {
 		result, err := svc.findBookInHardcover(context.Background(), *book)
@@ -774,13 +775,30 @@ func TestFindBookInHardcoverCachesNegativeASINLookups(t *testing.T) {
 		assert.Error(t, err)
 	}
 
-	cachedBook, inMemory := svc.asinCache[asin]
-	persistedBook, persisted := svc.persistentCache.Get(asin)
+	cacheKey := asinCacheKey(asin, "audiobook", "")
+	cachedBook, inMemory := svc.asinCache[cacheKey]
+	persistedBook, persisted := svc.persistentCache.Get(cacheKey)
 	assert.True(t, inMemory)
 	assert.Nil(t, cachedBook)
 	assert.True(t, persisted)
 	assert.Nil(t, persistedBook)
-	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 1)
+
+	book.MediaType = "ebook"
+	result, err := svc.findBookInHardcover(context.Background(), *book)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+
+	book.MediaType = "book"
+	svc.config.Audiobookshelf.AudnexusRegion = "ca"
+	result, err = svc.findBookInHardcover(context.Background(), *book)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+
+	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 3)
+	_, ebookCached := svc.asinCache[asinCacheKey(asin, "ebook", "")]
+	_, canadianCached := svc.asinCache[asinCacheKey(asin, "audiobook", "ca")]
+	assert.True(t, ebookCached)
+	assert.True(t, canadianCached)
 }
 
 func TestProcessBookSkipsUnreadBeforeHardcoverLookup(t *testing.T) {
