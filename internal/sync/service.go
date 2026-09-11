@@ -1290,8 +1290,13 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 				bookLog.Warnf("No Hardcover book details available for mismatch")
 			}
 
-			// Log the complete mismatch data before recording
-			bookLog.Debugf("Recording mismatch with data: %+v", mismatchData)
+			bookLog.Debug("Recording title/author mismatch", map[string]interface{}{
+				"reason":              mismatchData.Reason,
+				"hardcover_book_id":   mismatchData.HardcoverBookID,
+				"hardcover_title":     mismatchData.HardcoverTitle,
+				"hardcover_author":    mismatchData.HardcoverAuthor,
+				"hardcover_book_slug": mismatchData.HardcoverSlug,
+			})
 
 			// Determine editionID from Hardcover result if available to improve enrichment accuracy
 			edID := ""
