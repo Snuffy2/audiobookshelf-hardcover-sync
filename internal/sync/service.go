@@ -186,9 +186,8 @@ func (s *Service) setASINInCache(asin string, book *models.HardcoverBook) {
 // clearASINCache clears only the in-memory ASIN cache (persistent cache remains)
 func (s *Service) clearASINCache() {
 	s.asinCacheMutex.Lock()
-	defer s.asinCacheMutex.Unlock()
-
 	s.asinCache = make(map[string]*models.HardcoverBook)
+	s.asinCacheMutex.Unlock()
 	s.log.Debug("Cleared in-memory ASIN cache for new sync (persistent cache preserved)", nil)
 }
 
@@ -242,16 +241,13 @@ func (s *Service) GetSummary() *SyncSummary {
 	}
 
 	s.summary.Lock()
-	defer s.summary.Unlock()
-
-	// Log current values for debugging
-	s.log.Debug("GetSummary: current values", map[string]interface{}{
+	currentFields := map[string]interface{}{
 		"UserID":              s.summary.UserID,
 		"TotalBooksProcessed": s.summary.TotalBooksProcessed,
 		"BooksSynced":         s.summary.BooksSynced,
 		"BooksNotFoundCount":  len(s.summary.BooksNotFound),
 		"MismatchesCount":     len(s.summary.Mismatches),
-	})
+	}
 
 	// Return a copy to avoid race conditions
 	summaryCopy := &SyncSummary{
@@ -265,6 +261,10 @@ func (s *Service) GetSummary() *SyncSummary {
 
 	copy(summaryCopy.BooksNotFound, s.summary.BooksNotFound)
 	copy(summaryCopy.Mismatches, s.summary.Mismatches)
+	s.summary.Unlock()
+
+	// Log current values for debugging
+	s.log.Debug("GetSummary: current values", currentFields)
 
 	// Log the copy values for debugging
 	s.log.Debug("GetSummary: returning copy", map[string]interface{}{
@@ -281,8 +281,6 @@ func (s *Service) GetSummary() *SyncSummary {
 // logSyncSummary logs a summary of the sync operation
 func (s *Service) logSyncSummary() {
 	s.summary.RLock()
-	defer s.summary.RUnlock()
-
 	// Make local copies of the data we need
 	totalBooksProcessed := s.summary.TotalBooksProcessed
 	booksSynced := s.summary.BooksSynced
@@ -290,6 +288,7 @@ func (s *Service) logSyncSummary() {
 	copy(booksNotFound, s.summary.BooksNotFound)
 	mismatches := make([]mismatch.BookMismatch, len(s.summary.Mismatches))
 	copy(mismatches, s.summary.Mismatches)
+	s.summary.RUnlock()
 
 	// Log summary header
 	s.log.Info("========================================", nil)
@@ -1051,22 +1050,26 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	defer func() {
 		// Use the mutex to safely update the counters
 		s.summary.Lock()
-		defer s.summary.Unlock()
-
 		// Always increment TotalBooksProcessed for every book that enters this function
 		s.summary.TotalBooksProcessed++
 
 		if bookProcessed {
 			// Only increment BooksSynced if the book was successfully processed
 			s.summary.BooksSynced++
+		}
+		totalBooksProcessed := s.summary.TotalBooksProcessed
+		booksSynced := s.summary.BooksSynced
+		s.summary.Unlock()
+
+		if bookProcessed {
 			bookLog.Debug("Book processing completed successfully", map[string]interface{}{
-				"total_books_processed": s.summary.TotalBooksProcessed,
-				"books_synced":          s.summary.BooksSynced,
+				"total_books_processed": totalBooksProcessed,
+				"books_synced":          booksSynced,
 			})
 		} else {
 			bookLog.Debug("Book was not processed (skipped or failed)", map[string]interface{}{
-				"total_books_processed": s.summary.TotalBooksProcessed,
-				"books_synced":          s.summary.BooksSynced,
+				"total_books_processed": totalBooksProcessed,
+				"books_synced":          booksSynced,
 			})
 		}
 	}()
