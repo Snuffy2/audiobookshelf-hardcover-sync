@@ -1343,8 +1343,6 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 		"raw_response": fmt.Sprintf("%+v", rawResponse),
 	})
 
-	var books []map[string]interface{}
-
 	// Extract data from response
 	data, ok := rawResponse["data"].(map[string]interface{})
 	if !ok {
@@ -1378,25 +1376,9 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 	log.Debug("Found books array in response", map[string]interface{}{
 		"books_count": len(booksArray),
 	})
-	for i, b := range booksArray {
-		book, ok := b.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid ASIN response: book at index %d has unexpected type %T", i, b)
-		}
-		books = append(books, book)
-		log.Debug("Found book in response", map[string]interface{}{
-			"book_index": i,
-			"book_id":    fmt.Sprintf("%v", book["id"]),
-			"title":      fmt.Sprintf("%v", book["title"]),
-		})
-	}
-
-	log.Debug("Extracted books from response", map[string]interface{}{
-		"books_count": len(books),
-	})
 
 	// Check if any books were found
-	if len(books) == 0 {
+	if len(booksArray) == 0 {
 		log.Debug("No books found with the given ASIN", map[string]interface{}{
 			"asin": asin,
 		})
@@ -1404,7 +1386,10 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 	}
 
 	// Process the first book
-	bookData := books[0]
+	bookData, ok := booksArray[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid ASIN response: book at index 0 has unexpected type %T", booksArray[0])
+	}
 	log.Debug("Processing first book", map[string]interface{}{
 		"book_data": fmt.Sprintf("%+v", bookData),
 	})
