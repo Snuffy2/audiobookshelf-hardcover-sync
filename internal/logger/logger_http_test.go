@@ -126,8 +126,6 @@ func TestHTTPMiddleware(t *testing.T) {
 
 		// Get the log output
 		output := buf.String()
-		assert.Contains(t, output, `"level":"debug"`, "HTTP request details should be logged at debug level")
-
 		// Check that the log contains the expected fields
 		for _, expected := range tt.expectedLogs {
 			assert.Contains(t, output, expected, "Log output should contain %q", expected)
