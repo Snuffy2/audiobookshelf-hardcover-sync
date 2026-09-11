@@ -368,9 +368,13 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 		return book, true
 	}
 
-	// Check persistent cache
+	// Check persistent cache. A nil entry is a genuine "no result" miss that
+	// is still within its persistent TTL.
 	book, exists = s.persistentCache.Get(asin)
-	if exists && book != nil {
+	if exists && book == nil {
+		return nil, true
+	}
+	if exists {
 		// Promote to in-memory cache for faster access
 		s.asinCacheMutex.Lock()
 		s.asinCache[asin] = book
@@ -382,20 +386,18 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 		return book, true
 	}
 
-	// Nil entries were used by older versions to cache technical lookup
-	// failures. Treat them as misses so a transient error is retried.
 	return nil, false
 }
 
 // setASINInCache stores an ASIN lookup result in both caches
 func (s *Service) setASINInCache(asin string, book *models.HardcoverBook) {
-	if book == nil {
-		return
+	// Store only successful lookups in the non-expiring in-memory cache. Nil
+	// results retain their persistent TTL and must not outlive it in memory.
+	if book != nil {
+		s.asinCacheMutex.Lock()
+		s.asinCache[asin] = book
+		s.asinCacheMutex.Unlock()
 	}
-	// Store in in-memory cache
-	s.asinCacheMutex.Lock()
-	s.asinCache[asin] = book
-	s.asinCacheMutex.Unlock()
 
 	// Store in persistent cache
 	s.persistentCache.Set(asin, book)
