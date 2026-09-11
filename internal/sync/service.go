@@ -1100,8 +1100,6 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	}()
 
 	bookLog.Debug("Starting book processing")
-	// Mark as processed by default; set to false when the book is skipped or fails
-	bookProcessed = true
 
 	// Media type filtering: skip ebooks unless explicitly enabled
 	mediaType := strings.ToLower(book.MediaType)
@@ -1375,7 +1373,6 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 		}
 	} else if hcBook != nil {
 		// Book was found successfully
-		bookProcessed = true
 		if hcBook.EditionID != "" {
 			editionID = hcBook.EditionID
 		}
@@ -2977,7 +2974,11 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 			return fmt.Errorf("failed to update progress: %w", err)
 		}
 
-		log.Debug("Successfully updated read status in Hardcover", logCtx)
+		if s.config.Sync.DryRun {
+			log.Debug("Successfully simulated read status update in Hardcover", logCtx)
+		} else {
+			log.Info("Successfully updated read status in Hardcover", logCtx)
+		}
 
 		if err := reconcileBookStatus(); err != nil {
 			return err
@@ -3170,7 +3171,11 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 			return fmt.Errorf("failed to create read status in Hardcover: %w", err)
 		}
 
-		log.Debug("Successfully created new read status in Hardcover", nil)
+		if s.config.Sync.DryRun {
+			log.Debug("Successfully simulated read status creation in Hardcover", nil)
+		} else {
+			log.Info("Successfully created new read status in Hardcover", nil)
+		}
 
 		// Set the book status after inserting the read, so HC does not auto-create
 		// a blank row as a side effect. Reconcile stale statuses for rereads too.
