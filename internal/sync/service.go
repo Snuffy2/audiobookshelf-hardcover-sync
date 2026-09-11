@@ -158,7 +158,7 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 
 	// Check persistent cache
 	book, exists = s.persistentCache.Get(asin)
-	if exists {
+	if exists && book != nil {
 		// Promote to in-memory cache for faster access
 		s.asinCacheMutex.Lock()
 		s.asinCache[asin] = book
@@ -174,10 +174,13 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 
 // setASINInCache stores an ASIN lookup result in both caches
 func (s *Service) setASINInCache(asin string, book *models.HardcoverBook) {
-	// Store in in-memory cache
-	s.asinCacheMutex.Lock()
-	s.asinCache[asin] = book
-	s.asinCacheMutex.Unlock()
+	// Store only successful lookups in the non-expiring in-memory cache. Nil
+	// results retain their persistent TTL and must not outlive it in memory.
+	if book != nil {
+		s.asinCacheMutex.Lock()
+		s.asinCache[asin] = book
+		s.asinCacheMutex.Unlock()
+	}
 
 	// Store in persistent cache
 	s.persistentCache.Set(asin, book)
