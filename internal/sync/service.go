@@ -493,10 +493,6 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 		"status": status,
 	})
 
-	logCtx.Debug("Creating new user book with status", map[string]interface{}{
-		"status": status,
-	})
-
 	// Double-check if the user book exists to prevent race conditions
 	logCtx.Debug("Performing second check for existing user book ID to prevent race conditions", nil)
 
@@ -2197,15 +2193,6 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 	// Create a logger with context
 	log := s.log.With(logCtx)
 
-	// Debug logging for Scrum book
-	if strings.Contains(strings.ToLower(bookTitle), "scrum") {
-		log.Debug("DEBUG - Handling in-progress Scrum book", map[string]interface{}{
-			"progress":     book.Progress.CurrentTime,
-			"is_finished":  book.Progress.IsFinished,
-			"duration":     book.Media.Duration,
-			"progress_pct": (book.Progress.CurrentTime / book.Media.Duration) * 100,
-		})
-	}
 	log.Debug("Processing in-progress book", nil)
 
 	// Get current book status from Hardcover
