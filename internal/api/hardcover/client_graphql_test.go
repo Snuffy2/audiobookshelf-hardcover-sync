@@ -56,7 +56,7 @@ func TestSearchBookByASINUsesProductionQueryWithNumericASIN(t *testing.T) {
 	defer server.Close()
 
 	client := CreateTestClient(server)
-	ctx := WithAudnexRegion(WithReadingFormat(context.Background(), "audiobook"), "us")
+	ctx := WithAudnexRegion(WithReadingFormat(context.Background(), "audiobook"), " Us ")
 	book, err := client.SearchBookByASIN(ctx, "1250622689")
 
 	require.NoError(t, err)
@@ -73,6 +73,66 @@ func TestSearchBookByASINUsesProductionQueryWithNumericASIN(t *testing.T) {
 	assert.Equal(t, "1250622689", request.Variables["asin"])
 	assert.Equal(t, "1250622689:us", request.Variables["asin_us"])
 	assert.Equal(t, float64(2), request.Variables["format_id"])
+}
+
+func TestSearchBookByASINRejectsMalformedSuccessResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		wantErr  bool
+	}{
+		{
+			name:     "missing books",
+			response: `{"data":{}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "books has unexpected type",
+			response: `{"data":{"books":{}}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "books contains malformed entry",
+			response: `{"data":{"books":[null]}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "book has no editions",
+			response: `{"data":{"books":[{"id":1,"title":"Test Book","editions":[]}]}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "editions contains malformed entry",
+			response: `{"data":{"books":[{"id":1,"title":"Test Book","editions":[null]}]}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "empty books array is a clean miss",
+			response: `{"data":{"books":[]}}`,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			client := CreateTestClient(server)
+			book, err := client.SearchBookByASIN(context.Background(), "ASIN123")
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, book)
+			} else {
+				require.NoError(t, err)
+				assert.Nil(t, book)
+			}
+		})
+	}
 }
 
 func TestGraphQLQuery_RetriesOn429ThenSucceeds(t *testing.T) {

@@ -144,7 +144,7 @@ func TestClient_GetEditionByASIN(t *testing.T) {
 			expectedError:   "failed to find book by ASIN",
 		},
 		{
-			name: "edition not found",
+			name: "malformed search response: missing editions",
 			asin: "B07777777",
 			searchResponse: map[string]interface{}{
 				"data": map[string]interface{}{
@@ -161,12 +161,7 @@ func TestClient_GetEditionByASIN(t *testing.T) {
 					},
 				},
 			},
-			editionResponse: map[string]interface{}{
-				"data": map[string]interface{}{
-					"editions": []map[string]interface{}{},
-				},
-			},
-			expectedError: "no book found with ASIN",
+			expectedError: "invalid ASIN response: book 789 is missing editions",
 		},
 	}
 
