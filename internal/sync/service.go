@@ -1059,12 +1059,12 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 		if bookProcessed {
 			// Only increment BooksSynced if the book was successfully processed
 			s.summary.BooksSynced++
-			bookLog.Debug("Book processing completed successfully", map[string]interface{}{
+			bookLog.Info("Book processing completed successfully", map[string]interface{}{
 				"total_books_processed": s.summary.TotalBooksProcessed,
 				"books_synced":          s.summary.BooksSynced,
 			})
 		} else {
-			bookLog.Debug("Book was not processed (skipped or failed)", map[string]interface{}{
+			bookLog.Info("Book was not processed (skipped or failed)", map[string]interface{}{
 				"total_books_processed": s.summary.TotalBooksProcessed,
 				"books_synced":          s.summary.BooksSynced,
 			})
@@ -1229,7 +1229,7 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 					}
 					authorString := strings.Join(authors, ", ")
 					mismatchData.HardcoverAuthor = authorString
-					bookLog.Infof("Setting hardcover_author to: %s", authorString)
+					bookLog.Debugf("Setting hardcover_author to: %s", authorString)
 				}
 
 				// Extract year from release date if available
@@ -1237,19 +1237,19 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 					if year, err := time.Parse("2006-01-02", hcBook.ReleaseDate); err == nil {
 						yearStr := year.Format("2006")
 						mismatchData.HardcoverPublishedYear = yearStr
-						bookLog.Infof("Setting hardcover_published_year to: %s", yearStr)
+						bookLog.Debugf("Setting hardcover_published_year to: %s", yearStr)
 					}
 				}
 
 				if hcBook.CoverImageURL != "" {
 					mismatchData.HardcoverCoverURL = hcBook.CoverImageURL
-					bookLog.Infof("Setting hardcover_cover_url to: %s", hcBook.CoverImageURL)
+					bookLog.Debugf("Setting hardcover_cover_url to: %s", hcBook.CoverImageURL)
 				}
 
 				// Slug
 				if hcBook.Slug != "" {
 					mismatchData.HardcoverSlug = hcBook.Slug
-					bookLog.Infof("Setting hardcover_slug to: %s", hcBook.Slug)
+					bookLog.Debugf("Setting hardcover_slug to: %s", hcBook.Slug)
 				}
 
 				// Only set Hardcover publisher when we have a confirmed edition match via identifiers (ASIN/ISBN)
@@ -1261,7 +1261,7 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 						(hcBook.EditionISBN10 != "" && mismatchData.ISBN != "" && strings.EqualFold(hcBook.EditionISBN10, mismatchData.ISBN))
 					if asinMatch || isbnMatch {
 						mismatchData.HardcoverPublisher = hcBook.Publisher
-						bookLog.Infof("Setting hardcover_publisher to: %s (confirmed by identifiers)", hcBook.Publisher)
+						bookLog.Debugf("Setting hardcover_publisher to: %s (confirmed by identifiers)", hcBook.Publisher)
 					} else {
 						bookLog.Debug("Skipping hardcover_publisher: no confirmed edition identifier match", map[string]interface{}{
 							"hc_edition_asin": hcBook.EditionASIN,
@@ -1278,26 +1278,26 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 				// Add any available identifiers
 				if hcBook.ASIN != "" {
 					mismatchData.HardcoverASIN = hcBook.ASIN
-					bookLog.Infof("Setting hardcover_asin to: %s", hcBook.ASIN)
+					bookLog.Debugf("Setting hardcover_asin to: %s", hcBook.ASIN)
 				}
 
 				// Prefer ISBN13, fall back to ISBN10
 				if hcBook.EditionISBN13 != "" {
 					mismatchData.HardcoverISBN = hcBook.EditionISBN13
-					bookLog.Infof("Setting hardcover_isbn to: %s (ISBN-13)", hcBook.EditionISBN13)
+					bookLog.Debugf("Setting hardcover_isbn to: %s (ISBN-13)", hcBook.EditionISBN13)
 				} else if hcBook.EditionISBN10 != "" {
 					mismatchData.HardcoverISBN = hcBook.EditionISBN10
-					bookLog.Infof("Setting hardcover_isbn to: %s (ISBN-10)", hcBook.EditionISBN10)
+					bookLog.Debugf("Setting hardcover_isbn to: %s (ISBN-10)", hcBook.EditionISBN10)
 				}
 
-				bookLog.Infof("Including Hardcover book details in mismatch: book_id=%s, title=%s, author=%s",
+				bookLog.Debugf("Including Hardcover book details in mismatch: book_id=%s, title=%s, author=%s",
 					hcBook.ID, hcBook.Title, mismatchData.HardcoverAuthor)
 			} else {
 				bookLog.Warnf("No Hardcover book details available for mismatch")
 			}
 
 			// Log the complete mismatch data before recording
-			bookLog.Infof("Recording mismatch with data: %+v", mismatchData)
+			bookLog.Debugf("Recording mismatch with data: %+v", mismatchData)
 
 			// Determine editionID from Hardcover result if available to improve enrichment accuracy
 			edID := ""
