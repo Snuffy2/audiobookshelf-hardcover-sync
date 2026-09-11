@@ -107,7 +107,7 @@ func main() {
 	})
 
 	// Log basic configuration info (without sensitive data)
-	log.Info("Application configuration", map[string]interface{}{
+	log.Debug("Application configuration", map[string]interface{}{
 		"log_level": cfg.Logging.Level,
 		"dry_run":   cfg.Sync.DryRun,
 	})
@@ -145,7 +145,7 @@ func main() {
 	errCh := make(chan error, 1)
 
 	// Initialize multi-user system
-	log.Info("Initializing multi-user system", nil)
+	log.Debug("Initializing multi-user system", nil)
 
 	// Set up database with config.yaml and environment-based configuration
 	// Create database config from config.yaml with environment variable override
@@ -177,7 +177,7 @@ func main() {
 	}
 
 	// Log the database configuration being used
-	log.Info("Database configuration", map[string]interface{}{
+	log.Debug("Database configuration", map[string]interface{}{
 		"type":     dbConfig.Type,
 		"host":     dbConfig.Host,
 		"port":     dbConfig.Port,
@@ -185,7 +185,7 @@ func main() {
 		"path":     dbConfig.Path,
 	})
 
-	log.Info("Encryption configuration", map[string]interface{}{
+	log.Debug("Encryption configuration", map[string]interface{}{
 		"data_dir":      encryptionDataDir,
 		"using_env_key": os.Getenv("ENCRYPTION_KEY") != "",
 	})
@@ -218,7 +218,7 @@ func main() {
 	configPath := flags.configFile
 
 	// Log the migration attempt with the actual database path being used
-	log.Info("Checking migration from config", map[string]interface{}{
+	log.Debug("Checking migration from config", map[string]interface{}{
 		"config_path": configPath,
 		"db_path":     dbConfig.Path, // Use the same path as the main database
 	})
@@ -235,7 +235,7 @@ func main() {
 	multiUserService := multiuser.NewMultiUserService(repo, cfg, log)
 
 	// Initialize authentication system
-	log.Info("Initializing authentication system", nil)
+	log.Debug("Initializing authentication system", nil)
 	// Convert config.yaml auth config to internal auth config with env overrides
 	configAuth := &auth.ConfigAuth{
 		Enabled: cfg.Authentication.Enabled,
@@ -355,7 +355,7 @@ func main() {
 
 		// Start the HTTP server
 		go func() {
-			log.Info("Starting HTTP server with web UI", map[string]interface{}{
+			log.Debug("Starting HTTP server with web UI", map[string]interface{}{
 				"port":   cfg.Server.Port,
 				"web_ui": true,
 			})
@@ -403,11 +403,11 @@ func main() {
 				})
 			} else {
 				for _, profile := range profiles {
-					log.Info("Starting initial sync for profile", map[string]interface{}{
+					log.Debug("Starting initial sync for profile", map[string]interface{}{
 						"profile_id": profile.ID,
 					})
 					go func(profileID string) {
-						log.Info("Starting initial sync for profile", map[string]interface{}{
+						log.Debug("Starting initial sync for profile", map[string]interface{}{
 							"profile_id": profileID,
 						})
 						if err := multiUserService.StartSync(profileID); err != nil {
@@ -442,7 +442,7 @@ func main() {
 							continue
 						}
 
-						log.Info("Starting periodic sync for profile", map[string]interface{}{
+						log.Debug("Starting periodic sync for profile", map[string]interface{}{
 							"profile_id": profile.ID,
 						})
 
@@ -489,7 +489,7 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		defer cancel()
 
-		log.Info("Initiating graceful shutdown...", map[string]interface{}{
+		log.Debug("Initiating graceful shutdown...", map[string]interface{}{
 			"timeout": cfg.Server.ShutdownTimeout.String(),
 		})
 
@@ -499,7 +499,7 @@ func main() {
 			})
 		}
 	} else {
-		log.Info("Web UI disabled - no HTTP server to shutdown", nil)
+		log.Debug("Web UI disabled - no HTTP server to shutdown", nil)
 	}
 
 	log.Info("Shutdown completed", nil)

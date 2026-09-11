@@ -100,7 +100,7 @@ func TestHTTPMiddleware(t *testing.T) {
 
 			// Configure the logger with JSON format for easier parsing
 			Setup(Config{
-				Level:      "info",
+				Level:      "debug",
 				Format:     FormatJSON,
 				Output:     &buf,
 				TimeFormat: "", // No timestamp in tests for easier assertions
@@ -126,6 +126,7 @@ func TestHTTPMiddleware(t *testing.T) {
 
 		// Get the log output
 		output := buf.String()
+		assert.Contains(t, output, `"level":"debug"`, "HTTP request details should be logged at debug level")
 
 		// Check that the log contains the expected fields
 		for _, expected := range tt.expectedLogs {
