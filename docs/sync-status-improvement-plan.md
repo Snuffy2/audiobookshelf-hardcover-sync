@@ -83,10 +83,10 @@ than silently treating unseen books as processed.
    per-profile status, since concurrent profiles must remain isolated.
 3. Return one consistent, race-safe current-run snapshot through both status
    and summary API paths. Include run ID, start time, state, processed count,
-   candidate total, category counts, and book lists for attention categories.
-   Preserve or version existing API fields deliberately and document their
-   semantics. The UI should not combine counts from one response with lists
-   from another run.
+   candidate total, and category counts. Serve book lists for attention
+   categories from a run-scoped details endpoint. Preserve or version existing
+   API fields deliberately and document their semantics. The UI should not
+   combine counts from one response with lists from another run.
 4. Show `processed_so_far / books_total` and the primary categories once on
    the status card. Use View Details for the full breakdown, skip reasons,
    action/match-method details, and live attention lists. Refresh an open
@@ -130,6 +130,38 @@ new run replacing the previous one. In each case, confirm there is no overlay
 flash, duplicate request, stale overwrite, focus loss, or collapsed detail
 panel. Consider server-sent events only if measured polling latency or load
 later warrants the extra server and reconnect complexity.
+
+## Additional operational improvements
+
+1. **Show the run phase and last activity.** The visible `syncing` state covers
+   library discovery, book processing, mismatch-file saving, and finalization.
+   The latter can continue after the processed count stops moving. Show a
+   current phase, run start time, and last processed/activity time so a slow
+   rate-limited run is distinguishable from a stalled one. Avoid an ETA until
+   processing speed is reliable enough to make it meaningful.
+2. **Preserve partial results on cancellation and failure.** `CancelSync`
+   currently replaces the profile status with `idle` and a new `LastSync`
+   timestamp, discarding the live counters and lists. End a run as `canceled`
+   or `failed`, retain its partial outcome snapshot, and show how many
+   candidates were never attempted. Keep `last successful sync` separate from
+   `last attempted sync`; cancellation must not look like completion.
+3. **Keep the latest completed report across restarts.** The database currently
+   restores `LastSync` but not the detailed counts or book lists after an app
+   restart. Persist a bounded, run-ID-tagged final report so View Details still
+   explains the most recent run. Keep active-run status distinct from this
+   saved report, and decide an explicit retention limit before implementation.
+4. **Bound detail traffic and make large lists usable.** Status polling should
+   return counts and metadata, not resend every mismatch and missing book on
+   each five-second tick. Fetch the current run's detail rows on demand or by
+   revision/cursor while View Details is open; page or virtualize long lists.
+   Offer a clear filter by outcome/reason and stable ordering, with newly
+   reported attention items easy to identify. Do not drop entries from the
+   server-side result to achieve this bound.
+
+Validate transitions among queued/running/finalizing/completed/canceled/failed
+and an application restart. Confirm that each view identifies its run ID and
+that neither a canceled run nor a polling error silently replaces the last
+successful result.
 
 ## Acceptance example
 
