@@ -32,6 +32,11 @@ The pre-counted library size remains a separate progress denominator.
   other current counts.
 - The status card polls every five seconds, but an open View Details panel is
   built only when opened. Its contents do not update with status polling.
+- The five-second timer calls `loadStatuses()`, which unconditionally calls
+  `showLoading()` and `hideLoading()`. That briefly activates the full-page
+  loading overlay and spinner on every background poll. It also replaces the
+  status grid's entire `innerHTML` after each response, even if nothing
+  changed, creating extra visual churn and potentially losing focus.
 - A new run replaces the previous profile status. The new run's counters and
   lists must be labeled as current-run data; last-run results need a distinct
   view or explicit timestamp if retained.
@@ -100,6 +105,31 @@ than silently treating unseen books as processed.
    profiles do not share results; completion preserves the live counts; and
    every observed snapshot satisfies the category-sum invariant. Verify the
    existing dry-run no-mutation contract remains intact.
+
+## Smooth refresh approach
+
+Keep the existing five-second polling cadence initially; it is sufficient for
+these status updates. Separate initial/manual loading from background refresh:
+the initial page load and explicit actions may use a loading indicator, while
+timer-driven status polls run silently against the existing content. They must
+not activate the global overlay or blank the card while waiting for a response.
+On a polling failure, retain the last good snapshot and show a small, passive
+`Status may be stale` indicator instead of flashing a full-page error.
+
+Prevent overlapping polls, and ignore a response from an older request or run
+if a newer snapshot has already arrived. Update only cards, counts, and detail
+rows whose values changed. Preserve the active tab, open details, scroll
+position, expanded rows, and keyboard focus. Do not replace the whole status
+grid with `innerHTML` every five seconds. If a lightweight refresh indicator
+is useful, place a subtle timestamp in the Sync Status header and update it
+without animation; the automatic refresh itself should be visually quiet.
+
+Add UI validation for a sub-second successful poll, a slow poll crossing the
+next timer tick, an unchanged response, a transient network failure, and a
+new run replacing the previous one. In each case, confirm there is no overlay
+flash, duplicate request, stale overwrite, focus loss, or collapsed detail
+panel. Consider server-sent events only if measured polling latency or load
+later warrants the extra server and reconnect complexity.
 
 ## Acceptance example
 
