@@ -733,6 +733,102 @@ func createTestService() (*Service, *MockHardcoverClient) {
 	return svc, mockClient
 }
 
+func TestFindBookInHardcoverDoesNotCacheASINAPIFailures(t *testing.T) {
+	svc, mockClient := createTestService()
+	svc.persistentCache = NewPersistentASINCache(t.TempDir())
+
+	const asin = "1250622689"
+	book := toAudiobookshelfBook(createTestBook("test-book", "", "", asin, ""))
+	mockClient.On("SearchBookByASIN", mock.Anything, asin).
+		Return((*models.HardcoverBook)(nil), assert.AnError).
+		Twice()
+
+	for range 2 {
+		result, err := svc.findBookInHardcover(context.Background(), *book)
+
+		assert.Nil(t, result)
+		assert.Error(t, err)
+	}
+
+	cacheKey := asinCacheKey(asin, "audiobook", "")
+	_, inMemory := svc.asinCache[cacheKey]
+	_, persisted := svc.persistentCache.Get(cacheKey)
+	assert.False(t, inMemory)
+	assert.False(t, persisted)
+	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 2)
+}
+
+func TestFindBookInHardcoverCachesNegativeASINLookupsByContext(t *testing.T) {
+	svc, mockClient := createTestService()
+	svc.persistentCache = NewPersistentASINCache(t.TempDir())
+
+	const asin = "1250622689"
+	book := toAudiobookshelfBook(createTestBook("test-book", "", "", asin, ""))
+	mockClient.On("SearchBookByASIN", mock.Anything, asin).
+		Return((*models.HardcoverBook)(nil), nil).
+		Times(3)
+
+	for range 2 {
+		result, err := svc.findBookInHardcover(context.Background(), *book)
+
+		assert.Nil(t, result)
+		assert.Error(t, err)
+	}
+
+	cacheKey := asinCacheKey(asin, "audiobook", "")
+	cachedBook, inMemory := svc.asinCache[cacheKey]
+	persistedBook, persisted := svc.persistentCache.Get(cacheKey)
+	assert.False(t, inMemory)
+	assert.Nil(t, cachedBook)
+	assert.True(t, persisted)
+	assert.Nil(t, persistedBook)
+
+	book.MediaType = "ebook"
+	result, err := svc.findBookInHardcover(context.Background(), *book)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+
+	book.MediaType = "book"
+	svc.config.Audiobookshelf.AudnexusRegion = "ca"
+	result, err = svc.findBookInHardcover(context.Background(), *book)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+
+	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 3)
+	_, ebookCached := svc.asinCache[asinCacheKey(asin, "ebook", "")]
+	_, canadianCached := svc.asinCache[asinCacheKey(asin, "audiobook", "ca")]
+	assert.False(t, ebookCached)
+	assert.False(t, canadianCached)
+}
+
+func TestFindBookInHardcoverRetriesExpiredNegativeASINCache(t *testing.T) {
+	svc, mockClient := createTestService()
+	svc.persistentCache = NewPersistentASINCache(t.TempDir())
+
+	const asin = "1250622689"
+	book := toAudiobookshelfBook(createTestBook("test-book", "", "", asin, ""))
+	mockClient.On("SearchBookByASIN", mock.Anything, asin).
+		Return((*models.HardcoverBook)(nil), nil).
+		Twice()
+
+	result, err := svc.findBookInHardcover(context.Background(), *book)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+
+	cacheKey := asinCacheKey(asin, "audiobook", "")
+	entry, persisted := svc.persistentCache.entries[cacheKey]
+	require.True(t, persisted)
+	entry.Timestamp = time.Now().Add(-entry.TTL - time.Second)
+
+	result, err = svc.findBookInHardcover(context.Background(), *book)
+	assert.Nil(t, result)
+	assert.Error(t, err)
+	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 2)
+
+	_, inMemory := svc.asinCache[cacheKey]
+	assert.False(t, inMemory)
+}
+
 func TestProcessBookSkipsUnreadBeforeHardcoverLookup(t *testing.T) {
 	svc, mockClient := createTestService()
 	svc.config.Sync.Incremental = false

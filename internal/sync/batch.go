@@ -197,7 +197,9 @@ func (s *Service) PreloadASINCache(ctx context.Context, books []models.Audiobook
 	
 	for _, book := range books {
 		if book.Media.Metadata.ASIN != "" {
-			if _, exists := s.getASINFromCache(book.Media.Metadata.ASIN); !exists {
+			readingFormat := readingFormatForMediaType(book.MediaType)
+			cacheKey := asinCacheKey(book.Media.Metadata.ASIN, readingFormat, s.config.Audiobookshelf.AudnexusRegion)
+			if _, exists := s.getASINFromCache(cacheKey); !exists {
 				asinsToPreload = append(asinsToPreload, book.Media.Metadata.ASIN)
 			}
 		}

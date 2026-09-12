@@ -158,7 +158,7 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 
 	// Check persistent cache
 	book, exists = s.persistentCache.Get(asin)
-	if exists {
+	if exists && book != nil {
 		// Promote to in-memory cache for faster access
 		s.asinCacheMutex.Lock()
 		s.asinCache[asin] = book
@@ -174,13 +174,31 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 
 // setASINInCache stores an ASIN lookup result in both caches
 func (s *Service) setASINInCache(asin string, book *models.HardcoverBook) {
-	// Store in in-memory cache
-	s.asinCacheMutex.Lock()
-	s.asinCache[asin] = book
-	s.asinCacheMutex.Unlock()
+	// Store only successful lookups in the non-expiring in-memory cache. Nil
+	// results retain their persistent TTL and must not outlive it in memory.
+	if book != nil {
+		s.asinCacheMutex.Lock()
+		s.asinCache[asin] = book
+		s.asinCacheMutex.Unlock()
+	}
 
 	// Store in persistent cache
 	s.persistentCache.Set(asin, book)
+}
+
+func asinCacheKey(asin, readingFormat, audnexusRegion string) string {
+	region := strings.ToLower(strings.TrimSpace(audnexusRegion))
+	if region == "" {
+		region = "us"
+	}
+	return strings.Join([]string{asin, readingFormat, region}, "|")
+}
+
+func readingFormatForMediaType(mediaType string) string {
+	if strings.EqualFold(strings.TrimSpace(mediaType), "ebook") {
+		return "ebook"
+	}
+	return "audiobook"
 }
 
 // clearASINCache clears only the in-memory ASIN cache (persistent cache remains)
@@ -3658,11 +3676,8 @@ func (s *Service) findBookInHardcoverByTitleAuthor(ctx context.Context, book mod
 // Title/author search is only used for mismatches and should be called separately
 func (s *Service) findBookInHardcover(ctx context.Context, book models.AudiobookshelfBook) (*models.HardcoverBook, error) {
 	// Derive desired reading format from source media type
-	mediaType := strings.ToLower(strings.TrimSpace(book.MediaType))
-	desiredFormat := "audiobook"
-	if mediaType == "ebook" {
-		desiredFormat = "ebook"
-	}
+	desiredFormat := readingFormatForMediaType(book.MediaType)
+	cacheKey := asinCacheKey(book.Media.Metadata.ASIN, desiredFormat, s.config.Audiobookshelf.AudnexusRegion)
 	// Attach to context for client to respect
 	ctx = hardcover.WithReadingFormat(ctx, desiredFormat)
 	// Create a logger with book context
@@ -3684,14 +3699,15 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 
 	// 1. First try to find by ASIN if available
 	if book.Media.Metadata.ASIN != "" {
+		skipASINLookup := false
 		// Check ASIN cache first
-		if cachedBook, exists := s.getASINFromCache(book.Media.Metadata.ASIN); exists {
+		if cachedBook, exists := s.getASINFromCache(cacheKey); exists {
 			if cachedBook == nil {
-				// This ASIN was previously looked up and failed
+				// This ASIN was previously looked up with no result
 				log.Debug("Found negative ASIN cache result, skipping API call", map[string]interface{}{
 					"asin": book.Media.Metadata.ASIN,
 				})
-				// Continue to ISBN lookup
+				skipASINLookup = true
 			} else {
 				log.Debug("Found book in ASIN cache", map[string]interface{}{
 					"asin":       book.Media.Metadata.ASIN,
@@ -3744,71 +3760,74 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 			}
 		}
 
-		log.Info(fmt.Sprintf("Searching for book by ASIN: %s", book.Media.Metadata.ASIN), nil)
+		if !skipASINLookup {
+			log.Info(fmt.Sprintf("Searching for book by ASIN: %s", book.Media.Metadata.ASIN), nil)
 
-		hcBook, err := s.hardcover.SearchBookByASIN(hardcover.WithAudnexRegion(ctx, s.config.Audiobookshelf.AudnexusRegion), book.Media.Metadata.ASIN)
-		if err != nil {
-			// Check if this is a BookError with a book ID
-			var bookErr *hardcover.BookError
-			if errors.As(err, &bookErr) && bookErr.BookID != "" {
-				log.Info("Found book ID in BookError", map[string]interface{}{
-					"book_id": bookErr.BookID,
-					"error":   bookErr.Error(),
-				})
-				// Create a minimal book with just the ID
-				return &models.HardcoverBook{
-					ID: bookErr.BookID,
-				}, nil
-			}
-			// Cache the negative result to avoid repeated failed lookups
-			s.setASINInCache(book.Media.Metadata.ASIN, nil)
-			log.Debug("Cached negative ASIN lookup result", map[string]interface{}{
-				"asin": book.Media.Metadata.ASIN,
-			})
-			log.Warn(fmt.Sprintf("Search by ASIN failed, will try other methods: %v", err), nil)
-		} else if hcBook != nil {
-			// Cache the ASIN lookup result for future use
-			s.setASINInCache(book.Media.Metadata.ASIN, hcBook)
-			log.Debug("Cached ASIN lookup result", map[string]interface{}{
-				"asin":       book.Media.Metadata.ASIN,
-				"book_id":    hcBook.ID,
-				"edition_id": hcBook.EditionID,
-			})
-
-			// Get or create user book ID for this edition
-			editionIDStr := hcBook.EditionID
-			progress := 0.0
-			isFinished := book.Progress.IsFinished
-			finishedAt := book.Progress.FinishedAt
-			if book.Media.Duration > 0 {
-				// For finished books, use 1.0 (100%) instead of CurrentTime/Duration
-				// because Audiobookshelf sometimes reports CurrentTime as 0 for finished books
-				if isFinished {
-					progress = 1.0
-				} else {
-					progress = book.Progress.CurrentTime / book.Media.Duration
-				}
-			}
-
-			// Determine the status based on progress and isFinished flag
-			status := s.determineBookStatus(progress, isFinished, finishedAt)
-			userBookID, err := s.findOrCreateUserBookID(ctx, editionIDStr, status)
+			hcBook, err := s.hardcover.SearchBookByASIN(hardcover.WithAudnexRegion(ctx, s.config.Audiobookshelf.AudnexusRegion), book.Media.Metadata.ASIN)
 			if err != nil {
-				s.log.Warn("Failed to get or create user book ID for edition", map[string]interface{}{
-					"edition_id": editionIDStr,
-					"error":      err.Error(),
+				// Check if this is a BookError with a book ID
+				var bookErr *hardcover.BookError
+				if errors.As(err, &bookErr) && bookErr.BookID != "" {
+					log.Info("Found book ID in BookError", map[string]interface{}{
+						"book_id": bookErr.BookID,
+						"error":   bookErr.Error(),
+					})
+					// Create a minimal book with just the ID
+					return &models.HardcoverBook{
+						ID: bookErr.BookID,
+					}, nil
+				}
+				log.Warn(fmt.Sprintf("Search by ASIN failed, will try other methods: %v", err), nil)
+			} else if hcBook != nil {
+				// Cache the ASIN lookup result for future use
+				s.setASINInCache(cacheKey, hcBook)
+				log.Debug("Cached ASIN lookup result", map[string]interface{}{
+					"asin":       book.Media.Metadata.ASIN,
+					"book_id":    hcBook.ID,
+					"edition_id": hcBook.EditionID,
 				})
+
+				// Get or create user book ID for this edition
+				editionIDStr := hcBook.EditionID
+				progress := 0.0
+				isFinished := book.Progress.IsFinished
+				finishedAt := book.Progress.FinishedAt
+				if book.Media.Duration > 0 {
+					// For finished books, use 1.0 (100%) instead of CurrentTime/Duration
+					// because Audiobookshelf sometimes reports CurrentTime as 0 for finished books
+					if isFinished {
+						progress = 1.0
+					} else {
+						progress = book.Progress.CurrentTime / book.Media.Duration
+					}
+				}
+
+				// Determine the status based on progress and isFinished flag
+				status := s.determineBookStatus(progress, isFinished, finishedAt)
+				userBookID, err := s.findOrCreateUserBookID(ctx, editionIDStr, status)
+				if err != nil {
+					s.log.Warn("Failed to get or create user book ID for edition", map[string]interface{}{
+						"edition_id": editionIDStr,
+						"error":      err.Error(),
+					})
+				} else {
+					hcBook.UserBookID = strconv.FormatInt(userBookID, 10)
+				}
+
+				s.log.Info("Found book by ASIN", map[string]interface{}{
+					"book_id":      hcBook.ID,
+					"edition_id":   hcBook.EditionID,
+					"user_book_id": hcBook.UserBookID,
+				})
+
+				return hcBook, nil
 			} else {
-				hcBook.UserBookID = strconv.FormatInt(userBookID, 10)
+				// Cache a successful lookup with no result to avoid repeated lookups
+				s.setASINInCache(cacheKey, nil)
+				log.Debug("Cached negative ASIN lookup result", map[string]interface{}{
+					"asin": book.Media.Metadata.ASIN,
+				})
 			}
-
-			s.log.Info("Found book by ASIN", map[string]interface{}{
-				"book_id":      hcBook.ID,
-				"edition_id":   hcBook.EditionID,
-				"user_book_id": hcBook.UserBookID,
-			})
-
-			return hcBook, nil
 		}
 	}
 

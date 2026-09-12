@@ -38,16 +38,22 @@ func WithReadingFormat(ctx context.Context, format string) context.Context {
 
 // WithAudnexRegion returns a context that carries the configured Audnexus region.
 func WithAudnexRegion(ctx context.Context, region string) context.Context {
-	return context.WithValue(ctx, ctxKeyAudnexRegion, region)
+	return context.WithValue(ctx, ctxKeyAudnexRegion, normalizeAudnexRegion(region))
 }
 
 // getAudnexRegionFromCtx extracts the Audnex region from context. Defaults to "us".
 func getAudnexRegionFromCtx(ctx context.Context) string {
 	v := ctx.Value(ctxKeyAudnexRegion)
-	if s, ok := v.(string); ok && s != "" {
-		return s
+	if s, ok := v.(string); ok {
+		if normalized := normalizeAudnexRegion(s); normalized != "" {
+			return normalized
+		}
 	}
 	return "us"
+}
+
+func normalizeAudnexRegion(region string) string {
+	return strings.ToLower(strings.TrimSpace(region))
 }
 
 // getReadingFormatFromCtx extracts a normalized reading format string from context, if present.
@@ -1337,57 +1343,42 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 		"raw_response": fmt.Sprintf("%+v", rawResponse),
 	})
 
-	var books []map[string]interface{}
-
 	// Extract data from response
 	data, ok := rawResponse["data"].(map[string]interface{})
 	if !ok {
 		// If that fails, try to see if rawResponse itself is the data
-		if _, isMap := rawResponse["books"]; isMap {
+		if _, hasBooks := rawResponse["books"]; hasBooks {
 			data = rawResponse
 		} else {
 			log.Warn("No 'data' key found in response and response is not a direct data object", map[string]interface{}{})
+			return nil, fmt.Errorf("invalid ASIN response: missing data object")
 		}
 	}
 
-	if data != nil {
-		log.Debug("Data keys in response", map[string]interface{}{
-			"data_keys": fmt.Sprintf("%v", getMapKeys(data)),
+	log.Debug("Data keys in response", map[string]interface{}{
+		"data_keys": fmt.Sprintf("%v", getMapKeys(data)),
+	})
+
+	booksData, ok := data["books"]
+	if !ok {
+		log.Warn("No 'books' key found in data", map[string]interface{}{})
+		return nil, fmt.Errorf("invalid ASIN response: missing books array")
+	}
+
+	booksArray, ok := booksData.([]interface{})
+	if !ok {
+		log.Warn("Unexpected type for books data", map[string]interface{}{
+			"books_type": fmt.Sprintf("%T", booksData),
 		})
-
-		if booksData, ok := data["books"]; ok {
-			switch v := booksData.(type) {
-			case []interface{}:
-				log.Debug("Found books array in response", map[string]interface{}{
-					"books_count": len(v),
-				})
-
-				for i, b := range v {
-					if book, ok := b.(map[string]interface{}); ok {
-						books = append(books, book)
-						log.Debug("Found book in response", map[string]interface{}{
-							"book_index": i,
-							"book_id":    fmt.Sprintf("%v", book["id"]),
-							"title":      fmt.Sprintf("%v", book["title"]),
-						})
-					}
-				}
-			default:
-				log.Warn("Unexpected type for books data", map[string]interface{}{
-					"books_type": fmt.Sprintf("%T", v),
-				})
-			}
-		} else {
-			log.Warn("No 'books' key found in data", map[string]interface{}{})
-		}
+		return nil, fmt.Errorf("invalid ASIN response: books has unexpected type %T", booksData)
 	}
 
-	log.Debug("Extracted books from response", map[string]interface{}{
-		"books_count": len(books),
+	log.Debug("Found books array in response", map[string]interface{}{
+		"books_count": len(booksArray),
 	})
 
 	// Check if any books were found
-	if len(books) == 0 {
+	if len(booksArray) == 0 {
 		log.Debug("No books found with the given ASIN", map[string]interface{}{
 			"asin": asin,
 		})
@@ -1395,7 +1386,10 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 	}
 
 	// Process the first book
-	bookData := books[0]
+	bookData, ok := booksArray[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid ASIN response: book at index 0 has unexpected type %T", booksArray[0])
+	}
 	log.Debug("Processing first book", map[string]interface{}{
 		"book_data": fmt.Sprintf("%+v", bookData),
 	})
@@ -1416,11 +1410,16 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 			hcBook.ID = v
 		}
 	}
+	if hcBook.ID == "" {
+		return nil, fmt.Errorf("invalid ASIN response: book is missing an ID")
+	}
 
 	// Set Title if available
-	if title, ok := bookData["title"].(string); ok {
-		hcBook.Title = title
+	title, ok := bookData["title"].(string)
+	if !ok || strings.TrimSpace(title) == "" {
+		return nil, fmt.Errorf("invalid ASIN response: book is missing a title")
 	}
+	hcBook.Title = title
 
 	// Set BookStatusID if available
 	switch statusID := bookData["book_status_id"].(type) {
@@ -1433,16 +1432,26 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 	}
 
 	// Handle editions
-	editions, _ := bookData["editions"].([]interface{})
+	editionsData, ok := bookData["editions"]
+	if !ok {
+		return nil, fmt.Errorf("invalid ASIN response: book %s is missing editions", hcBook.ID)
+	}
+	editions, ok := editionsData.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid ASIN response: editions has unexpected type %T", editionsData)
+	}
 	if len(editions) == 0 {
 		log.Warn("No editions found for book", map[string]interface{}{
 			"book_id": hcBook.ID,
 		})
-		return nil, nil
+		return nil, fmt.Errorf("invalid ASIN response: book %s has no editions", hcBook.ID)
 	}
 
 	// Process the first edition
-	edition, _ := editions[0].(map[string]interface{})
+	edition, ok := editions[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid ASIN response: edition at index 0 has unexpected type %T", editions[0])
+	}
 
 	// Set EditionID if available
 	if editionID, ok := edition["id"]; ok {
@@ -1456,6 +1465,9 @@ query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!) {
 		case string:
 			hcBook.EditionID = v
 		}
+	}
+	if hcBook.EditionID == "" {
+		return nil, fmt.Errorf("invalid ASIN response: book %s edition is missing an ID", hcBook.ID)
 	}
 
 	// Handle optional CanonicalID
