@@ -470,6 +470,33 @@ func TestProcessLibrary(t *testing.T) {
 	})
 }
 
+func TestSyncReturnsErrorForLibraryItemWithoutID(t *testing.T) {
+	svc, mockHC := createTestService()
+	svc.config.Sync.DryRun = true
+
+	mockABS := new(MockAudiobookshelfClient)
+	libraries := []audiobookshelf.AudiobookshelfLibrary{{ID: "library-id", Name: "Library Name"}}
+	invalidBook := *toAudiobookshelfBook(createTestBook("", "Missing ID", "Test Author", "", ""))
+	items := []models.AudiobookshelfBook{invalidBook}
+	mockABS.On("GetUserProgress", mock.Anything).Return(&models.AudiobookshelfUserProgress{}, nil).Once()
+	mockABS.On("GetLibraries", mock.Anything).Return(libraries, nil).Once()
+	// Sync fetches library items once for the status total and once for processing.
+	mockABS.On("GetLibraryItems", mock.Anything, "library-id").Return(items, nil).Twice()
+	mockHC.On("ClearUserBookCache").Return().Once()
+	svc.audiobookshelf = mockABS
+
+	err := svc.Sync(context.Background())
+
+	require.ErrorIs(t, err, errInvalidLibraryItemID)
+	assert.Contains(t, err.Error(), `library "Library Name" (ID "library-id"), item position 1`)
+	snapshot := svc.GetSnapshot()
+	assert.Zero(t, snapshot.ProcessedSoFar, "an item without an ID must not produce an outcome")
+	assert.Zero(t, snapshot.TotalBooksProcessed, "an item without an ID must not be processed")
+	assert.Empty(t, snapshot.BookOutcomes)
+	mockABS.AssertExpectations(t)
+	mockHC.AssertExpectations(t)
+}
+
 func TestCheckpointStatePersistsCompletedBook(t *testing.T) {
 	svc, _ := createTestService()
 	svc.statePath = filepath.Join(t.TempDir(), "sync_state.json")

@@ -1532,6 +1532,8 @@ func TestHandleInProgressBook_GetUserBookReadsError(t *testing.T) {
 // TestHandleInProgressBook_SkipsCreateWhenPriorStateMatchesProgress verifies
 // we avoid creating duplicate unfinished reads when Hardcover snapshots appear
 // empty but recent sync state already indicates matching in-progress progress.
+// The stale observed status remains unverified, so this is reported as skipped
+// rather than already current.
 func TestHandleInProgressBook_SkipsCreateWhenPriorStateMatchesProgress(t *testing.T) {
 	// Create test service and mock client
 	svc, mockClient := createTestService()
@@ -1549,7 +1551,7 @@ func TestHandleInProgressBook_SkipsCreateWhenPriorStateMatchesProgress(t *testin
 		ID:           "645490",
 		Title:        "Catching Fire",
 		EditionID:    "30438067",
-		BookStatusID: 2,
+		BookStatusID: 1,
 	}, nil).Once()
 
 	// Initial unfinished read snapshot appears empty.
@@ -1563,9 +1565,17 @@ func TestHandleInProgressBook_SkipsCreateWhenPriorStateMatchesProgress(t *testin
 	priorProgress := (testAudiobook.Progress.CurrentTime / testAudiobook.Media.Duration) * 100
 	svc.state.UpdateBook(stateKey, priorProgress, "IN_PROGRESS")
 
-	err := svc.handleInProgressBook(context.Background(), userBookID, *audiobook, stateKey)
+	var gotOutcome SyncOutcome
+	var gotReason string
+	ctx := context.WithValue(context.Background(), processBookOutcomeReporterKey{}, processBookOutcomeReporter(func(outcome SyncOutcome, reason string) {
+		gotOutcome = outcome
+		gotReason = reason
+	}))
+	err := svc.handleInProgressBook(ctx, userBookID, *audiobook, stateKey)
 
 	assert.NoError(t, err)
+	assert.Equal(t, OutcomeSkipped, gotOutcome)
+	assert.Contains(t, gotReason, "Hardcover read is unverified")
 	mockClient.AssertExpectations(t)
 	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)

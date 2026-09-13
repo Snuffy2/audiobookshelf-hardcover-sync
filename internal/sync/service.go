@@ -23,8 +23,9 @@ import (
 
 // Error definitions
 var (
-	ErrSkippedBook     = errors.New("book was skipped")
-	errStateCheckpoint = errors.New("failed to checkpoint sync state")
+	ErrSkippedBook          = errors.New("book was skipped")
+	errStateCheckpoint      = errors.New("failed to checkpoint sync state")
+	errInvalidLibraryItemID = errors.New("audiobookshelf library item has no ID")
 
 	// These errors preserve the distinction between a completed search with no
 	// result and a lookup that could not be completed.  The distinction is part
@@ -89,6 +90,16 @@ type processBookEditionCorrectionStateKey struct{}
 
 func reportProcessBookEditionCorrection(ctx context.Context, outcome SyncOutcome, reason string, err error) {
 	if state, ok := ctx.Value(processBookEditionCorrectionStateKey{}).(*processBookOwnershipState); ok && state != nil {
+		state.outcome = outcome
+		state.reason = reason
+		state.err = err
+	}
+}
+
+type processBookUserBookCreationStateKey struct{}
+
+func reportProcessBookUserBookCreation(ctx context.Context, outcome SyncOutcome, reason string, err error) {
+	if state, ok := ctx.Value(processBookUserBookCreationStateKey{}).(*processBookOwnershipState); ok && state != nil {
 		state.outcome = outcome
 		state.reason = reason
 		state.err = err
@@ -307,6 +318,7 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 		s.log.Debug("Promoted ASIN from persistent to in-memory cache", map[string]interface{}{
 			"asin": asin,
 		})
+		return book, true
 	}
 
 	if exists {
@@ -439,6 +451,11 @@ func isAttentionOutcome(outcome SyncOutcome) bool {
 
 func isPotentialMismatchOutcome(outcome SyncOutcome) bool {
 	return outcome == OutcomeNeedsReview
+}
+
+func shouldPublishLegacyMismatch(outcome SyncOutcome, err error) bool {
+	return isPotentialMismatchOutcome(outcome) ||
+		(outcome == OutcomeFailed && errors.Is(err, errHardcoverLookupFailed))
 }
 
 func classifyBookLookupOutcome(err error) SyncOutcome {
@@ -622,6 +639,10 @@ func (s *Service) removeLegacyBookNotFoundLocked(bookID string) {
 // Repeated calls for one ABS item replace the prior category/details and do
 // not increase the processed total.
 func (s *Service) recordBookOutcome(book models.AudiobookshelfBook, outcome SyncOutcome, reason string, err error, hcBook *models.HardcoverBook) {
+	s.recordBookOutcomeWithMatchMethod(book, outcome, reason, err, hcBook, "")
+}
+
+func (s *Service) recordBookOutcomeWithMatchMethod(book models.AudiobookshelfBook, outcome SyncOutcome, reason string, err error, hcBook *models.HardcoverBook, matchMethod string) {
 	if s.summary == nil || book.ID == "" {
 		return
 	}
@@ -650,7 +671,7 @@ func (s *Service) recordBookOutcome(book models.AudiobookshelfBook, outcome Sync
 		record.EditionID = hcBook.EditionID
 	}
 	if outcome == OutcomeNeedsReview {
-		record.MatchMethod = "title_author"
+		record.MatchMethod = matchMethod
 	}
 
 	s.summary.Lock()
@@ -670,9 +691,6 @@ func (s *Service) recordBookOutcome(book models.AudiobookshelfBook, outcome Sync
 		if record.EditionID == "" {
 			record.EditionID = previous.EditionID
 		}
-		if record.MatchMethod == "" {
-			record.MatchMethod = previous.MatchMethod
-		}
 		if count := outcomeCountPointer(&s.outcomeCounts, previous.Outcome); count != nil && *count > 0 {
 			(*count)--
 		}
@@ -688,7 +706,7 @@ func (s *Service) recordBookOutcome(book models.AudiobookshelfBook, outcome Sync
 		s.summary.BooksSynced++
 	}
 	s.summary.TotalBooksProcessed = int32(len(s.outcomeRecords))
-	if isPotentialMismatchOutcome(outcome) {
+	if shouldPublishLegacyMismatch(outcome, err) {
 		s.upsertLiveMismatchLocked(book, record)
 	} else {
 		s.removeLiveMismatchLocked(book.ID)
@@ -976,7 +994,15 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 
 		// If the existing user_book is linked to a different edition, update it
 		existingUB, ubErr := s.hardcover.GetUserBook(ctx, strconv.FormatInt(existingUserBookID, 10))
-		if ubErr == nil && existingUB != nil && existingUB.EditionID != editionID {
+		if ubErr != nil {
+			logCtx.Error("Failed to get existing user book details", map[string]interface{}{
+				"error":                ubErr.Error(),
+				"user_book_id":         existingUserBookID,
+				"requested_edition_id": editionID,
+			})
+			return 0, fmt.Errorf("failed to get existing user book details: %w", ubErr)
+		}
+		if existingUB != nil && existingUB.EditionID != editionID {
 			logCtx.Info("Updating existing user book to correct edition", map[string]interface{}{
 				"existing_user_book_id": existingUserBookID,
 				"old_edition_id":        existingUB.EditionID,
@@ -1034,6 +1060,7 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 		logCtx.Info(dryRunMsg, map[string]interface{}{
 			"status": status,
 		})
+		reportProcessBookUserBookCreation(ctx, OutcomeWouldSync, "would create Hardcover user book", nil)
 		// CreateUserBook uses the same -1 sentinel; it must not be treated as a real user-book ID.
 		return -1, nil
 	}
@@ -1076,6 +1103,7 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 
 	newUserBookID, err := s.hardcover.CreateUserBook(ctx, editionID, status)
 	if err != nil {
+		reportProcessBookUserBookCreation(ctx, OutcomeFailed, "failed to create Hardcover user book", err)
 		errMsg := fmt.Sprintf("Failed to create user book: %v", err)
 		s.log.Error(errMsg, map[string]interface{}{
 			"error":     err,
@@ -1088,6 +1116,7 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 	// Convert the new user book ID to an integer64
 	userBookID64, err := strconv.ParseInt(newUserBookID, 10, 64)
 	if err != nil {
+		reportProcessBookUserBookCreation(ctx, OutcomeFailed, "failed to parse created Hardcover user book ID", err)
 		s.log.Error("Invalid user book ID format", map[string]interface{}{
 			"error":      err,
 			"userBookID": newUserBookID,
@@ -1100,6 +1129,7 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 		"userBookID": userBookID64,
 		"status":     status,
 	})
+	reportProcessBookUserBookCreation(ctx, OutcomeSynced, "created Hardcover user book", nil)
 
 	return userBookID64, nil
 }
@@ -1311,6 +1341,7 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 				"library_id": filteredLibraries[i].ID,
 			})
 			if errors.Is(err, errStateCheckpoint) ||
+				errors.Is(err, errInvalidLibraryItemID) ||
 				errors.Is(err, context.Canceled) ||
 				errors.Is(err, context.DeadlineExceeded) {
 				return err
@@ -1458,9 +1489,18 @@ func (s *Service) processLibrary(ctx context.Context, library *audiobookshelf.Au
 
 	// Process each item in the library
 	processed := 0
-	for _, book := range items {
+	for itemIndex, book := range items {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return processed, ctxErr
+		}
+		if book.ID == "" {
+			return processed, fmt.Errorf(
+				"%w: library %q (ID %q), item position %d",
+				errInvalidLibraryItemID,
+				library.Name,
+				library.ID,
+				itemIndex+1,
+			)
 		}
 
 		// Process the item
@@ -1643,11 +1683,13 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	var outcomeError error
 	ownershipState := &processBookOwnershipState{}
 	editionCorrectionState := &processBookOwnershipState{}
+	userBookCreationState := &processBookOwnershipState{}
 	var (
-		hcBook    *models.HardcoverBook
-		findErr   error
-		editionID string
-		stateKey  string
+		hcBook      *models.HardcoverBook
+		findErr     error
+		editionID   string
+		stateKey    string
+		matchMethod string
 	)
 	setOutcome := func(outcome SyncOutcome, reason string) {
 		outcomeHint = outcome
@@ -1656,12 +1698,13 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	ctx = context.WithValue(ctx, processBookOutcomeReporterKey{}, processBookOutcomeReporter(setOutcome))
 	ctx = context.WithValue(ctx, processBookOwnershipStateKey{}, ownershipState)
 	ctx = context.WithValue(ctx, processBookEditionCorrectionStateKey{}, editionCorrectionState)
+	ctx = context.WithValue(ctx, processBookUserBookCreationStateKey{}, userBookCreationState)
 	defer func() {
-		// Ownership and edition correction are real Hardcover mutations that can
+		// Ownership, edition correction, and user book creation are real Hardcover mutations that can
 		// happen while matching an item, before later progress classification.
-		// Preserve either mutation in the final outcome when later work is only a
+		// Preserve these mutations in the final outcome when later work is only a
 		// no-op or threshold skip.
-		for _, mutationState := range []*processBookOwnershipState{ownershipState, editionCorrectionState} {
+		for _, mutationState := range []*processBookOwnershipState{ownershipState, editionCorrectionState, userBookCreationState} {
 			switch mutationState.outcome {
 			case OutcomeFailed:
 				if outcomeHint != OutcomeFailed {
@@ -1694,7 +1737,7 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 				outcomeHint = OutcomeSkipped
 			}
 		}
-		s.recordBookOutcome(book, outcomeHint, outcomeReason, outcomeError, hcBook)
+		s.recordBookOutcomeWithMatchMethod(book, outcomeHint, outcomeReason, outcomeError, hcBook, matchMethod)
 		bookLog.Debug("Book processing outcome recorded", map[string]interface{}{
 			"outcome":               outcomeHint,
 			"total_books_processed": s.processedOutcomeTotal(),
@@ -1800,12 +1843,17 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	if findErr != nil {
 		// Handle mismatch case (found by title/author)
 		if errors.Is(findErr, errHardcoverTitleOnly) || strings.Contains(findErr.Error(), "found by title/author only") {
+			matchMethod = "title_author"
 			setOutcome(OutcomeNeedsReview, "found by title/author only - manual verification required")
 			// Publish the attention result before the optional title-search and
 			// mismatch enrichment calls below can block on external services.
-			s.recordBookOutcome(book, OutcomeNeedsReview, outcomeReason, nil, hcBook)
-			// Try to find the book by title/author to get the Hardcover book details
-			hcBook, _ = s.findBookInHardcoverByTitleAuthor(ctx, book)
+			s.recordBookOutcomeWithMatchMethod(book, OutcomeNeedsReview, outcomeReason, nil, hcBook, matchMethod)
+			// Try to find the book by title/author to get the Hardcover book details.
+			// Keep the candidate from the initial lookup when this optional
+			// enrichment lookup fails or returns no book.
+			if enrichedBook, _ := s.findBookInHardcoverByTitleAuthor(ctx, book); enrichedBook != nil {
+				hcBook = enrichedBook
+			}
 			foundByTitleAuthor := hcBook != nil
 
 			// Build cover URL if cover path is available
@@ -1938,7 +1986,7 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 
 			// Record the mismatch via global collector so SaveToFile and Audnex enrichment run
 			// Publish the attention item before enrichment can perform external lookups.
-			s.recordBookOutcome(book, OutcomeNeedsReview, "found by title/author only - manual verification required", nil, hcBook)
+			s.recordBookOutcomeWithMatchMethod(book, OutcomeNeedsReview, "found by title/author only - manual verification required", nil, hcBook, matchMethod)
 			mismatch.AddWithMetadata(
 				mismatch.MediaMetadata{
 					Title:         book.Media.Metadata.Title,
@@ -3891,7 +3939,7 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 					"progress_delta":           progressDelta,
 					"prior_state_last_updated": priorState.LastUpdated,
 				})
-				reportProcessBookOutcome(ctx, OutcomeAlreadyCurrent, "recent sync state already matches Hardcover progress")
+				reportProcessBookOutcome(ctx, OutcomeSkipped, "skipped read creation because recent sync state matches progress but the Hardcover read is unverified")
 				return nil
 			}
 		}
@@ -4696,6 +4744,11 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 			// error conclusive. Preserve the technical failure classification.
 			if lookupErr != nil && errors.Is(err, errHardcoverBookNotFound) {
 				return nil, fmt.Errorf("%w: title/author fallback after identifier lookup: %w", errHardcoverLookupFailed, lookupErr)
+			}
+			// Keep the title/author candidate so callers can retain its details
+			// while classifying the result as a potential mismatch.
+			if errors.Is(err, errHardcoverTitleOnly) {
+				return hcBook, fmt.Errorf("book found but edition not available: %w", err)
 			}
 			// Return the error to be handled as a mismatch
 			return nil, fmt.Errorf("book found but edition not available: %w", err)
