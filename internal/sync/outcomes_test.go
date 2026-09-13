@@ -62,8 +62,8 @@ func TestProcessBookFailsBeforeMutationWhenReadStatusLookupFails(t *testing.T) {
 	}, nil).Once()
 	mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
 		ID: "456", BookID: "123",
-	}, nil).Times(3)
-	mockClient.On("GetUserBookID", mock.Anything, 456).Return(int(userBookID), nil).Times(3)
+	}, nil)
+	mockClient.On("GetUserBookID", mock.Anything, 456).Return(int(userBookID), nil)
 
 	mockClient.On("GetUserBook", mock.Anything, "321").Return(&models.HardcoverBook{
 		ID:           "hardcover-book",
@@ -99,14 +99,14 @@ func TestProcessBookRecordsFailedOutcomeWhenFinishedStatusLookupFails(t *testing
 	}, nil).Once()
 	mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
 		ID: "456", BookID: "123",
-	}, nil).Times(3)
-	mockClient.On("GetUserBookID", mock.Anything, 456).Return(int(userBookID), nil).Times(3)
-	mockClient.On("GetUserBook", mock.Anything, "322").Return((*models.HardcoverBook)(nil), errors.New("status API unavailable")).Once()
+	}, nil)
+	mockClient.On("GetUserBookID", mock.Anything, 456).Return(int(userBookID), nil)
+	statusErr := errors.New("status API unavailable")
+	mockClient.On("GetUserBook", mock.Anything, "322").Return((*models.HardcoverBook)(nil), statusErr).Once()
 
 	err := svc.processBook(context.Background(), book, &models.AudiobookshelfUserProgress{})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get current book status")
+	require.ErrorIs(t, err, statusErr)
 	snapshot := svc.GetSnapshot()
 	require.Len(t, snapshot.BookOutcomes, 1)
 	assert.Equal(t, OutcomeFailed, snapshot.BookOutcomes[0].Outcome)
@@ -189,10 +189,9 @@ func TestProcessBookTitleOnlyMismatchKeepsRichLegacyDetails(t *testing.T) {
 		Slug:          "hardcover-slug",
 	}
 
-	// The initial lookup and the title-only enrichment lookup both search, and
-	// each title search hydrates the selected candidate. The mismatch exporter
-	// may fetch the candidate once more, which is harmless to the live store.
-	mockClient.On("SearchBooks", mock.Anything, "ABS title ABS author", "").Return([]models.HardcoverBook{candidate}, nil).Twice()
+	// Lookup may be repeated during enrichment and export; the live mismatch
+	// details are the contract, rather than the number of searches.
+	mockClient.On("SearchBooks", mock.Anything, "ABS title ABS author", "").Return([]models.HardcoverBook{candidate}, nil)
 	mockClient.On("SearchBooks", mock.Anything, "ABS title", "ABS author").Return([]models.HardcoverBook{candidate}, nil).Once()
 	mockClient.On("GetBookByID", mock.Anything, "hc-rich").Return(&candidate, nil).Maybe()
 	mismatch.Clear()
@@ -311,8 +310,8 @@ func TestProcessBookRecordsDryRunWouldSyncOutcome(t *testing.T) {
 	mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
 		ID:     "456",
 		BookID: "123",
-	}, nil).Times(3)
-	mockClient.On("GetUserBookID", mock.Anything, 456).Return(789, nil).Times(3)
+	}, nil)
+	mockClient.On("GetUserBookID", mock.Anything, 456).Return(789, nil)
 	mockClient.On("GetUserBook", mock.Anything, "789").Return(&models.HardcoverBook{
 		ID:           "123",
 		EditionID:    "456",

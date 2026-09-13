@@ -1469,8 +1469,7 @@ func TestHandleInProgressBook_GetUserBookReadsError(t *testing.T) {
 
 	// A failed read-status lookup is inconclusive, so do not create a duplicate
 	// read or attempt any other Hardcover mutation.
-	assert.Error(t, err, "Should return an error when GetUserBookReads fails")
-	assert.Contains(t, err.Error(), "failed to get current read status")
+	assert.ErrorIs(t, err, expectedErr)
 	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)

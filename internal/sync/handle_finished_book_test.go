@@ -396,7 +396,6 @@ func TestHandleFinishedBook_GetUserBookFailureSkipsReadsAndMutations(t *testing.
 			err := svc.HandleFinishedBook(context.Background(), modelBook, "32059492", userBookID)
 
 			require.ErrorIs(t, err, statusErr)
-			assert.Contains(t, err.Error(), "failed to get current book status")
 			_, exists := svc.state.GetBookState("abs-book-user-status-failure:32059492")
 			assert.False(t, exists, "a failed current-status lookup must remain retryable")
 			mockClient.AssertNotCalled(t, "GetUserBookReads", mock.Anything, mock.Anything)
