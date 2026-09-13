@@ -1463,24 +1463,17 @@ func TestHandleInProgressBook_GetUserBookReadsError(t *testing.T) {
 		UserBookID: userBookID,
 	}).Return(nil, expectedErr).Once()
 
-	// Second-chance full fetch also returns the same error
-
-	// Note: Second GetUserBook call is now served from cache, so no additional mock needed
-
-	// Mock the InsertUserBookRead call
-	progressSeconds := 100
-	mockClient.On("InsertUserBookRead", mock.Anything, mock.MatchedBy(func(input hardcover.InsertUserBookReadInput) bool {
-		return input.UserBookID == userBookID &&
-			input.DatesRead.ProgressSeconds != nil &&
-			*input.DatesRead.ProgressSeconds == progressSeconds
-	})).Return(789, nil).Once()
-
 	// Call the function
 	stateKey := fmt.Sprintf("%s:test-edition", audiobook.ID)
 	err := svc.handleInProgressBook(context.Background(), userBookID, *audiobook, stateKey)
 
-	// Verify results - the function should continue despite the GetUserBookReads error
-	assert.NoError(t, err, "Should not return an error when GetUserBookReads fails but we can create a new read")
+	// A failed read-status lookup is inconclusive, so do not create a duplicate
+	// read or attempt any other Hardcover mutation.
+	assert.Error(t, err, "Should return an error when GetUserBookReads fails")
+	assert.Contains(t, err.Error(), "failed to get current read status")
+	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
 	mockClient.AssertExpectations(t)
 }
 
