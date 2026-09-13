@@ -190,7 +190,10 @@ reviewable changes, each independently testable and usable after merge:
    ID in UI profile URLs, reject unsafe new IDs, and extract IDs from router path
    parameters rather than splitting decoded paths so existing delimiter IDs
    remain addressable. Verify status, summary, sync actions, and profile CRUD at
-   the HTTP boundary.
+   the HTTP boundary. Clear a deleted profile's `actionErrors` entry so a reused
+   ID cannot inherit an old Start/Cancel failure. Remove or debug-gate routine
+   `console.log` output in `renderStatuses` and `fetchSyncSummary`, while keeping
+   actual error reporting.
    This PR should not redefine backend categories; any contract gaps found
    during UI work belong in PR 2 first.
 4. **Run lifecycle and report history (follow-up).** Add phase/activity state,
