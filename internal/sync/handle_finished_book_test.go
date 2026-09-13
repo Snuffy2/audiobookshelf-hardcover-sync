@@ -14,6 +14,7 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // This test file tests the HandleFinishedBook function
@@ -375,6 +376,36 @@ func TestHandleFinishedBook_ExistingFinishedReadStatusFailureDoesNotAdvanceState
 	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertExpectations(t)
+}
+
+func TestHandleFinishedBook_GetUserBookFailureSkipsReadsAndMutations(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry_run_%t", dryRun), func(t *testing.T) {
+			svc, mockClient := createTestService()
+			svc.config = createTestConfigForTests(true)
+			svc.config.Sync.DryRun = dryRun
+
+			book := createTestFinishedBook("abs-book-user-status-failure", "User Status Failure", "Test Author", "B125", "978125")
+			modelBook := convertTestBookToModel(book)
+			userBookID := int64(7792559)
+			userBookIDStr := strconv.FormatInt(userBookID, 10)
+			statusErr := fmt.Errorf("current user book unavailable")
+
+			mockClient.On("GetUserBook", mock.Anything, userBookIDStr).Return((*models.HardcoverBook)(nil), statusErr).Once()
+
+			err := svc.HandleFinishedBook(context.Background(), modelBook, "32059492", userBookID)
+
+			require.ErrorIs(t, err, statusErr)
+			assert.Contains(t, err.Error(), "failed to get current book status")
+			_, exists := svc.state.GetBookState("abs-book-user-status-failure:32059492")
+			assert.False(t, exists, "a failed current-status lookup must remain retryable")
+			mockClient.AssertNotCalled(t, "GetUserBookReads", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
+			mockClient.AssertExpectations(t)
+		})
+	}
 }
 
 // Helper functions for test data

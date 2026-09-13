@@ -155,12 +155,19 @@ func (s *MultiUserService) currentSyncService(profileID string) (*sync.Service, 
 	// Keep the lock order consistent with register/removeSyncService so the
 	// service and generation are read as one pair during replacement.
 	s.syncMutex.RLock()
+	defer s.syncMutex.RUnlock()
+	return s.currentSyncServiceLocked(profileID)
+}
+
+// currentSyncServiceLocked is currentSyncService with syncMutex already held.
+// Callers must retain the lock while using the returned service and generation
+// pair so a replacement cannot split the pair from the active run.
+func (s *MultiUserService) currentSyncServiceLocked(profileID string) (*sync.Service, uint64) {
 	s.servicesMutex.RLock()
+	defer s.servicesMutex.RUnlock()
 	service, exists := s.syncServices[profileID]
 	generation := s.serviceRuns[profileID]
 	activeRun, active := s.activeRuns[profileID]
-	s.servicesMutex.RUnlock()
-	s.syncMutex.RUnlock()
 	if !exists || service == nil {
 		return nil, 0
 	}
@@ -177,6 +184,13 @@ func (s *MultiUserService) currentSyncService(profileID string) (*sync.Service, 
 
 // GetProfileStatus returns the sync status for a profile
 func (s *MultiUserService) GetProfileStatus(profileID string) *SyncProfileStatus {
+	// Sync lifecycle writers update activeRuns, profileStatuses, and the
+	// service registration under this lock. Hold it while cloning status and
+	// reading the current service so a replacement cannot mix generations in a
+	// single response.
+	s.syncMutex.RLock()
+	defer s.syncMutex.RUnlock()
+
 	s.statusMutex.RLock()
 	status, exists := s.profileStatuses[profileID]
 	status = cloneProfileStatus(status)
@@ -215,15 +229,18 @@ func (s *MultiUserService) GetProfileStatus(profileID string) *SyncProfileStatus
 	}
 
 	// If there's an active sync service, get the latest status from it
-	svc, generation := s.currentSyncService(profileID)
+	svc, generation := s.currentSyncServiceLocked(profileID)
 
 	if svc != nil {
 		if provider, ok := interface{}(svc).(syncSnapshotProvider); ok {
-			snapshot := s.normalizeRunSnapshot(profileID, generation, provider.GetSnapshot())
-			// A replacement may start while the provider is producing its
-			// snapshot. Keep the already-cloned current status in that case;
-			// applying the old service's details would mix runs.
-			if generation == 0 || s.isActiveGeneration(profileID, generation) {
+			snapshot := provider.GetSnapshot()
+			if generation > 0 {
+				snapshot = s.normalizeRunSnapshotLocked(profileID, generation, snapshot)
+			}
+			// Keep the stored status when its run identity differs from the
+			// active service. This is defensive for an in-memory replacement
+			// observed between lifecycle updates and prevents mixed responses.
+			if generation == 0 || status.Snapshot == nil || status.Snapshot.RunID == "" || snapshot.RunID == "" || status.Snapshot.RunID == snapshot.RunID {
 				applySnapshotToStatus(status, snapshot)
 				if status.Snapshot.UserID == "" {
 					status.Snapshot.UserID = profileID
@@ -444,15 +461,14 @@ func (s *MultiUserService) activeRun(profileID string, generation uint64) (activ
 	return run, true
 }
 
-func (s *MultiUserService) isActiveGeneration(profileID string, generation uint64) bool {
+func (s *MultiUserService) normalizeRunSnapshot(profileID string, generation uint64, snapshot sync.SyncSnapshot) sync.SyncSnapshot {
 	s.syncMutex.RLock()
-	run, ok := s.activeRuns[profileID]
-	s.syncMutex.RUnlock()
-	return ok && run.generation == generation
+	defer s.syncMutex.RUnlock()
+	return s.normalizeRunSnapshotLocked(profileID, generation, snapshot)
 }
 
-func (s *MultiUserService) normalizeRunSnapshot(profileID string, generation uint64, snapshot sync.SyncSnapshot) sync.SyncSnapshot {
-	if run, ok := s.activeRun(profileID, generation); ok {
+func (s *MultiUserService) normalizeRunSnapshotLocked(profileID string, generation uint64, snapshot sync.SyncSnapshot) sync.SyncSnapshot {
+	if run, ok := s.activeRuns[profileID]; ok && run.generation == generation {
 		snapshot.UserID = profileID
 		snapshot.RunID = run.runID
 		snapshot.RunStartedAt = run.startedAt
