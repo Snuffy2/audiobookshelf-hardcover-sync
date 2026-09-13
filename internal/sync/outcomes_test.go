@@ -331,83 +331,59 @@ func TestProcessBookRecordsDryRunWouldSyncOutcome(t *testing.T) {
 }
 
 func TestProcessBookDryRunNewUserBookWouldSyncWithoutMutation(t *testing.T) {
-	svc, mockClient := createTestService()
-	svc.config.Sync.DryRun = true
-	svc.config.Sync.ProcessUnreadBooks = true
-	svc.config.Sync.SyncOwned = false
-	book := *toAudiobookshelfBook(createTestFinishedBook(
-		"dry-run-new-user-book", "Dry Run New User Book", "Author", "DRYRUN-NEW", ""))
+	for _, tt := range []struct {
+		name string
+		book models.AudiobookshelfBook
+	}{
+		{
+			name: "finished",
+			book: *toAudiobookshelfBook(createTestFinishedBook(
+				"dry-run-new-finished", "Dry Run New Finished", "Author", "DRYRUN-FINISHED", "")),
+		},
+		{
+			name: "in progress",
+			book: func() models.AudiobookshelfBook {
+				book := *toAudiobookshelfBook(createTestBook(
+					"dry-run-new-in-progress", "Dry Run New In Progress", "Author", "DRYRUN-IN-PROGRESS", ""))
+				book.Progress.CurrentTime = 120
+				return book
+			}(),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, mockClient := createTestService()
+			svc.config.Sync.DryRun = true
+			svc.config.Sync.ProcessUnreadBooks = true
+			svc.config.Sync.SyncOwned = false
 
-	mockClient.On("SearchBookByASIN", mock.Anything, "DRYRUN-NEW").Return(&models.HardcoverBook{
-		ID:        "123",
-		EditionID: "456",
-	}, nil).Once()
-	mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
-		ID: "456", BookID: "123",
-	}, nil).Maybe()
-	mockClient.On("GetUserBookID", mock.Anything, 456).Return(0, nil).Maybe()
+			mockClient.On("SearchBookByASIN", mock.Anything, tt.book.Media.Metadata.ASIN).Return(&models.HardcoverBook{
+				ID: "123", EditionID: "456",
+			}, nil).Once()
+			mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
+				ID: "456", BookID: "123",
+			}, nil).Maybe()
+			mockClient.On("GetUserBookID", mock.Anything, 456).Return(0, nil).Maybe()
 
-	require.NoError(t, svc.processBook(context.Background(), book, &models.AudiobookshelfUserProgress{}))
+			require.NoError(t, svc.processBook(context.Background(), tt.book, &models.AudiobookshelfUserProgress{}))
 
-	snapshot := svc.GetSnapshot()
-	require.Len(t, snapshot.BookOutcomes, 1)
-	assert.Equal(t, OutcomeWouldSync, snapshot.BookOutcomes[0].Outcome)
-	assert.Equal(t, int32(1), snapshot.OutcomeCounts.WouldSync)
-	assert.Equal(t, int32(1), snapshot.ProcessedSoFar)
-	_, exists := svc.state.GetBookState(book.ID + ":456")
-	assert.False(t, exists, "dry-run planned creation must not advance sync state")
-	mockClient.AssertNotCalled(t, "GetUserBook", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "GetUserBookReads", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "CreateUserBook", mock.Anything, mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "MarkEditionAsOwned", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "UpdateReadingProgress", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	mockClient.AssertExpectations(t)
-}
-
-func TestProcessBookDryRunNewInProgressUserBookWouldSyncWithoutMutation(t *testing.T) {
-	svc, mockClient := createTestService()
-	svc.config.Sync.DryRun = true
-	svc.config.Sync.ProcessUnreadBooks = true
-	svc.config.Sync.SyncOwned = false
-	book := toAudiobookshelfBook(createTestBook(
-		"dry-run-new-in-progress-user-book",
-		"Dry Run New In Progress User Book",
-		"Author",
-		"DRYRUN-IN-PROGRESS",
-		"",
-	))
-	book.Progress.CurrentTime = 120
-
-	mockClient.On("SearchBookByASIN", mock.Anything, "DRYRUN-IN-PROGRESS").Return(&models.HardcoverBook{
-		ID:        "123",
-		EditionID: "456",
-	}, nil).Once()
-	mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
-		ID: "456", BookID: "123",
-	}, nil).Maybe()
-	mockClient.On("GetUserBookID", mock.Anything, 456).Return(0, nil).Maybe()
-
-	require.NoError(t, svc.processBook(context.Background(), *book, &models.AudiobookshelfUserProgress{}))
-
-	snapshot := svc.GetSnapshot()
-	require.Len(t, snapshot.BookOutcomes, 1)
-	assert.Equal(t, OutcomeWouldSync, snapshot.BookOutcomes[0].Outcome)
-	assert.Equal(t, int32(1), snapshot.OutcomeCounts.WouldSync)
-	assert.Equal(t, int32(1), snapshot.ProcessedSoFar)
-	_, exists := svc.state.GetBookState(book.ID + ":456")
-	assert.False(t, exists, "dry-run planned creation must not advance sync state")
-	mockClient.AssertNotCalled(t, "GetUserBook", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "GetUserBookReads", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "CreateUserBook", mock.Anything, mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "MarkEditionAsOwned", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
-	mockClient.AssertNotCalled(t, "UpdateReadingProgress", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	mockClient.AssertExpectations(t)
+			snapshot := svc.GetSnapshot()
+			require.Len(t, snapshot.BookOutcomes, 1)
+			assert.Equal(t, OutcomeWouldSync, snapshot.BookOutcomes[0].Outcome)
+			assert.Equal(t, int32(1), snapshot.OutcomeCounts.WouldSync)
+			assert.Equal(t, int32(1), snapshot.ProcessedSoFar)
+			_, exists := svc.state.GetBookState(tt.book.ID + ":456")
+			assert.False(t, exists, "dry-run planned creation must not advance sync state")
+			mockClient.AssertNotCalled(t, "GetUserBook", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "GetUserBookReads", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "CreateUserBook", mock.Anything, mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "MarkEditionAsOwned", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateReadingProgress", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockClient.AssertExpectations(t)
+		})
+	}
 }
 
 func TestProcessBookRecordsAlreadyCurrentForNoChangeDryRun(t *testing.T) {
