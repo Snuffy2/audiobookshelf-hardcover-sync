@@ -69,24 +69,27 @@ than silently treating unseen books as processed.
 
 ## Implementation sequence
 
-1. Add a per-run, per-profile outcome store to the sync service. Replace the
+1. In **step 2a**, add a per-run outcome store to the sync service. Replace the
    `bookProcessed` counting decision with one final outcome per `processBook`
    exit path. Update the processed count, one category count, and any associated
    book record together under the summary lock. Keep a clear mapping for early
    filters, incremental skips, confirmed matches, title-only matches, true
    no-results, API failures, and Hardcover write failures. Preserve existing
-   sync-state and dry-run safety rules.
-2. Record `needs review` and `not found` as soon as each attempt resolves.
+   sync-state and dry-run safety rules. Keep the existing status and summary
+   routes and their response contract usable without step 2b.
+2. In **step 2b**, record `needs review` and `not found` as soon as each
+   attempt resolves.
    Enrichment may later replace details for the same book ID; it must not delay
    the live count or duplicate the book. Keep mismatch-file persistence as a
    separate operation. Remove reliance on the package-global mismatch list for
    per-profile status, since concurrent profiles must remain isolated.
-3. Return one consistent, race-safe current-run snapshot through both status
-   and summary API paths. Include run ID, start time, state, processed count,
-   candidate total, and category counts. Serve book lists for attention
-   categories from a run-scoped details endpoint. Preserve or version existing
-   API fields deliberately and document their semantics. The UI should not
-   combine counts from one response with lists from another run.
+3. Also in **step 2b**, return one consistent, race-safe current-run snapshot
+   through both status and summary API paths. Include run ID, start time, state,
+   processed count, candidate total, category counts, and live attention
+   results. Preserve or version existing API fields deliberately and document
+   their semantics.
+   Step 3 moves large detail lists to a run-scoped, on-demand endpoint; the UI
+   should not combine counts from one response with lists from another run.
 4. Show `processed_so_far / books_total` and the primary categories once on
    the status card. Use View Details for the full breakdown, skip reasons,
    action/match-method details, and live attention lists. Refresh an open
@@ -98,13 +101,16 @@ than silently treating unseen books as processed.
    visibly separate and say that they still need verification. Only show a
    definitive clean state when the run has completed without unresolved or
    failed outcomes.
-6. Validate through the real sync-service to status/summary API path and UI
-   rendering: a title-only candidate appears before the next book completes;
-   a conclusive no-result appears immediately; an API timeout appears under
-   Failed; skips and dry-run actions reconcile to processed; simultaneous
-   profiles do not share results; completion preserves the live counts; and
-   every observed snapshot satisfies the category-sum invariant. Verify the
-   existing dry-run no-mutation contract remains intact.
+6. Validate each boundary with proportionate behavior tests. For step 2a,
+   exercise the real sync service: skips and dry-run actions reconcile to
+   processed, technical failures are not missing books, and dry run still makes
+   no Hardcover mutation. For step 2b, exercise the status and summary HTTP
+   paths while a run is active: a title-only candidate and a conclusive
+   no-result appear promptly, an API timeout appears under Failed, simultaneous
+   profiles do not share results, completion preserves live counts, and each
+   observed snapshot satisfies the category-sum invariant. Step 3 validates
+   the UI rendering and detail view. Reuse fixtures and avoid tests that only
+   repeat internal bookkeeping or assert incidental call order.
 
 ## Smooth refresh approach
 
@@ -168,18 +174,28 @@ successful result.
 Keep this document as one planning artifact. Split implementation into these
 reviewable changes, each independently testable and usable after merge:
 
-1. **Quiet background refresh (independent, first).** Stop showing the global
+- **PR 1: Quiet background refresh (independent, first).** Stop showing the global
    loading overlay for timer-driven polls, avoid overlapping/stale responses,
    and leave unchanged cards alone. Keep explicit loading feedback for initial
    load and user actions. This addresses the visible flash without waiting for
    the backend accounting work.
-2. **Per-run outcomes and live status API (backend foundation).** Give every
-   attempted book one outcome, reconcile all category counts to processed,
-   classify technical failures separately, and publish immediate per-profile
-   mismatch and missing-book results. Include a run ID and consistent
-   snapshots. Preserve legacy response fields until the new UI consumes the
-   new contract, so the existing interface remains usable between PRs.
-3. **Sync Status and View Details redesign (depends on PR 2).** Consume the
+- **PR 2a: Per-run outcome accounting (independently deployable).** Give every
+    attempted book one outcome within the sync service, reconcile all category
+    counts to processed, and classify technical failures separately from
+    conclusive no-results. Preserve dry-run and sync-state safety and the
+    existing status/summary API contract. The service and current UI must run
+    normally after this PR merges; the new outcomes need not be visible to API
+    clients yet. Keep tests focused on real sync behavior and externally
+    meaningful failure paths.
+- **PR 2b: Live per-profile status API (depends on PR 2a).** Publish immediate
+    mismatch and missing-book results from the per-run store, isolated by
+    profile. Expose a consistent, race-safe snapshot with run ID, start time,
+    state, candidate total, processed count, category counts, and attention
+    results through both status and summary paths. Preserve legacy response
+    fields so the current UI and API clients remain usable before PR 3. Validate
+    live visibility, profile isolation, run replacement, and count coherence
+    through the HTTP boundary with shared, minimal fixtures.
+- **PR 3: Sync Status and View Details redesign (depends on PR 2b).** Consume the
    outcome contract, remove the duplicate `Books Synced` and misleading
    all-found text, show the full category breakdown, and update an open details
    view smoothly. Keep large detail lists on a run-scoped, on-demand path and
@@ -202,11 +218,11 @@ reviewable changes, each independently testable and usable after merge:
    for Web UI mode, once status and summary routes resolve the active service
    through `MultiUserService`.
    This PR should not redefine backend categories; any contract gaps found
-   during UI work belong in PR 2 first.
-4. **Run lifecycle and report history (follow-up).** Add phase/activity state,
+   during UI work belong in PR 2a or 2b first, according to ownership.
+- **PR 4: Run lifecycle and report history (follow-up).** Add phase/activity state,
    truthful canceled/failed partial reports, separate last-attempted from
    last-successful timestamps, and persist a bounded final report across app
-   restarts. Build on PR 2's in-memory run snapshot, but defer durable and
+   restarts. Build on PR 2b's in-memory run snapshot, but defer durable and
    legacy lifecycle semantics: do not persist a dry-run `LastSync` as a real
    successful sync, and keep legacy profile terminal status aligned with the
    failed/canceled run snapshot during the brief final-publication window. This
@@ -220,10 +236,13 @@ reviewable changes, each independently testable and usable after merge:
    here only if observed list size or poll cost warrants it; otherwise keep
    that as a separate measured optimization.
 
-PRs 1 and 2 can be prepared independently; PR 3 follows PR 2. PR 4 can follow
-the core experience. Do not combine all four into one PR: it would mix a small
-refresh fix, counting semantics, UI rendering, and persistence changes, making
-review and rollback unnecessarily difficult.
+PRs 1 and 2a can be prepared independently. PR 2a must build, run, and remain
+safe with the existing UI and API even if PR 2b is delayed; PR 2b follows 2a,
+and PR 3 follows 2b. PR 4 can follow the core experience. Split the current
+backend work by responsibility rather than cherry-picking intertwined commits,
+and keep the tests proportionate to each PR's observable behavior. Do not
+combine refresh, accounting, API presentation, UI rendering, and persistence
+in one PR: that would make review and rollback unnecessarily difficult.
 
 ## Acceptance example
 
