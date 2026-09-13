@@ -506,6 +506,12 @@ func (h *Handler) GetSyncSummary(w http.ResponseWriter, r *http.Request) {
 	// Prefer the profile status snapshot. Multiuser resolves and copies the
 	// active service snapshot under one profile, keeping all response fields on
 	// the same run.
+	if snapshot == nil {
+		if syncSvc, exists := h.multiUserService.GetSyncService(profileID); exists && syncSvc != nil {
+			current := syncSvc.GetSnapshot()
+			snapshot = &current
+		}
+	}
 	if snapshot != nil {
 		summary = &sync.SyncSummary{
 			UserID:              snapshot.UserID,
@@ -514,17 +520,6 @@ func (h *Handler) GetSyncSummary(w http.ResponseWriter, r *http.Request) {
 			BooksTotal:          snapshot.BooksTotal,
 			BooksNotFound:       append([]sync.BookNotFoundInfo(nil), snapshot.BooksNotFound...),
 			Mismatches:          append([]mismatch.BookMismatch(nil), snapshot.Mismatches...),
-		}
-	} else if syncSvc, exists := h.multiUserService.GetSyncService(profileID); exists && syncSvc != nil {
-		current := syncSvc.GetSnapshot()
-		snapshot = &current
-		summary = &sync.SyncSummary{
-			UserID:              current.UserID,
-			TotalBooksProcessed: current.TotalBooksProcessed,
-			BooksSynced:         current.BooksSynced,
-			BooksTotal:          current.BooksTotal,
-			BooksNotFound:       append([]sync.BookNotFoundInfo(nil), current.BooksNotFound...),
-			Mismatches:          append([]mismatch.BookMismatch(nil), current.Mismatches...),
 		}
 	} else {
 		// If no active sync service, try to get the last sync status
