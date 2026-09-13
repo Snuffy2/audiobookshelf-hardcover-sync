@@ -85,6 +85,41 @@ func TestProcessBookFailsBeforeMutationWhenReadStatusLookupFails(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
+func TestProcessBookRecordsFailedOutcomeWhenFinishedStatusLookupFails(t *testing.T) {
+	svc, mockClient := createTestService()
+	svc.config.Sync.ProcessUnreadBooks = true
+	svc.config.Sync.SyncOwned = false
+	book := *toAudiobookshelfBook(createTestFinishedBook(
+		"finished-status-lookup-failure", "Finished Status Lookup Failure", "Author", "FINISHED-STATUS-ERROR", ""))
+	userBookID := int64(322)
+
+	mockClient.On("SearchBookByASIN", mock.Anything, "FINISHED-STATUS-ERROR").Return(&models.HardcoverBook{
+		ID:        "hardcover-book",
+		EditionID: "456",
+	}, nil).Once()
+	mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
+		ID: "456", BookID: "123",
+	}, nil).Times(3)
+	mockClient.On("GetUserBookID", mock.Anything, 456).Return(int(userBookID), nil).Times(3)
+	mockClient.On("GetUserBook", mock.Anything, "322").Return((*models.HardcoverBook)(nil), errors.New("status API unavailable")).Once()
+
+	err := svc.processBook(context.Background(), book, &models.AudiobookshelfUserProgress{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get current book status")
+	snapshot := svc.GetSnapshot()
+	require.Len(t, snapshot.BookOutcomes, 1)
+	assert.Equal(t, OutcomeFailed, snapshot.BookOutcomes[0].Outcome)
+	assert.Contains(t, snapshot.BookOutcomes[0].Error, "status API unavailable")
+	_, exists := svc.state.GetBookState(book.ID + ":456")
+	assert.False(t, exists, "a failed finished-book lookup must not advance sync state")
+	mockClient.AssertNotCalled(t, "GetUserBookReads", mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
+	mockClient.AssertExpectations(t)
+}
+
 func TestProcessBookClassifiesLookupFailureSeparatelyFromNotFound(t *testing.T) {
 	svc, mockClient := createTestService()
 	svc.config.Sync.ProcessUnreadBooks = true

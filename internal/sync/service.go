@@ -2665,9 +2665,10 @@ func (s *Service) HandleFinishedBook(ctx context.Context, book models.Audiobooks
 		}
 	}
 	if getUserBookErr != nil {
-		log.Warn("Failed to get current book status, will attempt to process anyway", map[string]interface{}{
+		log.Error("Failed to get current book status", map[string]interface{}{
 			"error": getUserBookErr,
 		})
+		return fmt.Errorf("failed to get current book status: %w", getUserBookErr)
 	} else if userBook != nil {
 		if s.config.Sync.PreserveDNF && s.isBookDNF(userBook) {
 			reportProcessBookOutcome(ctx, OutcomeSkipped, "preserved Hardcover DNF status")
