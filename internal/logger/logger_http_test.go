@@ -100,7 +100,7 @@ func TestHTTPMiddleware(t *testing.T) {
 
 			// Configure the logger with JSON format for easier parsing
 			Setup(Config{
-				Level:      "info",
+				Level:      "debug",
 				Format:     FormatJSON,
 				Output:     &buf,
 				TimeFormat: "", // No timestamp in tests for easier assertions
@@ -126,7 +126,6 @@ func TestHTTPMiddleware(t *testing.T) {
 
 		// Get the log output
 		output := buf.String()
-
 		// Check that the log contains the expected fields
 		for _, expected := range tt.expectedLogs {
 			assert.Contains(t, output, expected, "Log output should contain %q", expected)
