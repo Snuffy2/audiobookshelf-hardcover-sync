@@ -474,6 +474,42 @@ func (s *Service) upsertLiveMismatchLocked(book models.AudiobookshelfBook, recor
 		if mismatchRecord.HardcoverBookID == "" {
 			mismatchRecord.HardcoverBookID = previous.HardcoverBookID
 		}
+		if mismatchRecord.ReleaseDate == "" {
+			mismatchRecord.ReleaseDate = previous.ReleaseDate
+		}
+		if mismatchRecord.ImageURL == "" {
+			mismatchRecord.ImageURL = previous.ImageURL
+		}
+		if mismatchRecord.EditionFormat == "" {
+			mismatchRecord.EditionFormat = previous.EditionFormat
+		}
+		if mismatchRecord.EditionInfo == "" {
+			mismatchRecord.EditionInfo = previous.EditionInfo
+		}
+		if mismatchRecord.HardcoverTitle == "" {
+			mismatchRecord.HardcoverTitle = previous.HardcoverTitle
+		}
+		if mismatchRecord.HardcoverAuthor == "" {
+			mismatchRecord.HardcoverAuthor = previous.HardcoverAuthor
+		}
+		if mismatchRecord.HardcoverPublishedYear == "" {
+			mismatchRecord.HardcoverPublishedYear = previous.HardcoverPublishedYear
+		}
+		if mismatchRecord.HardcoverCoverURL == "" {
+			mismatchRecord.HardcoverCoverURL = previous.HardcoverCoverURL
+		}
+		if mismatchRecord.HardcoverPublisher == "" {
+			mismatchRecord.HardcoverPublisher = previous.HardcoverPublisher
+		}
+		if mismatchRecord.HardcoverASIN == "" {
+			mismatchRecord.HardcoverASIN = previous.HardcoverASIN
+		}
+		if mismatchRecord.HardcoverISBN == "" {
+			mismatchRecord.HardcoverISBN = previous.HardcoverISBN
+		}
+		if mismatchRecord.HardcoverSlug == "" {
+			mismatchRecord.HardcoverSlug = previous.HardcoverSlug
+		}
 		if mismatchRecord.CreatedAt.IsZero() {
 			mismatchRecord.CreatedAt = previous.CreatedAt
 		}
@@ -490,6 +526,36 @@ func (s *Service) replaceSummaryMismatchLocked(record mismatch.BookMismatch) {
 		}
 	}
 	s.summary.Mismatches = append(s.summary.Mismatches, record)
+}
+
+// enrichLiveMismatch replaces the legacy mismatch details for an already
+// published attention item without changing the primary outcome or its
+// counts. Title-only matching can discover these fields after the outcome is
+// visible, so this update must stay in the service-local store.
+func (s *Service) enrichLiveMismatch(record mismatch.BookMismatch) {
+	if s.summary == nil || record.BookID == "" {
+		return
+	}
+
+	s.summary.Lock()
+	defer s.summary.Unlock()
+	s.ensureOutcomeStateLocked()
+	if previous, exists := s.liveMismatches[record.BookID]; exists {
+		if record.CreatedAt.IsZero() {
+			record.CreatedAt = previous.CreatedAt
+		}
+		if record.Attempts == 0 {
+			record.Attempts = previous.Attempts
+		}
+	}
+	if record.Timestamp == 0 {
+		record.Timestamp = time.Now().Unix()
+	}
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = time.Now()
+	}
+	s.liveMismatches[record.BookID] = cloneBookMismatch(record)
+	s.replaceSummaryMismatchLocked(record)
 }
 
 func (s *Service) removeLiveMismatchLocked(bookID string) {
@@ -753,32 +819,6 @@ func (s *Service) GetSnapshot() SyncSnapshot {
 		}
 	}
 	return snapshot
-}
-
-// recordBookNotFound records a book that couldn't be found in Hardcover
-func (s *Service) recordBookNotFound(book models.AudiobookshelfBook, err error) {
-	if s.summary == nil {
-		return
-	}
-	s.summary.Lock()
-	defer s.summary.Unlock()
-
-	bookInfo := BookNotFoundInfo{
-		BookID: book.ID,
-		Title:  book.Media.Metadata.Title,
-		Author: book.Media.Metadata.AuthorName,
-		ASIN:   book.Media.Metadata.ASIN,
-		ISBN:   book.Media.Metadata.ISBN,
-		Error:  err.Error(),
-	}
-
-	for i := range s.summary.BooksNotFound {
-		if s.summary.BooksNotFound[i].BookID == bookInfo.BookID {
-			s.summary.BooksNotFound[i] = bookInfo
-			return
-		}
-	}
-	s.summary.BooksNotFound = append(s.summary.BooksNotFound, bookInfo)
 }
 
 // GetSummary returns the current sync summary
@@ -1935,6 +1975,10 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 
 			// Log the complete mismatch data before recording
 			bookLog.Infof("Recording mismatch with data: %+v", mismatchData)
+			// Publish the complete title-only candidate to this service's live
+			// status store. The global collector below remains for legacy file
+			// export and must not be used as the per-profile status source.
+			s.enrichLiveMismatch(mismatchData)
 
 			// Determine editionID from Hardcover result if available to improve enrichment accuracy
 			edID := ""
@@ -1979,8 +2023,6 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 			outcome := classifyBookLookupOutcome(findErr)
 			outcomeError = findErr
 			setOutcome(outcome, findErr.Error())
-			// Record as not found
-			s.recordBookNotFound(book, findErr)
 			bookLog.Warn("Book not found in Hardcover", map[string]interface{}{
 				"error": findErr.Error(),
 			})
@@ -3605,6 +3647,12 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 			}
 			reportProcessBookOutcome(ctx, OutcomeSynced, "reconciled Hardcover finished status")
 			updateSyncState()
+		} else if hcBook == nil || hcBook.BookStatusID == 0 {
+			// The matching read confirms the finished date, but an unavailable
+			// user-book status cannot establish that the remote item is current.
+			// Keep the existing no-write/retry behavior and report the uncertainty
+			// explicitly instead of treating it as already current.
+			reportProcessBookOutcome(ctx, OutcomeFailed, "Hardcover status unavailable while verifying finished read")
 		} else if hcBook != nil && hcBook.BookStatusID == desiredStatusID {
 			// A concrete matching status confirms that the remote snapshot is
 			// synchronized, so record it locally even though no mutation was needed.
@@ -3652,9 +3700,21 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 				}
 				log.Info("Updating existing read status with new finished date", logCtx)
 			} else {
-				// If the existing status is already finished with the same date, skip update
-				log.Info("Skipping update - existing read status is already marked as finished with the same date", logCtx)
-				reportProcessBookOutcome(ctx, OutcomeAlreadyCurrent, "Hardcover finished read already has the same date")
+				// The read date is current, but the user-book status can still be
+				// stale. Reconcile that independent mutation before declaring the
+				// item already current.
+				log.Info("Skipping read update - existing read status is already marked as finished with the same date", logCtx)
+				if statusNeedsReconcile() {
+					if err := reconcileBookStatus(); err != nil {
+						return err
+					}
+					updateSyncState()
+					reportProcessBookOutcome(ctx, OutcomeSynced, "reconciled stale Hardcover finished status")
+				} else if hcBook == nil || hcBook.BookStatusID == 0 {
+					reportProcessBookOutcome(ctx, OutcomeFailed, "Hardcover status unavailable while verifying finished read")
+				} else {
+					reportProcessBookOutcome(ctx, OutcomeAlreadyCurrent, "Hardcover finished read already has the same date")
+				}
 				return nil
 			}
 		} else {
