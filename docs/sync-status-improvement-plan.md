@@ -186,6 +186,11 @@ reviewable changes, each independently testable and usable after merge:
    validate focus/scroll preservation. Restore focus to Start/Cancel only if
    the previously focused element was that action; never move focus from a
    different control to Start/Cancel as a fallback when a card is replaced.
+   Make profile IDs safe across the UI/backend route seam: encode every profile
+   ID in UI profile URLs, reject unsafe new IDs, and extract IDs from router path
+   parameters rather than splitting decoded paths so existing delimiter IDs
+   remain addressable. Verify status, summary, sync actions, and profile CRUD at
+   the HTTP boundary.
    This PR should not redefine backend categories; any contract gaps found
    during UI work belong in PR 2 first.
 4. **Run lifecycle and report history (follow-up).** Add phase/activity state,
