@@ -4761,7 +4761,6 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 		})
 		return hcBook, errHardcoverTitleOnly
 
-		// Unreachable code removed; mismatch is already indicated by the return above
 	}
 
 	log.Warn("Book not found in Hardcover by any search method", map[string]interface{}{

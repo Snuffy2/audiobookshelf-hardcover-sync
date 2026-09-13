@@ -540,8 +540,8 @@ func (h *Handler) GetSyncSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If no active service supplied a snapshot, use the stored legacy summary
-	// before constructing a compatibility response from flattened fields.
+	// If neither a current snapshot nor a last sync status is available, use the stored
+	// legacy summary before constructing a compatibility response from flattened fields.
 	if summary == nil && status != nil && status.LastSyncSummary != nil {
 		summary = status.LastSyncSummary
 	}
@@ -572,8 +572,8 @@ func (h *Handler) GetSyncSummary(w http.ResponseWriter, r *http.Request) {
 		ProcessedCount:      summary.TotalBooksProcessed,
 		BookOutcomes:        make([]sync.BookOutcomeRecord, 0),
 		AttentionRecords:    make([]sync.BookOutcomeRecord, 0),
-		TotalBooksProcessed: summary.TotalBooksProcessed, // Direct access is safe due to mutex in GetSummary()
-		BooksSynced:         summary.BooksSynced,         // Direct access is safe due to mutex in GetSummary()
+		TotalBooksProcessed: summary.TotalBooksProcessed,
+		BooksSynced:         summary.BooksSynced,
 		BooksNotFound:       make([]types.BookNotFoundInfo, 0, len(summary.BooksNotFound)),
 		Mismatches:          make([]mismatch.BookMismatch, 0, len(summary.Mismatches)),
 	}
