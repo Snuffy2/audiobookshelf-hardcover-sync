@@ -449,12 +449,8 @@ func isAttentionOutcome(outcome SyncOutcome) bool {
 	return outcome == OutcomeNeedsReview || outcome == OutcomeNotFound || outcome == OutcomeFailed
 }
 
-func isPotentialMismatchOutcome(outcome SyncOutcome) bool {
-	return outcome == OutcomeNeedsReview
-}
-
 func shouldPublishLegacyMismatch(outcome SyncOutcome, err error) bool {
-	return isPotentialMismatchOutcome(outcome) ||
+	return outcome == OutcomeNeedsReview ||
 		(outcome == OutcomeFailed && errors.Is(err, errHardcoverLookupFailed))
 }
 
