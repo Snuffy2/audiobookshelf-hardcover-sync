@@ -351,11 +351,7 @@ func (s *Service) beginOutcomeRun() {
 	s.runStartedAt = now
 	s.runState = "syncing"
 	s.outcomeCounts = OutcomeCounts{}
-	if s.outcomeRecords == nil {
-		s.outcomeRecords = make(map[string]BookOutcomeRecord)
-	} else {
-		s.outcomeRecords = make(map[string]BookOutcomeRecord)
-	}
+	s.outcomeRecords = make(map[string]BookOutcomeRecord)
 	s.liveMismatches = make(map[string]mismatch.BookMismatch)
 	s.summary.TotalBooksProcessed = 0
 	s.summary.BooksSynced = 0
@@ -728,9 +724,6 @@ func (s *Service) EnrichOutcome(bookID string, details BookOutcomeRecord) bool {
 		return false
 	}
 	details.BookID = bookID
-	if details.Outcome == "" {
-		details.Outcome = current.Outcome
-	}
 	// Keep the primary category immutable. Empty enrichment fields retain the
 	// source metadata already visible to callers.
 	details.Outcome = current.Outcome
@@ -1215,19 +1208,6 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 	s.createdReadsMutex.Lock()
 	s.createdReadsThisRun = make(map[int64]struct{})
 	s.createdReadsMutex.Unlock()
-
-	// Reset the legacy counters after the run's live outcome store has been
-	// initialized. BooksNotFound and Mismatches were cleared by beginOutcomeRun.
-	s.summary.Lock()
-	s.summary.TotalBooksProcessed = 0
-	s.summary.BooksSynced = 0
-	s.summary.BooksTotal = 0
-	s.summary.Unlock()
-
-	s.log.Info("Reset sync summary counters for new sync run", map[string]interface{}{
-		"previous_total_books_processed": s.summary.TotalBooksProcessed,
-		"previous_books_synced":          s.summary.BooksSynced,
-	})
 
 	// Log the start of the sync
 	s.log.Info("========================================", map[string]interface{}{
