@@ -500,6 +500,10 @@ func TestProcessBookOwnershipMutationAffectsFinalOutcome(t *testing.T) {
 			snapshot := svc.GetSnapshot()
 			require.Len(t, snapshot.BookOutcomes, 1)
 			assert.Equal(t, tt.expectedOutcome, snapshot.BookOutcomes[0].Outcome)
+			assert.Contains(t, snapshot.BookOutcomes[0].Reason, "owned")
+			if tt.minimumProgress == 0.5 {
+				assert.NotContains(t, snapshot.BookOutcomes[0].Reason, "threshold")
+			}
 			if tt.dryRun {
 				mockClient.AssertNotCalled(t, "MarkEditionAsOwned", mock.Anything, mock.Anything)
 			}
@@ -534,31 +538,6 @@ func TestProcessBookOwnershipCheckFailureStaysFailedOnCurrentPath(t *testing.T) 
 	assert.Contains(t, snapshot.BookOutcomes[0].Error, "ownership API unavailable")
 	mockClient.AssertNotCalled(t, "MarkEditionAsOwned", mock.Anything, mock.Anything)
 	mockClient.AssertExpectations(t)
-}
-
-func TestOutcomeStoreUpsertsEnrichmentWithoutRecount(t *testing.T) {
-	svc, _ := createTestService()
-	svc.beginOutcomeRun()
-	book := *toAudiobookshelfBook(createTestBook("enriched-book", "Original title", "Author", "ASIN", "ISBN"))
-
-	svc.recordBookOutcome(book, OutcomeNeedsReview, "title-only candidate", nil, nil)
-	require.True(t, svc.EnrichOutcome(book.ID, BookOutcomeRecord{
-		Title:           "Enriched title",
-		HardcoverBookID: "123",
-		EditionID:       "456",
-	}))
-
-	snapshot := svc.GetSnapshot()
-	assert.Equal(t, int32(1), snapshot.ProcessedSoFar)
-	assert.Equal(t, int32(1), snapshot.OutcomeCounts.NeedsReview)
-	assert.Equal(t, int32(1), snapshot.OutcomeCounts.Total())
-	require.Len(t, snapshot.BookOutcomes, 1)
-	assert.Equal(t, "Enriched title", snapshot.BookOutcomes[0].Title)
-	assert.Equal(t, "123", snapshot.BookOutcomes[0].HardcoverBookID)
-	assert.Equal(t, "456", snapshot.BookOutcomes[0].EditionID)
-	require.Len(t, snapshot.Mismatches, 1)
-	assert.Equal(t, "Enriched title", snapshot.Mismatches[0].HardcoverTitle)
-	assert.Equal(t, "123", snapshot.Mismatches[0].HardcoverBookID)
 }
 
 func TestGetSnapshotDeepCopiesOutcomeDetails(t *testing.T) {

@@ -95,18 +95,6 @@ const (
 	OutcomeWouldSync      SyncOutcome = "would_sync"
 )
 
-// BookOutcomeSynced and the other aliases make the category names convenient
-// for callers that prefer a type-qualified constant name.
-const (
-	BookOutcomeSynced         = OutcomeSynced
-	BookOutcomeAlreadyCurrent = OutcomeAlreadyCurrent
-	BookOutcomeSkipped        = OutcomeSkipped
-	BookOutcomeNeedsReview    = OutcomeNeedsReview
-	BookOutcomeNotFound       = OutcomeNotFound
-	BookOutcomeFailed         = OutcomeFailed
-	BookOutcomeWouldSync      = OutcomeWouldSync
-)
-
 // OutcomeCounts contains the exclusive category counts for a sync run.
 type OutcomeCounts struct {
 	Synced         int32 `json:"synced"`
@@ -117,10 +105,6 @@ type OutcomeCounts struct {
 	Failed         int32 `json:"failed"`
 	WouldSync      int32 `json:"would_sync"`
 }
-
-// SyncOutcomeCounts is an expressive alias for callers that want to make the
-// fact these are sync outcomes explicit in their API types.
-type SyncOutcomeCounts = OutcomeCounts
 
 // Total returns the number of unique Audiobookshelf items with a final
 // outcome in the run.
@@ -705,80 +689,6 @@ func (s *Service) recordBookOutcome(book models.AudiobookshelfBook, outcome Sync
 	} else {
 		s.removeLegacyBookNotFoundLocked(book.ID)
 	}
-}
-
-// EnrichOutcome updates details for an existing outcome without changing its
-// category counts. It is safe for an enrichment callback to arrive after the
-// initial attention record was published.
-func (s *Service) EnrichOutcome(bookID string, details BookOutcomeRecord) bool {
-	if s.summary == nil || bookID == "" {
-		return false
-	}
-	s.summary.Lock()
-	defer s.summary.Unlock()
-	if s.outcomeRecords == nil {
-		return false
-	}
-	current, exists := s.outcomeRecords[bookID]
-	if !exists {
-		return false
-	}
-	details.BookID = bookID
-	// Keep the primary category immutable. Empty enrichment fields retain the
-	// source metadata already visible to callers.
-	details.Outcome = current.Outcome
-	if details.Title == "" {
-		details.Title = current.Title
-	}
-	if details.Author == "" {
-		details.Author = current.Author
-	}
-	if details.ASIN == "" {
-		details.ASIN = current.ASIN
-	}
-	if details.ISBN == "" {
-		details.ISBN = current.ISBN
-	}
-	if details.Reason == "" {
-		details.Reason = current.Reason
-	}
-	if details.Error == "" {
-		details.Error = current.Error
-	}
-	if details.MatchMethod == "" {
-		details.MatchMethod = current.MatchMethod
-	}
-	if details.HardcoverBookID == "" {
-		details.HardcoverBookID = current.HardcoverBookID
-	}
-	if details.EditionID == "" {
-		details.EditionID = current.EditionID
-	}
-	details.UpdatedAt = time.Now().UTC()
-	s.outcomeRecords[bookID] = details
-	if live, exists := s.liveMismatches[bookID]; exists {
-		if details.Title != "" {
-			live.HardcoverTitle = details.Title
-		}
-		if details.Author != "" {
-			live.HardcoverAuthor = details.Author
-		}
-		if details.HardcoverBookID != "" {
-			live.HardcoverBookID = details.HardcoverBookID
-		}
-		if live.Reason == "" {
-			live.Reason = details.Reason
-		}
-		live.Timestamp = details.UpdatedAt.Unix()
-		s.liveMismatches[bookID] = live
-		s.replaceSummaryMismatchLocked(live)
-	}
-	return true
-}
-
-// UpdateOutcomeDetails is an explicit API-friendly name for EnrichOutcome.
-func (s *Service) UpdateOutcomeDetails(bookID string, details BookOutcomeRecord) bool {
-	return s.EnrichOutcome(bookID, details)
 }
 
 func cloneBookMismatch(m mismatch.BookMismatch) mismatch.BookMismatch {
@@ -1705,8 +1615,6 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 		case OutcomeFailed:
 			if outcomeHint != OutcomeFailed {
 				outcomeHint = OutcomeFailed
-			}
-			if outcomeReason == "" {
 				outcomeReason = ownershipState.reason
 			}
 			if outcomeError == nil {
@@ -1715,16 +1623,12 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 		case OutcomeSynced:
 			if outcomeHint == "" || outcomeHint == OutcomeAlreadyCurrent || outcomeHint == OutcomeSkipped {
 				outcomeHint = OutcomeSynced
-				if outcomeReason == "" {
-					outcomeReason = ownershipState.reason
-				}
+				outcomeReason = ownershipState.reason
 			}
 		case OutcomeWouldSync:
 			if outcomeHint == "" || outcomeHint == OutcomeAlreadyCurrent || outcomeHint == OutcomeSkipped {
 				outcomeHint = OutcomeWouldSync
-				if outcomeReason == "" {
-					outcomeReason = ownershipState.reason
-				}
+				outcomeReason = ownershipState.reason
 			}
 		}
 		if outcomeHint == "" {
@@ -1746,9 +1650,6 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	}()
 
 	bookLog.Debug("Starting book processing")
-	// Mark as unprocessed by default; successful branches set this explicitly.
-	bookProcessed = false
-
 	// Media type filtering: skip ebooks unless explicitly enabled
 	mediaType := strings.ToLower(book.MediaType)
 	if mediaType == "ebook" && !s.config.Sync.IncludeEbooks {
