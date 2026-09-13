@@ -2971,6 +2971,15 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 	}
 	log.Info("Processing in-progress book", nil)
 
+	// findOrCreateUserBookID uses -1 to represent a new user book that would be
+	// created during a dry run. It is not a real Hardcover ID and must not be
+	// sent through read/status lookups or mutations.
+	if s.config.Sync.DryRun && userBookID == -1 {
+		reportProcessBookOutcome(ctx, OutcomeWouldSync, "would create and update an in-progress Hardcover user book")
+		log.Info("[DRY-RUN] Would create user book and update in-progress progress", nil)
+		return nil
+	}
+
 	// Get current book status from Hardcover
 	// Try cache first
 	var hcBook *models.HardcoverBook
