@@ -193,14 +193,25 @@ reviewable changes, each independently testable and usable after merge:
    the HTTP boundary. Clear a deleted profile's `actionErrors` entry so a reused
    ID cannot inherit an old Start/Cancel failure. Remove or debug-gate routine
    `console.log` output in `renderStatuses` and `fetchSyncSummary`, while keeping
-   actual error reporting.
+   actual error reporting. As the UI adopts the snapshot and detail responses,
+   audit uses of `last_sync_summary` and the flattened legacy status fields;
+   remove obsolete UI fallbacks and internal projections, while keeping public
+   API fields until a documented compatibility or versioning decision permits
+   their removal. Remove the unused single-sync-service injection through
+   `server.New` and `api.NewHandler`, including the dummy `sync.Service` created
+   for Web UI mode, once status and summary routes resolve the active service
+   through `MultiUserService`.
    This PR should not redefine backend categories; any contract gaps found
    during UI work belong in PR 2 first.
 4. **Run lifecycle and report history (follow-up).** Add phase/activity state,
    truthful canceled/failed partial reports, separate last-attempted from
    last-successful timestamps, and persist a bounded final report across app
-   restarts. This includes storage and lifecycle behavior distinct from live
-   result rendering. Make Start Sync acknowledge only an accepted run: validate
+   restarts. Build on PR 2's in-memory run snapshot, but defer durable and
+   legacy lifecycle semantics: do not persist a dry-run `LastSync` as a real
+   successful sync, and keep legacy profile terminal status aligned with the
+   failed/canceled run snapshot during the brief final-publication window. This
+   includes storage and lifecycle behavior distinct from live result rendering.
+   Make Start Sync acknowledge only an accepted run: validate
    the profile and active-run constraint, record a queued run before returning
    success, and return an error when the start is rejected. Show UI success only
    after acceptance, then follow that run through queued, running, or failure.
