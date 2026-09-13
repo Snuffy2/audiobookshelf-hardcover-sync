@@ -521,11 +521,7 @@ func TestProcessBookOwnershipMutationAffectsFinalOutcome(t *testing.T) {
 			mockClient.On("GetUserBookID", mock.Anything, 456).Return(789, nil).Once()
 
 			err := svc.processBook(context.Background(), book, &models.AudiobookshelfUserProgress{})
-			if tt.ownershipErr != nil {
-				assert.NoError(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			snapshot := svc.GetSnapshot()
 			require.Len(t, snapshot.BookOutcomes, 1)
 			assert.Equal(t, tt.expectedOutcome, snapshot.BookOutcomes[0].Outcome)

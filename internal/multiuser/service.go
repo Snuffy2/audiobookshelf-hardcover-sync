@@ -34,13 +34,6 @@ type SyncProfileStatus struct {
 	Snapshot        *sync.SyncSnapshot      `json:"snapshot,omitempty"`
 }
 
-// syncSnapshotProvider is the part of the sync service needed by the status
-// layer. Keeping this interface local lets status consumers remain independent
-// from the sync service's other implementation details.
-type syncSnapshotProvider interface {
-	GetSnapshot() sync.SyncSnapshot
-}
-
 type activeSyncRun struct {
 	generation uint64
 	runID      string
@@ -232,23 +225,19 @@ func (s *MultiUserService) GetProfileStatus(profileID string) *SyncProfileStatus
 	svc, generation := s.currentSyncServiceLocked(profileID)
 
 	if svc != nil {
-		if provider, ok := interface{}(svc).(syncSnapshotProvider); ok {
-			snapshot := provider.GetSnapshot()
-			if generation > 0 {
-				snapshot = s.normalizeRunSnapshotLocked(profileID, generation, snapshot)
+		snapshot := svc.GetSnapshot()
+		if generation > 0 {
+			snapshot = s.normalizeRunSnapshotLocked(profileID, generation, snapshot)
+		}
+		// Keep the stored status when its run identity differs from the
+		// active service. This is defensive for an in-memory replacement
+		// observed between lifecycle updates and prevents mixed responses.
+		if generation == 0 || status.Snapshot == nil || status.Snapshot.RunID == "" || snapshot.RunID == "" || status.Snapshot.RunID == snapshot.RunID {
+			applyLiveSnapshotToStatus(status, snapshot)
+			if status.Snapshot.UserID == "" {
+				status.Snapshot.UserID = profileID
+				status.LastSyncSummary.UserID = profileID
 			}
-			// Keep the stored status when its run identity differs from the
-			// active service. This is defensive for an in-memory replacement
-			// observed between lifecycle updates and prevents mixed responses.
-			if generation == 0 || status.Snapshot == nil || status.Snapshot.RunID == "" || snapshot.RunID == "" || status.Snapshot.RunID == snapshot.RunID {
-				applyLiveSnapshotToStatus(status, snapshot)
-				if status.Snapshot.UserID == "" {
-					status.Snapshot.UserID = profileID
-					status.LastSyncSummary.UserID = profileID
-				}
-			}
-		} else if summary := svc.GetSummary(); summary != nil {
-			applySummaryToStatus(status, summary)
 		}
 	}
 
@@ -390,10 +379,7 @@ func (s *MultiUserService) performSync(ctx context.Context, profileID string, pr
 
 	// Obtain summary
 	summary := syncService.GetSummary()
-	var snapshot sync.SyncSnapshot
-	if provider, ok := interface{}(syncService).(syncSnapshotProvider); ok {
-		snapshot = provider.GetSnapshot()
-	}
+	snapshot := syncService.GetSnapshot()
 	snapshot = s.normalizeRunSnapshot(profileID, generation, snapshot)
 
 	// Prepare final status
@@ -419,9 +405,6 @@ func (s *MultiUserService) performSync(ctx context.Context, profileID string, pr
 	} else {
 		status.Status = "completed"
 		status.Progress = "Sync completed successfully"
-		if snapshot.RunID == "" && summary != nil {
-			applySummaryToStatus(status, summary)
-		}
 
 		s.logger.Debug("Stored full sync summary in profile status", map[string]interface{}{
 			"profileID":       profileID,
@@ -651,34 +634,6 @@ func cloneSyncSnapshot(snapshot sync.SyncSnapshot) *sync.SyncSnapshot {
 		copyOf.Mismatches[i] = cloneBookMismatch(book)
 	}
 	return &copyOf
-}
-
-// applySummaryToStatus keeps the legacy status fields sourced from one
-// snapshot of the sync service. It is retained as a fallback for services
-// created before GetSnapshot was added.
-func applySummaryToStatus(status *SyncProfileStatus, summary *sync.SyncSummary) {
-	if status == nil || summary == nil {
-		return
-	}
-	if summary.BooksTotal > 0 {
-		status.BooksTotal = int(summary.BooksTotal)
-	} else {
-		status.BooksTotal = int(summary.TotalBooksProcessed)
-	}
-	status.BooksSynced = int(summary.BooksSynced)
-	status.BooksNotFound = append([]sync.BookNotFoundInfo(nil), summary.BooksNotFound...)
-	status.Mismatches = make([]mismatch.BookMismatch, len(summary.Mismatches))
-	for i, book := range summary.Mismatches {
-		status.Mismatches[i] = cloneBookMismatch(book)
-	}
-	status.LastSyncSummary = &sync.SyncSummary{
-		UserID:              summary.UserID,
-		TotalBooksProcessed: summary.TotalBooksProcessed,
-		BooksSynced:         summary.BooksSynced,
-		BooksTotal:          summary.BooksTotal,
-		BooksNotFound:       []sync.BookNotFoundInfo{},
-		Mismatches:          []mismatch.BookMismatch{},
-	}
 }
 
 func applySnapshotToStatus(status *SyncProfileStatus, snapshot sync.SyncSnapshot) {

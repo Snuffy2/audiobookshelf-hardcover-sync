@@ -516,23 +516,15 @@ func (h *Handler) GetSyncSummary(w http.ResponseWriter, r *http.Request) {
 			Mismatches:          append([]mismatch.BookMismatch(nil), snapshot.Mismatches...),
 		}
 	} else if syncSvc, exists := h.multiUserService.GetSyncService(profileID); exists && syncSvc != nil {
-		if snapshotSvc, ok := interface{}(syncSvc).(interface {
-			GetSnapshot() sync.SyncSnapshot
-		}); ok {
-			current := snapshotSvc.GetSnapshot()
-			snapshot = &current
-			summary = &sync.SyncSummary{
-				UserID:              current.UserID,
-				TotalBooksProcessed: current.TotalBooksProcessed,
-				BooksSynced:         current.BooksSynced,
-				BooksTotal:          current.BooksTotal,
-				BooksNotFound:       append([]sync.BookNotFoundInfo(nil), current.BooksNotFound...),
-				Mismatches:          append([]mismatch.BookMismatch(nil), current.Mismatches...),
-			}
-		} else {
-			// Compatibility fallback for a service implementation that predates
-			// the snapshot API.
-			summary = syncSvc.GetSummary()
+		current := syncSvc.GetSnapshot()
+		snapshot = &current
+		summary = &sync.SyncSummary{
+			UserID:              current.UserID,
+			TotalBooksProcessed: current.TotalBooksProcessed,
+			BooksSynced:         current.BooksSynced,
+			BooksTotal:          current.BooksTotal,
+			BooksNotFound:       append([]sync.BookNotFoundInfo(nil), current.BooksNotFound...),
+			Mismatches:          append([]mismatch.BookMismatch(nil), current.Mismatches...),
 		}
 	} else {
 		// If no active sync service, try to get the last sync status
@@ -570,14 +562,6 @@ func (h *Handler) GetSyncSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Debug("Sync summary from service", map[string]interface{}{
-		"total_books_processed": summary.TotalBooksProcessed,
-		"books_synced":          summary.BooksSynced,
-		"books_not_found_count": len(summary.BooksNotFound),
-		"mismatches_count":      len(summary.Mismatches),
-	})
-
-	// Log the summary we received from the service
-	h.log.Debug("Processing sync summary from service", map[string]interface{}{
 		"total_books_processed": summary.TotalBooksProcessed,
 		"books_synced":          summary.BooksSynced,
 		"books_not_found_count": len(summary.BooksNotFound),
