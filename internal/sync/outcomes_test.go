@@ -3,9 +3,12 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/mismatch"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -97,7 +100,166 @@ func TestProcessBookClassifiesLookupFailureSeparatelyFromNotFound(t *testing.T) 
 	assert.Equal(t, int32(1), snapshot.OutcomeCounts.Failed)
 	assert.Equal(t, int32(0), snapshot.OutcomeCounts.NotFound)
 	assert.Contains(t, snapshot.BookOutcomes[0].Error, "request timed out")
+	assert.Empty(t, snapshot.BooksNotFound, "a lookup failure must not appear as a conclusive missing book")
 	mockClient.AssertExpectations(t)
+}
+
+func TestTitleOnlyMismatchPublishesRichLegacyDetailsWithoutRecount(t *testing.T) {
+	svc, _ := createTestService()
+	svc.beginOutcomeRun()
+	book := *toAudiobookshelfBook(createTestBook("rich-mismatch", "ABS title", "ABS author", "", ""))
+	svc.recordBookOutcome(book, OutcomeNeedsReview, "title-only candidate", nil, &models.HardcoverBook{ID: "hc-book"})
+
+	svc.enrichLiveMismatch(mismatch.BookMismatch{
+		BookID:                 book.ID,
+		Title:                  book.Media.Metadata.Title,
+		Author:                 book.Media.Metadata.AuthorName,
+		HardcoverBookID:        "hc-book",
+		HardcoverTitle:         "Hardcover title",
+		HardcoverAuthor:        "Hardcover author",
+		HardcoverPublishedYear: "2024",
+		HardcoverCoverURL:      "https://example.test/cover",
+		HardcoverSlug:          "hardcover-slug",
+		Reason:                 "title-only candidate",
+	})
+
+	snapshot := svc.GetSnapshot()
+	require.Len(t, snapshot.Mismatches, 1)
+	assert.Equal(t, "Hardcover title", snapshot.Mismatches[0].HardcoverTitle)
+	assert.Equal(t, "Hardcover author", snapshot.Mismatches[0].HardcoverAuthor)
+	assert.Equal(t, "2024", snapshot.Mismatches[0].HardcoverPublishedYear)
+	assert.Equal(t, "https://example.test/cover", snapshot.Mismatches[0].HardcoverCoverURL)
+	assert.Equal(t, "hardcover-slug", snapshot.Mismatches[0].HardcoverSlug)
+	assert.Equal(t, int32(1), snapshot.OutcomeCounts.NeedsReview)
+
+	// The deferred processBook finalizer can publish the same outcome again;
+	// this must preserve the rich local details and keyed count.
+	svc.recordBookOutcome(book, OutcomeNeedsReview, "title-only candidate", nil, nil)
+	snapshot = svc.GetSnapshot()
+	require.Len(t, snapshot.Mismatches, 1)
+	assert.Equal(t, "Hardcover title", snapshot.Mismatches[0].HardcoverTitle)
+	assert.Equal(t, "hardcover-slug", snapshot.Mismatches[0].HardcoverSlug)
+	assert.Equal(t, int32(1), snapshot.OutcomeCounts.NeedsReview)
+}
+
+func TestProcessBookTitleOnlyMismatchKeepsRichLegacyDetails(t *testing.T) {
+	svc, mockClient := createTestService()
+	book := *toAudiobookshelfBook(createTestBook("title-only-rich", "ABS title", "ABS author", "", ""))
+	candidate := models.HardcoverBook{
+		ID:            "hc-rich",
+		Title:         "Hardcover title",
+		Authors:       []models.Author{{Name: "Hardcover author"}},
+		ReleaseDate:   "2024-03-04",
+		CoverImageURL: "https://example.test/cover",
+		Slug:          "hardcover-slug",
+	}
+
+	// The initial lookup and the title-only enrichment lookup both search, and
+	// each title search hydrates the selected candidate. The mismatch exporter
+	// may fetch the candidate once more, which is harmless to the live store.
+	mockClient.On("SearchBooks", mock.Anything, "ABS title ABS author", "").Return([]models.HardcoverBook{candidate}, nil).Twice()
+	mockClient.On("SearchBooks", mock.Anything, "ABS title", "ABS author").Return([]models.HardcoverBook{candidate}, nil).Once()
+	mockClient.On("GetBookByID", mock.Anything, "hc-rich").Return(&candidate, nil).Maybe()
+	mismatch.Clear()
+	defer mismatch.Clear()
+
+	require.NoError(t, svc.processBook(context.Background(), book, &models.AudiobookshelfUserProgress{}))
+	snapshot := svc.GetSnapshot()
+
+	require.Len(t, snapshot.Mismatches, 1)
+	assert.Equal(t, OutcomeNeedsReview, snapshot.BookOutcomes[0].Outcome)
+	assert.Equal(t, "hc-rich", snapshot.Mismatches[0].HardcoverBookID)
+	assert.Equal(t, "Hardcover title", snapshot.Mismatches[0].HardcoverTitle)
+	assert.Equal(t, "Hardcover author", snapshot.Mismatches[0].HardcoverAuthor)
+	assert.Equal(t, "2024", snapshot.Mismatches[0].HardcoverPublishedYear)
+	assert.Equal(t, "https://example.test/cover", snapshot.Mismatches[0].HardcoverCoverURL)
+	assert.Equal(t, "hardcover-slug", snapshot.Mismatches[0].HardcoverSlug)
+	assert.Equal(t, int32(1), snapshot.OutcomeCounts.NeedsReview)
+	mockClient.AssertExpectations(t)
+}
+
+func TestHandleInProgressBookReconcilesStaleStatusWithMatchingFinishedRead(t *testing.T) {
+	svc, mockClient := createTestService()
+	book := toAudiobookshelfBook(createTestFinishedBook(
+		"stale-finished-status", "Stale status", "Test Author", "", ""))
+	userBookID := int64(142)
+	editionID := int64(472)
+	finishedAt := time.Unix(book.Progress.FinishedAt/1000, 0).Format("2006-01-02")
+	progressSeconds := int(book.Media.Duration)
+	readID := int64(802)
+
+	mockClient.On("GetUserBook", mock.Anything, "142").Return(&models.HardcoverBook{
+		ID: "hc-stale-status", EditionID: "472", BookStatusID: 2,
+	}, nil).Once()
+	mockClient.On("GetUserBookReads", mock.Anything, hardcover.GetUserBookReadsInput{
+		UserBookID: userBookID,
+	}).Return([]hardcover.UserBookRead{{
+		ID: readID, ProgressSeconds: &progressSeconds, EditionID: &editionID,
+		FinishedAt: &finishedAt,
+	}}, nil).Once()
+	mockClient.On("UpdateUserBookStatus", mock.Anything, hardcover.UpdateUserBookStatusInput{
+		ID: userBookID, StatusID: 3,
+	}).Return(nil).Once()
+	// Status reconciliation performs blank-read cleanup using a fresh read list.
+	mockClient.On("GetUserBookReads", mock.Anything, hardcover.GetUserBookReadsInput{
+		UserBookID: userBookID,
+	}).Return([]hardcover.UserBookRead{{
+		ID: readID, ProgressSeconds: &progressSeconds, EditionID: &editionID,
+		FinishedAt: &finishedAt,
+	}}, nil).Once()
+
+	var gotOutcome SyncOutcome
+	ctx := context.WithValue(context.Background(), processBookOutcomeReporterKey{}, processBookOutcomeReporter(func(outcome SyncOutcome, _ string) {
+		gotOutcome = outcome
+	}))
+	err := svc.handleInProgressBook(ctx, userBookID, *book, fmt.Sprintf("%s:%d", book.ID, editionID))
+
+	require.NoError(t, err)
+	assert.Equal(t, OutcomeSynced, gotOutcome)
+	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+	mockClient.AssertExpectations(t)
+}
+
+func TestHandleInProgressBookFailsWhenFinishedReadStatusIsUnavailable(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		userBook *models.HardcoverBook
+		readID   int64
+	}{
+		{name: "nil user book", userBook: nil, readID: 803},
+		{name: "zero status", userBook: &models.HardcoverBook{ID: "hc-zero-status", EditionID: "473", BookStatusID: 0}, readID: 804},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, mockClient := createTestService()
+			book := toAudiobookshelfBook(createTestFinishedBook(
+				"unavailable-finished-status-"+tt.name, "Unavailable status", "Test Author", "", ""))
+			userBookID := int64(143)
+			editionID := int64(473)
+			finishedAt := time.Unix(book.Progress.FinishedAt/1000, 0).Format("2006-01-02")
+			progressSeconds := int(book.Media.Duration)
+
+			mockClient.On("GetUserBook", mock.Anything, "143").Return(tt.userBook, nil).Once()
+			mockClient.On("GetUserBookReads", mock.Anything, hardcover.GetUserBookReadsInput{
+				UserBookID: userBookID,
+			}).Return([]hardcover.UserBookRead{{
+				ID: tt.readID, ProgressSeconds: &progressSeconds,
+				EditionID: &editionID, FinishedAt: &finishedAt,
+			}}, nil).Once()
+
+			var gotOutcome SyncOutcome
+			ctx := context.WithValue(context.Background(), processBookOutcomeReporterKey{}, processBookOutcomeReporter(func(outcome SyncOutcome, _ string) {
+				gotOutcome = outcome
+			}))
+			err := svc.handleInProgressBook(ctx, userBookID, *book, fmt.Sprintf("%s:%d", book.ID, editionID))
+
+			require.NoError(t, err)
+			assert.Equal(t, OutcomeFailed, gotOutcome)
+			assert.True(t, svc.state.NeedsSync(book.ID+":"+fmt.Sprint(editionID), 1, "FINISHED", 0.01))
+			mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+			mockClient.AssertExpectations(t)
+		})
+	}
 }
 
 func TestProcessBookRecordsDryRunWouldSyncOutcome(t *testing.T) {
