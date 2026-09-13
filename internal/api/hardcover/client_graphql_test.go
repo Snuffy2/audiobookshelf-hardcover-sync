@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,167 +16,124 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGraphQLQuery_BookByASIN tests the GraphQL query functionality with a mock API server
-// This is a unit test that doesn't require a real token
-func TestGraphQLQuery_BookByASIN(t *testing.T) {
-	// Initialize the logger
-	logger.Setup(logger.Config{
-		Level:      "debug",
-		TimeFormat: "2006-01-02T15:04:05Z07:00",
-	})
+func TestSearchBookByASINUsesProductionQueryWithNumericASIN(t *testing.T) {
+	type graphqlRequest struct {
+		Query     string                 `json:"query"`
+		Variables map[string]interface{} `json:"variables"`
+	}
 
-	// Get the logger
-	log := logger.Get()
-
-	// Create a mock server that returns a predefined response for ASIN queries
+	requestCh := make(chan graphqlRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read the request body once
-		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err, "Error reading request body")
-
-		// Create a new reader with the body content for parsing
-		r.Body = io.NopCloser(strings.NewReader(string(body)))
-
-		// Check if it's a GetCurrentUserID query first
-		if HandleGetCurrentUserIDQuery(t, w, r) {
+		var request graphqlRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		requestCh <- request
 
-		// Reuse the body content for our own parsing
-		r.Body = io.NopCloser(strings.NewReader(string(body)))
-
-		// Parse the request body to check if it's the ASIN query
-		var reqBody struct {
-			Query     string                 `json:"query"`
-			Variables map[string]interface{} `json:"variables"`
-		}
-
-		// Decode the request body
-		err = json.NewDecoder(r.Body).Decode(&reqBody)
-		require.NoError(t, err, "Error decoding request body")
-
-		// Check if this is our ASIN query
-		if _, ok := reqBody.Variables["asin"]; ok {
-			// Create a simple JSON response that matches the expected structure
-			responseJSON := `{
-				"data": {
-					"books": [
-						{
-							"id": 123,
-							"title": "Test Audiobook Title",
-							"book_status_id": 1,
-							"canonical_id": 456,
-							"editions": [
-								{
-									"id": 789,
-									"asin": "B00I8OW9R2",
-									"isbn_13": null,
-									"isbn_10": null,
-									"reading_format_id": 2,
-									"audio_seconds": 12345
-								}
-							]
-						}
-					]
-				}
-			}`
-
-			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(responseJSON))
-			if err != nil {
-				t.Fatalf("Failed to write response: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{
+			"data": {
+				"books": [{
+					"id": 281093,
+					"title": "Permanent Record",
+					"book_status_id": 1,
+					"canonical_id": null,
+					"editions": [{
+						"id": 30404119,
+						"asin": "1250622689",
+						"isbn_13": "9781250622686",
+						"isbn_10": "1250622689",
+						"reading_format_id": 2,
+						"audio_seconds": 41472,
+						"book_mappings": []
+					}]
+				}]
 			}
-			return
+		}`)); err != nil {
+			t.Errorf("write ASIN response: %v", err)
 		}
-
-		// If we get here, it's an unknown query
-		http.Error(w, "Unexpected query", http.StatusBadRequest)
 	}))
 	defer server.Close()
 
-	// Create a client that uses our mock server
 	client := CreateTestClient(server)
-	client.logger = log
+	ctx := WithAudnexRegion(WithReadingFormat(context.Background(), "audiobook"), " Us ")
+	book, err := client.SearchBookByASIN(ctx, "1250622689")
 
-	// Define the query and variables
-	query := `query BookByASIN($asin: String!) {
-  books(
-    where: { 
-      editions: { 
-        asin: { _eq: $asin }
-        reading_format_id: { _eq: 2 }
-      }
-    }
-    limit: 1
-  ) {
-    id
-    title
-    book_status_id
-    canonical_id
-    editions(
-      where: { 
-        asin: { _eq: $asin }
-        reading_format_id: { _eq: 2 }
-      }
-    ) {
-      id
-      asin
-      isbn_13
-      isbn_10
-      reading_format_id
-      audio_seconds
-    }
-  }
-}`
+	require.NoError(t, err)
+	require.NotNil(t, book)
+	assert.Equal(t, "281093", book.ID)
+	assert.Equal(t, "Permanent Record", book.Title)
+	assert.Equal(t, "30404119", book.EditionID)
+	assert.Equal(t, "1250622689", book.EditionASIN)
+	assert.Equal(t, "9781250622686", book.EditionISBN13)
 
-	variables := map[string]interface{}{
-		"asin": "B00I8OW9R2",
+	request := <-requestCh
+	assert.Contains(t, request.Query, "query BookByASIN($asin: String!, $asin_us: String!, $format_id: Int!)")
+	assert.Contains(t, request.Query, "{ editions: { asin: { _eq: $asin }, reading_format: { id: { _eq: $format_id } } } }")
+	assert.Equal(t, "1250622689", request.Variables["asin"])
+	assert.Equal(t, "1250622689:us", request.Variables["asin_us"])
+	assert.Equal(t, float64(2), request.Variables["format_id"])
+}
+
+func TestSearchBookByASINRejectsMalformedSuccessResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		wantErr  bool
+	}{
+		{
+			name:     "missing books",
+			response: `{"data":{}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "books has unexpected type",
+			response: `{"data":{"books":{}}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "books contains malformed entry",
+			response: `{"data":{"books":[null]}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "book has no editions",
+			response: `{"data":{"books":[{"id":1,"title":"Test Book","editions":[]}]}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "editions contains malformed entry",
+			response: `{"data":{"books":[{"id":1,"title":"Test Book","editions":[null]}]}}`,
+			wantErr:  true,
+		},
+		{
+			name:     "empty books array is a clean miss",
+			response: `{"data":{"books":[]}}`,
+			wantErr:  false,
+		},
 	}
 
-	// Define the response structure
-	type BookEdition struct {
-		ID              int     `json:"id"`
-		ASIN            *string `json:"asin"`
-		ISBN13          *string `json:"isbn_13"`
-		ISBN10          *string `json:"isbn_10"`
-		ReadingFormatID int     `json:"reading_format_id"`
-		AudioSeconds    *int    `json:"audio_seconds"`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			client := CreateTestClient(server)
+			book, err := client.SearchBookByASIN(context.Background(), "ASIN123")
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, book)
+			} else {
+				require.NoError(t, err)
+				assert.Nil(t, book)
+			}
+		})
 	}
-
-	type Book struct {
-		ID           int           `json:"id"`
-		Title        string        `json:"title"`
-		BookStatusID int           `json:"book_status_id"`
-		CanonicalID  int           `json:"canonical_id"`
-		Editions     []BookEdition `json:"editions"`
-	}
-
-	// Response structure is defined inline below
-
-	// Define a response structure that exactly matches what the client will use for unmarshaling
-	// The client will unmarshal only the "data" field from the response,
-	// so our struct must match the structure inside the data field
-	var response struct {
-		Books []Book `json:"books"`
-	}
-
-	// Execute the query
-	err := client.GraphQLQuery(context.Background(), query, variables, &response)
-	require.NoError(t, err, "GraphQL query should not return an error")
-
-	t.Logf("Response received: %+v", response)
-
-	// Assert the response
-	require.NotEmpty(t, response.Books, "Expected at least one book in the response")
-	book := response.Books[0]
-	assert.NotEmpty(t, book.Title, "Book title should not be empty")
-	assert.Equal(t, "Test Audiobook Title", book.Title, "Book title should match the mock response")
-	assert.NotEmpty(t, book.Editions, "Book should have at least one edition")
-
-	edition := book.Editions[0]
-	assert.Equal(t, 2, edition.ReadingFormatID, "Reading format ID should be 2 (audiobook)")
-	assert.Equal(t, "B00I8OW9R2", *edition.ASIN, "ASIN should match the query parameter")
-	assert.Equal(t, 12345, *edition.AudioSeconds, "Audio seconds should match the mock response")
 }
 
 func TestGraphQLQuery_RetriesOn429ThenSucceeds(t *testing.T) {
