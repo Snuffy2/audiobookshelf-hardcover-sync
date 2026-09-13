@@ -2,14 +2,20 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/config"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
@@ -244,6 +250,199 @@ func TestSyncRecoversBooksTotalAfterPrecountFailure(t *testing.T) {
 	assert.Equal(t, snapshot.ProcessedSoFar, snapshot.OutcomeCounts.Total())
 	mockABS.AssertExpectations(t)
 	mockHC.AssertExpectations(t)
+}
+
+func TestSyncReturnsLibraryFetchErrorWithoutInventingBookOutcomes(t *testing.T) {
+	svc, mockHC := createTestService()
+	svc.config.Sync.DryRun = true
+	svc.config.Sync.ProcessUnreadBooks = false
+	svc.config.Paths.MismatchOutputDir = filepath.Join(t.TempDir(), "mismatches")
+
+	mockABS := new(MockAudiobookshelfClient)
+	libraries := []audiobookshelf.AudiobookshelfLibrary{
+		{ID: "failed-library", Name: "Failed Library"},
+		{ID: "healthy-library", Name: "Healthy Library"},
+	}
+	healthyBook := *toAudiobookshelfBook(createTestBook("healthy-book", "Healthy Book", "Author", "", ""))
+	healthyItems := []models.AudiobookshelfBook{healthyBook}
+	libraryErr := errors.New("library API unavailable")
+
+	mockABS.On("GetUserProgress", mock.Anything).Return(&models.AudiobookshelfUserProgress{}, nil).Once()
+	mockABS.On("GetLibraries", mock.Anything).Return(libraries, nil).Once()
+	// The failed library is unavailable during both pre-count and processing.
+	// Its unseen candidates must not be fabricated as per-book failures.
+	mockABS.On("GetLibraryItems", mock.Anything, "failed-library").Return([]models.AudiobookshelfBook(nil), libraryErr).Once()
+	mockABS.On("GetLibraryItems", mock.Anything, "healthy-library").Return(healthyItems, nil).Once()
+	mockABS.On("GetLibraryItems", mock.Anything, "failed-library").Return([]models.AudiobookshelfBook(nil), libraryErr).Once()
+	mockABS.On("GetLibraryItems", mock.Anything, "healthy-library").Return(healthyItems, nil).Once()
+	mockHC.On("ClearUserBookCache").Return().Once()
+	svc.audiobookshelf = mockABS
+
+	err := svc.Sync(context.Background())
+
+	require.ErrorIs(t, err, libraryErr)
+	snapshot := svc.GetSnapshot()
+	assert.Equal(t, "failed", snapshot.State)
+	assert.Equal(t, int32(1), snapshot.BooksTotal)
+	assert.Equal(t, int32(1), snapshot.ProcessedSoFar)
+	assert.Equal(t, int32(1), snapshot.OutcomeCounts.Skipped)
+	assert.Len(t, snapshot.BookOutcomes, 1)
+	assert.Equal(t, healthyBook.ID, snapshot.BookOutcomes[0].BookID)
+	mockABS.AssertExpectations(t)
+	mockHC.AssertExpectations(t)
+}
+
+func TestSyncReturnsUserProgressFetchErrorWithoutSkippingUnseenProgress(t *testing.T) {
+	svc, mockHC := createTestService()
+	svc.config.Sync.DryRun = true
+	svc.config.Sync.ProcessUnreadBooks = false
+	svc.config.Paths.MismatchOutputDir = filepath.Join(t.TempDir(), "mismatches")
+
+	healthyBook := *toAudiobookshelfBook(createTestBook("progress-unavailable-book", "Progress Unavailable", "Author", "", ""))
+	var userProgressRequests int
+	var libraryItemRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/me":
+			userProgressRequests++
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, "Bearer abs-token", r.Header.Get("Authorization"))
+			http.Error(w, "progress endpoint unavailable", http.StatusServiceUnavailable)
+		case "/api/libraries":
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
+				"libraries": []audiobookshelf.AudiobookshelfLibrary{{ID: "healthy-library", Name: "Healthy Library"}},
+			}))
+		case "/api/libraries/healthy-library/items":
+			libraryItemRequests++
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
+				"results": []models.AudiobookshelfBook{healthyBook},
+				"total":   1,
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	svc.audiobookshelf = audiobookshelf.NewClient(server.URL, "abs-token")
+	mockHC.On("ClearUserBookCache").Return().Once()
+
+	err := svc.Sync(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch user progress data")
+	assert.Equal(t, 1, userProgressRequests)
+	assert.Equal(t, 2, libraryItemRequests, "healthy library should still be fetched for pre-count and processing")
+	snapshot := svc.GetSnapshot()
+	assert.Equal(t, "failed", snapshot.State)
+	assert.Equal(t, int32(1), snapshot.BooksTotal)
+	assert.Zero(t, snapshot.ProcessedSoFar, "the book has no reliable progress and must not be reported as an unread skip")
+	assert.Empty(t, snapshot.BookOutcomes)
+	mockHC.AssertExpectations(t)
+}
+
+func TestSyncDoesNotProcessUnreliableProgressWithDefaultUnreadSettings(t *testing.T) {
+	svc, _ := createTestService()
+	testDir := t.TempDir()
+	svc.statePath = filepath.Join(testDir, "sync-state.json")
+	svc.config.Paths.MismatchOutputDir = filepath.Join(testDir, "mismatches")
+	svc.persistentCache = NewPersistentASINCache(filepath.Join(testDir, "cache"))
+	_ = svc.persistentCache.Load()
+	svc.userBookCache = NewPersistentUserBookCache(filepath.Join(testDir, "cache"))
+	_ = svc.userBookCache.Load()
+	svc.userBookCache.Clear()
+	require.True(t, svc.config.Sync.ProcessUnreadBooks)
+	require.True(t, svc.config.Sync.SyncWantToRead)
+
+	unreliableBook := *toAudiobookshelfBook(createTestBook("default-progress-unavailable-book", "Progress Unavailable", "Author", "UNRELIABLE-ASIN", ""))
+	var userProgressRequests int
+	var libraryItemRequests int
+	audiobookshelfServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/me":
+			userProgressRequests++
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, "Bearer abs-token", r.Header.Get("Authorization"))
+			http.Error(w, "progress endpoint unavailable", http.StatusServiceUnavailable)
+		case "/api/libraries":
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
+				"libraries": []audiobookshelf.AudiobookshelfLibrary{{ID: "healthy-library", Name: "Healthy Library"}},
+			}))
+		case "/api/libraries/healthy-library/items":
+			libraryItemRequests++
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
+				"results": []models.AudiobookshelfBook{unreliableBook},
+				"total":   1,
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer audiobookshelfServer.Close()
+
+	var hardcoverMutationRequests atomic.Int32
+	hardcoverServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode Hardcover request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
+		query := strings.ToLower(request.Query)
+		if strings.Contains(query, "mutation") {
+			hardcoverMutationRequests.Add(1)
+		}
+
+		response := `{"data":{}}`
+		switch {
+		case strings.Contains(query, "bookbyasin"):
+			response = `{"data":{"books":[{"id":123,"title":"Progress Unavailable","book_status_id":1,"editions":[{"id":456,"asin":"UNRELIABLE-ASIN","reading_format_id":2,"audio_seconds":3600}]}]}}`
+		case strings.Contains(query, "getedition"):
+			response = `{"data":{"editions":[{"id":456,"book_id":789,"title":"Progress Unavailable"}]}}`
+		case strings.Contains(query, "getcurrentuserid"):
+			response = `{"data":{"me":[{"id":1}]}}`
+		case strings.Contains(query, "getuserbookbybookonly"),
+			strings.Contains(query, "getuserbookbybook"):
+			response = `{"data":{"user_books":[]}}`
+		case strings.Contains(query, "getuserbookbyedition"):
+			response = `{"data":{"user_books":[{"id":999,"edition_id":456}]}}`
+		case strings.Contains(query, "mutation"):
+			response = `{"data":{"update_user_book":{"id":999,"error":null}}}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(response))
+	}))
+	defer hardcoverServer.Close()
+
+	svc.audiobookshelf = audiobookshelf.NewClient(audiobookshelfServer.URL, "abs-token")
+	svc.hardcover = hardcover.NewClientWithConfig(&hardcover.ClientConfig{
+		BaseURL:       hardcoverServer.URL,
+		Timeout:       time.Second,
+		MaxRetries:    0,
+		RetryDelay:    time.Nanosecond,
+		RateLimit:     time.Nanosecond,
+		MaxConcurrent: 1,
+	}, "hc-token", logger.Get())
+
+	err := svc.Sync(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch user progress data")
+	assert.Equal(t, 1, userProgressRequests)
+	assert.Equal(t, 2, libraryItemRequests, "healthy library should still be fetched for pre-count and processing")
+	snapshot := svc.GetSnapshot()
+	assert.Equal(t, "failed", snapshot.State)
+	assert.Equal(t, int32(1), snapshot.BooksTotal)
+	assert.Zero(t, snapshot.ProcessedSoFar, "unreliable progress must not trigger a default WANT_TO_READ mutation")
+	assert.Empty(t, snapshot.BookOutcomes)
+	assert.Zero(t, hardcoverMutationRequests.Load(), "an /api/me failure must not emit any Hardcover mutation request")
 }
 
 func TestProcessLibraryRecordsFullCandidateTotalBeforeLimit(t *testing.T) {

@@ -70,6 +70,29 @@ func reportProcessBookOutcome(ctx context.Context, outcome SyncOutcome, reason s
 	}
 }
 
+// userProgressUnavailableContextKey marks a sync whose /api/me progress
+// request failed. Library items do not normally contain per-user progress, so
+// processLibrary uses this marker to avoid assigning those items a misleading
+// book outcome when progress is unavailable.
+type userProgressUnavailableContextKey struct{}
+
+func userProgressUnavailable(ctx context.Context) bool {
+	value, ok := ctx.Value(userProgressUnavailableContextKey{}).(bool)
+	return ok && value
+}
+
+// hasReliableEmbeddedProgress reports whether a library item carries enough
+// progress to classify safely when the per-user /api/me data is unavailable.
+// A positive current time needs a duration so processBook can derive a
+// meaningful progress ratio; a finished timestamp is sufficient to classify
+// a finished item even when Audiobookshelf reports no current time.
+func hasReliableEmbeddedProgress(book models.AudiobookshelfBook) bool {
+	if book.Progress.IsFinished && book.Progress.FinishedAt > 0 {
+		return true
+	}
+	return book.Progress.CurrentTime > 0 && book.Media.Duration > 0
+}
+
 type processBookOwnershipStateKey struct{}
 
 type processBookOwnershipState struct {
@@ -1238,10 +1261,13 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 
 	// Fetch user progress data from Audiobookshelf
 	s.log.Info("Fetching user progress data from Audiobookshelf...", nil)
-	userProgress, err := s.audiobookshelf.GetUserProgress(ctx)
-	if err != nil {
+	userProgress, progressErr := s.audiobookshelf.GetUserProgress(ctx)
+	var userProgressRunError error
+	if progressErr != nil {
+		userProgressRunError = fmt.Errorf("failed to fetch user progress data: %w", progressErr)
+		ctx = context.WithValue(ctx, userProgressUnavailableContextKey{}, true)
 		s.log.Warn("Failed to fetch user progress data, falling back to basic progress tracking", map[string]interface{}{
-			"error": err,
+			"error": progressErr,
 		})
 	} else {
 		s.log.Info("Fetched user progress data", map[string]interface{}{
@@ -1257,6 +1283,9 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 		s.log.Error("Failed to fetch libraries", map[string]interface{}{
 			"error": err,
 		})
+		if userProgressRunError != nil {
+			return errors.Join(userProgressRunError, fmt.Errorf("failed to fetch libraries: %w", err))
+		}
 		return fmt.Errorf("failed to fetch libraries: %w", err)
 	}
 
@@ -1296,6 +1325,12 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 
 	// Track total books processed across all libraries
 	totalBooksProcessed := 0
+	// Keep library fetch failures separate from per-book outcomes. A failed
+	// library fetch means its candidates were never observed, so recording
+	// synthetic failed outcomes for those candidates would make the processed
+	// denominator misleading. The error is surfaced after other libraries have
+	// had a chance to complete.
+	libraryErrors := make(map[string]error)
 
 	// Pre-count all library items so BooksTotal is available immediately
 	// in the status endpoint, showing 345/345 instead of counting up from 0.
@@ -1306,6 +1341,12 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 				"library_id": filteredLibraries[i].ID,
 				"error":      countErr,
 			})
+			libraryErrors[filteredLibraries[i].ID] = fmt.Errorf(
+				"failed to pre-count library %q (%s): %w",
+				filteredLibraries[i].Name,
+				filteredLibraries[i].ID,
+				countErr,
+			)
 			continue
 		}
 		s.recordLibraryCandidateTotal(filteredLibraries[i].ID, len(items))
@@ -1342,8 +1383,17 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 				errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
+			libraryErrors[filteredLibraries[i].ID] = fmt.Errorf(
+				"failed to process library %q (%s): %w",
+				filteredLibraries[i].Name,
+				filteredLibraries[i].ID,
+				err,
+			)
 			continue
 		}
+		// A successful processing fetch proves that a transient pre-count
+		// failure did not leave this library's run result incomplete.
+		delete(libraryErrors, filteredLibraries[i].ID)
 
 		totalBooksProcessed += processed
 
@@ -1364,6 +1414,35 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 		}
 	}
 
+	// Preserve the deterministic library order in the joined error so callers
+	// get stable diagnostics while errors.Is still reaches the API failure.
+	var libraryRunError error
+	for i := range filteredLibraries {
+		if libraryErr, ok := libraryErrors[filteredLibraries[i].ID]; ok {
+			if libraryRunError == nil {
+				libraryRunError = libraryErr
+			} else {
+				libraryRunError = errors.Join(libraryRunError, libraryErr)
+			}
+		}
+	}
+	if userProgressRunError != nil && libraryRunError != nil {
+		err = fmt.Errorf("sync completed with run-level errors: %w", errors.Join(userProgressRunError, fmt.Errorf("one or more libraries could not be synchronized: %w", libraryRunError)))
+		s.log.Error("Sync completed with run-level errors", map[string]interface{}{
+			"error": err,
+		})
+	} else if userProgressRunError != nil {
+		err = userProgressRunError
+		s.log.Error("Sync completed with run-level errors", map[string]interface{}{
+			"error": err,
+		})
+	} else if libraryRunError != nil {
+		err = fmt.Errorf("one or more libraries could not be synchronized: %w", libraryRunError)
+		s.log.Error("Sync completed with library errors", map[string]interface{}{
+			"error": err,
+		})
+	}
+
 	// Save any mismatches that occurred during sync
 	if err := mismatch.SaveToFile(ctx, s.hardcover, "", s.config); err != nil {
 		s.log.Error("Failed to save mismatch files", map[string]interface{}{
@@ -1381,12 +1460,24 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 	// wrappers return successful no-ops, so persisting this in-memory state
 	// would incorrectly mark skipped Hardcover mutations as applied.
 	if !s.config.Sync.DryRun {
-		s.state.SetFullSync()
-		if err := s.state.Save(s.statePath); err != nil {
+		// A partial run must remain eligible for a future full sync. Persist
+		// successful per-book checkpoints, but only advance the full-sync marker
+		// when every selected library was fetched and processed.
+		if err == nil {
+			s.state.SetFullSync()
+		} else {
+			s.log.Warn("Skipping full-sync marker because one or more libraries failed", nil)
+		}
+		saveErr := s.state.Save(s.statePath)
+		if saveErr != nil {
 			s.log.Error("Failed to save sync state", map[string]interface{}{
-				"error": err.Error(),
+				"error": saveErr.Error(),
 			})
-			return fmt.Errorf("failed to save final sync state: %w", err)
+			stateErr := fmt.Errorf("failed to save final sync state: %w", saveErr)
+			if err != nil {
+				return errors.Join(err, stateErr)
+			}
+			return stateErr
 		}
 	} else {
 		s.log.Info("[DRY-RUN] Skipping sync state save", nil)
@@ -1418,6 +1509,10 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 	// Log the sync summary
 	s.logSyncSummary()
 
+	if err != nil {
+		s.log.Error("Sync completed with errors", map[string]interface{}{"error": err})
+		return err
+	}
 	s.log.Info("Sync completed successfully", nil)
 
 	return nil
@@ -1497,6 +1592,16 @@ func (s *Service) processLibrary(ctx context.Context, library *audiobookshelf.Au
 				library.ID,
 				itemIndex+1,
 			)
+		}
+		if userProgressUnavailable(ctx) && !hasReliableEmbeddedProgress(book) {
+			// The library item has no reliable progress to classify. Leave it
+			// without a per-book outcome and rely on the run-level progress error
+			// rather than reporting a misleading unread skip or WANT_TO_READ
+			// mutation.
+			libraryLog.Debug("Skipping book because Audiobookshelf user progress is unavailable", map[string]interface{}{
+				"item_id": book.ID,
+			})
+			continue
 		}
 
 		// Process the item
@@ -1688,6 +1793,13 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 		matchMethod string
 	)
 	setOutcome := func(outcome SyncOutcome, reason string) {
+		// A successful Hardcover mutation is the authoritative result for this
+		// item. Later no-op guards can run after stale-reread closure and must not
+		// downgrade that mutation to already_current or skipped.
+		if (outcome == OutcomeAlreadyCurrent || outcome == OutcomeSkipped) &&
+			(outcomeHint == OutcomeSynced || outcomeHint == OutcomeWouldSync) {
+			return
+		}
 		outcomeHint = outcome
 		outcomeReason = reason
 	}
@@ -3511,6 +3623,10 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 					"existing_started_at":     logCtx["existing_started_at"],
 					"latest_finished_read_at": latestFinishedReadDate,
 				})
+				// Closing the stale unfinished row is a successful Hardcover
+				// mutation even when the subsequent create guard determines that
+				// no additional read should be inserted.
+				reportProcessBookOutcome(ctx, OutcomeSynced, "closed stale unfinished Hardcover reread")
 
 				// Continue via create path below.
 				readStatusToUpdate = nil

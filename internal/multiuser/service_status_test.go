@@ -4,9 +4,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/mismatch"
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
+
+func TestGetProfileStatusUsesPreloadedSyncState(t *testing.T) {
+	lastSync := time.Date(2026, time.September, 13, 12, 0, 0, 0, time.UTC)
+	service := &MultiUserService{
+		profileStatuses: map[string]*SyncProfileStatus{},
+		activeRuns:      make(map[string]activeSyncRun),
+		syncServices:    make(map[string]*syncsvc.Service),
+	}
+
+	status := service.getProfileStatus(
+		"profile-a",
+		&database.SyncProfile{ID: "profile-a", Name: "A"},
+		&database.ProfileSyncState{LastSync: &lastSync},
+		true,
+	)
+	if status.ProfileName != "A" || status.LastSync == nil || !status.LastSync.Equal(lastSync) {
+		t.Fatalf("preloaded last sync was not used: %#v", status)
+	}
+}
 
 func TestGetProfileStatusCopiesCurrentSnapshotAndLegacyDetails(t *testing.T) {
 	lastSync := time.Date(2026, time.September, 12, 22, 0, 0, 0, time.UTC)
@@ -69,33 +89,5 @@ func TestGetProfileStatusCopiesCurrentSnapshotAndLegacyDetails(t *testing.T) {
 	}
 	if again.LastSync == nil || again.LastSync.Equal(lastSync) == false {
 		t.Fatalf("last sync was aliased or lost: %#v", again.LastSync)
-	}
-}
-
-func TestApplyLiveSnapshotPromotesCompletedStateWithoutChangingLastSync(t *testing.T) {
-	lastSync := time.Date(2026, time.September, 12, 22, 0, 0, 0, time.UTC)
-	run := activeSyncRun{generation: 1, runID: "run-a", startedAt: time.Date(2026, time.September, 13, 9, 0, 0, 0, time.UTC)}
-	status := &SyncProfileStatus{
-		ProfileID: "profile-a",
-		Status:    "syncing",
-		LastSync:  &lastSync,
-		Progress:  "Starting sync...",
-	}
-	snapshot := newRunSnapshot("profile-a", run, "completed")
-	snapshot.BooksTotal = 4
-	snapshot.ProcessedSoFar = 4
-	snapshot.TotalBooksProcessed = 4
-	snapshot.BooksSynced = 3
-
-	applyLiveSnapshotToStatus(status, snapshot)
-
-	if status.Status != "completed" {
-		t.Fatalf("terminal snapshot did not promote profile status: %#v", status)
-	}
-	if status.LastSync == nil || !status.LastSync.Equal(lastSync) {
-		t.Fatalf("terminal snapshot changed stored last sync: %v", status.LastSync)
-	}
-	if status.Snapshot == nil || status.Snapshot.State != "completed" || status.Snapshot.RunID != run.runID {
-		t.Fatalf("terminal snapshot was not retained: %#v", status.Snapshot)
 	}
 }

@@ -88,6 +88,93 @@ func TestProcessBookFailsBeforeMutationWhenReadStatusLookupFails(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
+func TestProcessBookRecordsSyncedWhenStaleRereadClosureIsTheOnlyMutation(t *testing.T) {
+	svc, mockClient := createTestService()
+	svc.config.Sync.ProcessUnreadBooks = true
+	svc.config.Sync.SyncOwned = false
+
+	book := toAudiobookshelfBook(createTestBook(
+		"stale-reread-outcome",
+		"Stale Reread Outcome",
+		"Author",
+		"STALE-REREAD-OUTCOME-ASIN",
+		"",
+	))
+	book.Media.Duration = 1000
+	book.Progress.CurrentTime = 600
+	book.Progress.StartedAt = time.Date(2025, time.June, 2, 0, 0, 0, 0, time.UTC).UnixMilli()
+
+	const (
+		hardcoverBookID = "hardcover-stale-reread"
+		editionID       = "456"
+		userBookID      = int64(789)
+	)
+	stateKey := book.ID + ":" + editionID
+	// Seed a recent checkpoint matching the current progress. After the stale
+	// unfinished read is closed, this guard prevents a duplicate insert and
+	// exercises the mutation-before-no-op outcome path.
+	svc.state.UpdateBook(stateKey, 60, "IN_PROGRESS")
+
+	mockClient.On("SearchBookByASIN", mock.Anything, "STALE-REREAD-OUTCOME-ASIN").Return(&models.HardcoverBook{
+		ID:        hardcoverBookID,
+		EditionID: editionID,
+	}, nil).Once()
+	mockClient.On("GetEdition", mock.Anything, editionID).Return(&models.Edition{
+		ID:     editionID,
+		BookID: "123",
+	}, nil).Times(3)
+	svc.findExistingUserBookForBookFunc = func(context.Context, int64) (int64, error) {
+		return userBookID, nil
+	}
+	mockClient.On("GetUserBook", mock.Anything, "789").Return(&models.HardcoverBook{
+		ID:           hardcoverBookID,
+		EditionID:    editionID,
+		BookStatusID: 2,
+	}, nil).Times(4)
+
+	staleReadID := int64(1001)
+	staleProgressSeconds := 600
+	staleStartedAt := "2025-06-02"
+	latestFinishedAt := "2025-06-10"
+	finishedProgressSeconds := 1000
+	finishedReadID := int64(1002)
+	editionIDInt := int64(456)
+	mockClient.On("GetUserBookReads", mock.Anything, hardcover.GetUserBookReadsInput{
+		UserBookID: userBookID,
+	}).Return([]hardcover.UserBookRead{
+		{
+			ID:              staleReadID,
+			ProgressSeconds: &staleProgressSeconds,
+			StartedAt:       &staleStartedAt,
+			EditionID:       &editionIDInt,
+			FinishedAt:      nil,
+		},
+		{
+			ID:              finishedReadID,
+			ProgressSeconds: &finishedProgressSeconds,
+			StartedAt:       &latestFinishedAt,
+			EditionID:       &editionIDInt,
+			FinishedAt:      &latestFinishedAt,
+		},
+	}, nil).Once()
+	mockClient.On("UpdateUserBookRead", mock.Anything, mock.MatchedBy(func(input hardcover.UpdateUserBookReadInput) bool {
+		return input.ID == staleReadID && input.Object["finished_at"] == latestFinishedAt
+	})).Return(true, nil).Once()
+
+	err := svc.processBook(context.Background(), *book, &models.AudiobookshelfUserProgress{})
+
+	require.NoError(t, err)
+	snapshot := svc.GetSnapshot()
+	require.Len(t, snapshot.BookOutcomes, 1)
+	assert.Equal(t, OutcomeSynced, snapshot.BookOutcomes[0].Outcome)
+	assert.Contains(t, snapshot.BookOutcomes[0].Reason, "closed stale unfinished")
+	assert.Equal(t, int32(1), snapshot.OutcomeCounts.Synced)
+	assert.Equal(t, int32(0), snapshot.OutcomeCounts.AlreadyCurrent)
+	assert.Equal(t, int32(0), snapshot.OutcomeCounts.Skipped)
+	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
+	mockClient.AssertExpectations(t)
+}
+
 func TestProcessBookRecordsFailedOutcomeWhenFinishedStatusLookupFails(t *testing.T) {
 	svc, mockClient := createTestService()
 	svc.config.Sync.ProcessUnreadBooks = true

@@ -38,12 +38,6 @@ type activeSyncRun struct {
 	generation uint64
 	runID      string
 	startedAt  time.Time
-	canceled   bool
-}
-
-type syncStateRepository interface {
-	GetSyncState(profileID string) (*database.ProfileSyncState, error)
-	UpdateSyncState(state *database.ProfileSyncState) error
 }
 
 // MultiUserService manages sync operations for multiple users
@@ -57,10 +51,6 @@ type MultiUserService struct {
 	activeRuns      map[string]activeSyncRun
 	nextGeneration  uint64
 	syncMutex       stdSync.RWMutex
-	stateRepository syncStateRepository
-	persistenceMu   stdSync.Mutex
-	persistedRuns   map[string]uint64
-	persistedTimes  map[string]time.Time
 	syncServices    map[string]*sync.Service // Maps profile ID to its sync service
 	serviceRuns     map[string]uint64
 	servicesMutex   stdSync.RWMutex
@@ -68,10 +58,6 @@ type MultiUserService struct {
 
 // NewMultiUserService creates a new multi-user service
 func NewMultiUserService(repo *database.Repository, globalConfig *config.Config, log *logger.Logger) *MultiUserService {
-	var stateRepository syncStateRepository
-	if repo != nil {
-		stateRepository = repo
-	}
 	return &MultiUserService{
 		repository:      repo,
 		logger:          log,
@@ -79,9 +65,6 @@ func NewMultiUserService(repo *database.Repository, globalConfig *config.Config,
 		profileStatuses: make(map[string]*SyncProfileStatus),
 		activeSyncs:     make(map[string]context.CancelFunc),
 		activeRuns:      make(map[string]activeSyncRun),
-		stateRepository: stateRepository,
-		persistedRuns:   make(map[string]uint64),
-		persistedTimes:  make(map[string]time.Time),
 		syncServices:    make(map[string]*sync.Service),
 		serviceRuns:     make(map[string]uint64),
 	}
@@ -121,14 +104,6 @@ func (s *MultiUserService) DeleteProfile(profileID string) error {
 			"error":     err,
 		})
 	}
-	// The profile is going away, so prevent its canceled goroutine from
-	// republishing a status after the status entry is removed.
-	s.syncMutex.Lock()
-	if run, ok := s.activeRuns[profileID]; ok && run.canceled {
-		delete(s.activeRuns, profileID)
-	}
-	s.syncMutex.Unlock()
-
 	// Remove from status tracking
 	s.statusMutex.Lock()
 	delete(s.profileStatuses, profileID)
@@ -166,8 +141,8 @@ func (s *MultiUserService) GetSyncService(profileID string) (*sync.Service, bool
 }
 
 // currentSyncService returns only the service belonging to the active run.
-// A canceled run can remain in the map briefly while its goroutine unwinds;
-// its generation must not be exposed to a newer run.
+// A stale run can remain in the map briefly while its goroutine unwinds; its
+// generation must not be exposed to a newer run.
 func (s *MultiUserService) currentSyncService(profileID string) (*sync.Service, uint64) {
 	// Keep the lock order consistent with register/removeSyncService so the
 	// service and generation are read as one pair during replacement.
@@ -186,9 +161,6 @@ func (s *MultiUserService) currentSyncServiceLocked(profileID string) (*sync.Ser
 	generation := s.serviceRuns[profileID]
 	activeRun, active := s.activeRuns[profileID]
 	if !exists || service == nil {
-		return nil, 0
-	}
-	if activeRun.canceled {
 		return nil, 0
 	}
 	// A zero generation is retained as a compatibility path for tests or
@@ -283,7 +255,7 @@ func (s *MultiUserService) getProfileStatus(profileID string, preloadedProfile *
 		// active service. This is defensive for an in-memory replacement
 		// observed between lifecycle updates and prevents mixed responses.
 		if generation == 0 || status.Snapshot == nil || status.Snapshot.RunID == "" || snapshot.RunID == "" || status.Snapshot.RunID == snapshot.RunID {
-			applyLiveSnapshotToStatus(status, snapshot)
+			applySnapshotToStatus(status, snapshot)
 			if status.Snapshot.UserID == "" {
 				status.Snapshot.UserID = profileID
 				status.LastSyncSummary.UserID = profileID
@@ -340,20 +312,15 @@ func (s *MultiUserService) StartSync(profileID string) error {
 // CancelSync cancels a running sync operation for a profile
 func (s *MultiUserService) CancelSync(profileID string) error {
 	s.syncMutex.Lock()
+	defer s.syncMutex.Unlock()
 
 	cancel, exists := s.activeSyncs[profileID]
 	if !exists {
-		s.syncMutex.Unlock()
 		return fmt.Errorf("no active sync for profile %s", profileID)
 	}
-	run, runExists := s.activeRuns[profileID]
-	service, _ := s.currentSyncServiceLocked(profileID)
 	cancel()
 	delete(s.activeSyncs, profileID)
-	if runExists {
-		run.canceled = true
-		s.activeRuns[profileID] = run
-	}
+	delete(s.activeRuns, profileID)
 
 	finalStatus := &SyncProfileStatus{
 		ProfileID: profileID,
@@ -361,40 +328,16 @@ func (s *MultiUserService) CancelSync(profileID string) error {
 		LastSync:  timePtr(time.Now()),
 		Progress:  "Sync canceled",
 	}
-	s.statusMutex.RLock()
-	storedStatus := cloneProfileStatus(s.profileStatuses[profileID])
-	s.statusMutex.RUnlock()
-	if storedStatus != nil {
-		finalStatus.ProfileName = storedStatus.ProfileName
-		finalStatus.DryRun = storedStatus.DryRun
-	}
-	if service != nil && runExists {
-		snapshot := s.normalizeRunSnapshotLocked(profileID, run.generation, service.GetSnapshot())
-		snapshot.State = "canceled"
-		applySnapshotToStatus(finalStatus, snapshot)
-	} else if runExists {
-		var snapshot sync.SyncSnapshot
-		if storedStatus != nil && storedStatus.Snapshot != nil {
-			snapshot = *storedStatus.Snapshot
-			snapshot.RunID = run.runID
-			snapshot.RunStartedAt = run.startedAt
-			snapshot.UserID = profileID
-		} else {
-			snapshot = newRunSnapshot(profileID, run, "canceled")
+	// Persist last_sync to DB so UI can show it across restarts.
+	if state, err := s.repository.GetSyncState(profileID); err == nil {
+		if state == nil {
+			state = &database.ProfileSyncState{ProfileID: profileID, StateData: "{}"}
 		}
-		snapshot.State = "canceled"
-		applySnapshotToStatus(finalStatus, snapshot)
+		state.LastSync = finalStatus.LastSync
+		_ = s.repository.UpdateSyncState(state)
 	}
 
 	s.updateProfileStatus(profileID, finalStatus)
-	generation := run.generation
-	lastSync := finalStatus.LastSync
-	s.syncMutex.Unlock()
-
-	// Persist last_sync without holding syncMutex. Generation and timestamp
-	// ordering are enforced by persistLastSync so a delayed stale run cannot
-	// overwrite a replacement run's timestamp.
-	s.persistLastSync(profileID, generation, lastSync)
 	return nil
 }
 
@@ -477,11 +420,6 @@ func (s *MultiUserService) performSync(ctx context.Context, profileID string, pr
 	if err != nil {
 		status.Status = "error"
 		status.Error = err.Error()
-		if status.Snapshot != nil && status.Snapshot.State == "canceled" {
-			status.Status = "idle"
-			status.Error = ""
-			status.Progress = "Sync canceled"
-		}
 		s.logger.Error("Sync failed", map[string]interface{}{
 			"profileID": profileID,
 			"error":     err,
@@ -499,9 +437,8 @@ func (s *MultiUserService) performSync(ctx context.Context, profileID string, pr
 		})
 	}
 
-	// Publish only if this run is still current. A canceled run can finish
-	// after a replacement run has started and must not overwrite its status or
-	// persisted timestamp.
+	// Publish only if this run is still current. A stale run can finish after a
+	// replacement run has started and must not overwrite its status.
 	s.publishFinalStatus(profileID, generation, status)
 }
 
@@ -586,83 +523,25 @@ func (s *MultiUserService) finishActiveRun(profileID string, generation uint64) 
 
 func (s *MultiUserService) publishFinalStatus(profileID string, generation uint64, status *SyncProfileStatus) bool {
 	s.syncMutex.Lock()
-	run, ok := s.activeRuns[profileID]
-	if !ok || run.generation != generation || status == nil {
-		s.syncMutex.Unlock()
+	defer s.syncMutex.Unlock()
+	if run, ok := s.activeRuns[profileID]; !ok || run.generation != generation || status == nil {
 		return false
 	}
-	if run.canceled && (status.Snapshot == nil || status.Snapshot.State != "canceled") {
-		s.syncMutex.Unlock()
-		return false
-	}
-	statusCopy := cloneProfileStatus(status)
-	lastSync := statusCopy.LastSync
-	s.statusMutex.Lock()
-	s.profileStatuses[profileID] = statusCopy
-	s.statusMutex.Unlock()
-	s.syncMutex.Unlock()
 
-	// Persist after publishing the in-memory status and without holding
-	// syncMutex. persistLastSync serializes repository I/O and rejects stale
-	// generations/timestamps.
-	s.persistLastSync(profileID, generation, lastSync)
-	return true
-}
-
-func (s *MultiUserService) persistLastSync(profileID string, generation uint64, lastSync *time.Time) {
-	if lastSync == nil {
-		return
-	}
-	var repository syncStateRepository
-	if s.stateRepository != nil {
-		repository = s.stateRepository
-	} else if s.repository != nil {
-		repository = s.repository
-	}
-	if repository == nil {
-		return
-	}
-
-	candidate := *lastSync
-	s.persistenceMu.Lock()
-	defer s.persistenceMu.Unlock()
-	if s.persistedRuns == nil {
-		s.persistedRuns = make(map[string]uint64)
-	}
-	if s.persistedTimes == nil {
-		s.persistedTimes = make(map[string]time.Time)
-	}
-	if previousGeneration, ok := s.persistedRuns[profileID]; ok && generation < previousGeneration {
-		return
-	}
-	if previous, ok := s.persistedTimes[profileID]; ok && candidate.Before(previous) {
-		return
-	}
-
-	state, err := repository.GetSyncState(profileID)
-	if err != nil {
-		return
-	}
-	if state == nil {
-		state = &database.ProfileSyncState{ProfileID: profileID, StateData: "{}"}
-	}
-	if state.LastSync != nil && state.LastSync.After(candidate) {
-		if generation > s.persistedRuns[profileID] {
-			s.persistedRuns[profileID] = generation
+	if s.repository != nil {
+		if state, err := s.repository.GetSyncState(profileID); err == nil {
+			if state == nil {
+				state = &database.ProfileSyncState{ProfileID: profileID, StateData: "{}"}
+			}
+			state.LastSync = status.LastSync
+			_ = s.repository.UpdateSyncState(state)
 		}
-		s.persistedTimes[profileID] = *state.LastSync
-		return
 	}
-	state.LastSync = &candidate
-	if err := repository.UpdateSyncState(state); err != nil {
-		return
-	}
-	if generation > s.persistedRuns[profileID] {
-		s.persistedRuns[profileID] = generation
-	}
-	if previous, ok := s.persistedTimes[profileID]; !ok || candidate.After(previous) {
-		s.persistedTimes[profileID] = candidate
-	}
+
+	s.statusMutex.Lock()
+	s.profileStatuses[profileID] = cloneProfileStatus(status)
+	s.statusMutex.Unlock()
+	return true
 }
 
 // createProfileSpecificConfig creates a config.Config instance for a specific profile
@@ -802,23 +681,6 @@ func applySnapshotToStatus(status *SyncProfileStatus, snapshot sync.SyncSnapshot
 		BooksNotFound:       []sync.BookNotFoundInfo{},
 		Mismatches:          []mismatch.BookMismatch{},
 	}
-}
-
-// applyLiveSnapshotToStatus keeps the returned status state aligned with a
-// terminal snapshot that the sync service has already recorded. Sync.Service
-// updates its snapshot state in a deferred cleanup just before performSync
-// publishes the profile status, so a read in that small window must not report
-// a completed snapshot as still syncing. LastSync remains sourced from the
-// stored profile status until publication supplies the new timestamp.
-func applyLiveSnapshotToStatus(status *SyncProfileStatus, snapshot sync.SyncSnapshot) {
-	if status == nil {
-		return
-	}
-	if status.Status == "syncing" && snapshot.State == "completed" {
-		status.Status = "completed"
-		status.Progress = "Sync completed successfully"
-	}
-	applySnapshotToStatus(status, snapshot)
 }
 
 func cloneProfileStatus(status *SyncProfileStatus) *SyncProfileStatus {
