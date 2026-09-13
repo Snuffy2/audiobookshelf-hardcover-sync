@@ -7,7 +7,7 @@ import (
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
 
-func TestRunGenerationKeepsReplacementAfterCanceledRunUnwinds(t *testing.T) {
+func TestRunGenerationKeepsReplacementAfterStaleRunCleanup(t *testing.T) {
 	oldService := &syncsvc.Service{}
 	newService := &syncsvc.Service{}
 	oldRun := activeSyncRun{generation: 1, runID: "run-old", startedAt: time.Now().UTC()}
@@ -133,7 +133,7 @@ func TestGetProfileStatusKeepsInitialStatusBeforeServiceRegistration(t *testing.
 	}
 
 	got := service.GetProfileStatus("profile-a")
-	if got.Status != "syncing" || got.Progress != "Starting sync..." || got.Snapshot == nil {
+	if got.Status != "syncing" || got.Progress != status.Progress || got.Snapshot == nil {
 		t.Fatalf("initial status was not preserved: %#v", got)
 	}
 	if got.Snapshot.RunID != run.runID || got.Snapshot.State != "syncing" {
@@ -153,7 +153,7 @@ func TestGetProfileStatusKeepsCompletedFallbackAfterServiceRemoval(t *testing.T)
 	}
 
 	got := service.GetProfileStatus("profile-a")
-	if got.Status != "completed" || got.Progress != "Sync completed successfully" || got.Snapshot == nil {
+	if got.Status != "completed" || got.Progress != status.Progress || got.Snapshot == nil {
 		t.Fatalf("completed fallback was not preserved: %#v", got)
 	}
 	if got.Snapshot.RunID != run.runID || got.Snapshot.State != "completed" {
