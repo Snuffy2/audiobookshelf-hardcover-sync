@@ -85,6 +85,16 @@ func reportProcessBookOwnership(ctx context.Context, outcome SyncOutcome, reason
 	}
 }
 
+type processBookEditionCorrectionStateKey struct{}
+
+func reportProcessBookEditionCorrection(ctx context.Context, outcome SyncOutcome, reason string, err error) {
+	if state, ok := ctx.Value(processBookEditionCorrectionStateKey{}).(*processBookOwnershipState); ok && state != nil {
+		state.outcome = outcome
+		state.reason = reason
+		state.err = err
+	}
+}
+
 const (
 	OutcomeSynced         SyncOutcome = "synced"
 	OutcomeAlreadyCurrent SyncOutcome = "already_current"
@@ -165,19 +175,20 @@ type BookNotFoundInfo struct {
 
 // Service handles the synchronization between Audiobookshelf and Hardcover
 type Service struct {
-	audiobookshelf      audiobookshelf.AudiobookshelfClientInterface
-	hardcover           hardcover.HardcoverClientInterface
-	config              *Config
-	log                 *logger.Logger
-	state               *state.State
-	statePath           string
-	lastProgressUpdates map[string]progressUpdateInfo    // Cache of last progress updates
-	lastProgressMutex   sync.RWMutex                     // Mutex to protect the cache
-	asinCache           map[string]*models.HardcoverBook // Cache for ASIN lookups (in-memory)
-	asinCacheMutex      sync.RWMutex                     // Mutex to protect ASIN cache
-	persistentCache     *PersistentASINCache             // Persistent ASIN cache across runs
-	userBookCache       *PersistentUserBookCache         // Persistent user book cache
-	summary             *SyncSummary                     // Tracks sync operation results
+	audiobookshelf                  audiobookshelf.AudiobookshelfClientInterface
+	hardcover                       hardcover.HardcoverClientInterface
+	findExistingUserBookForBookFunc func(context.Context, int64) (int64, error)
+	config                          *Config
+	log                             *logger.Logger
+	state                           *state.State
+	statePath                       string
+	lastProgressUpdates             map[string]progressUpdateInfo    // Cache of last progress updates
+	lastProgressMutex               sync.RWMutex                     // Mutex to protect the cache
+	asinCache                       map[string]*models.HardcoverBook // Cache for ASIN lookups (in-memory)
+	asinCacheMutex                  sync.RWMutex                     // Mutex to protect ASIN cache
+	persistentCache                 *PersistentASINCache             // Persistent ASIN cache across runs
+	userBookCache                   *PersistentUserBookCache         // Persistent user book cache
+	summary                         *SyncSummary                     // Tracks sync operation results
 	// Outcome state is scoped to this service instance (one profile). It uses
 	// summary's lock so snapshots observe one coherent view with legacy fields.
 	outcomeCounts  OutcomeCounts
@@ -281,13 +292,13 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 	book, exists := s.asinCache[asin]
 	s.asinCacheMutex.RUnlock()
 
-	if exists {
+	if exists && book != nil {
 		return book, true
 	}
 
 	// Check persistent cache
 	book, exists = s.persistentCache.Get(asin)
-	if exists {
+	if exists && book != nil {
 		// Promote to in-memory cache for faster access
 		s.asinCacheMutex.Lock()
 		s.asinCache[asin] = book
@@ -298,11 +309,32 @@ func (s *Service) getASINFromCache(asin string) (*models.HardcoverBook, bool) {
 		})
 	}
 
-	return book, exists
+	if exists {
+		// Nil entries were used by older versions to cache technical lookup
+		// failures. Treat them as misses so a transient error is retried.
+		return nil, false
+	}
+	return nil, false
+}
+
+// processedOutcomeTotal returns the current outcome count without cloning the
+// full snapshot. It is used from per-book debug logging, where constructing a
+// snapshot would sort and copy every accumulated outcome.
+func (s *Service) processedOutcomeTotal() int32 {
+	if s.summary == nil {
+		return 0
+	}
+	s.summary.RLock()
+	defer s.summary.RUnlock()
+	return s.outcomeCounts.Total()
 }
 
 // setASINInCache stores an ASIN lookup result in both caches
 func (s *Service) setASINInCache(asin string, book *models.HardcoverBook) {
+	if book == nil {
+		return
+	}
+
 	// Store in in-memory cache
 	s.asinCacheMutex.Lock()
 	s.asinCache[asin] = book
@@ -950,10 +982,15 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 				"old_edition_id":        existingUB.EditionID,
 				"new_edition_id":        editionID,
 			})
-			if edErr := s.hardcover.UpdateUserBookEdition(ctx, int(existingUserBookID), int(editionIDInt)); edErr != nil {
+			if s.config.Sync.DryRun {
+				reportProcessBookEditionCorrection(ctx, OutcomeWouldSync, "would correct Hardcover user book edition", nil)
+			} else if edErr := s.hardcover.UpdateUserBookEdition(ctx, int(existingUserBookID), int(editionIDInt)); edErr != nil {
 				logCtx.Warn("Failed to update user book edition", map[string]interface{}{
 					"error": edErr.Error(),
 				})
+				reportProcessBookEditionCorrection(ctx, OutcomeFailed, "failed to correct Hardcover user book edition", edErr)
+			} else {
+				reportProcessBookEditionCorrection(ctx, OutcomeSynced, "corrected Hardcover user book edition", nil)
 			}
 		}
 
@@ -1069,6 +1106,10 @@ func (s *Service) findOrCreateUserBookID(ctx context.Context, editionID, status 
 
 // findExistingUserBookForBook checks if there's already a user book for this book (any edition)
 func (s *Service) findExistingUserBookForBook(ctx context.Context, bookID int64) (int64, error) {
+	if s.findExistingUserBookForBookFunc != nil {
+		return s.findExistingUserBookForBookFunc(ctx, bookID)
+	}
+
 	// HardcoverClientInterface does not expose the book-level lookup helpers,
 	// so use them when the configured implementation is the concrete client.
 	if hcClient, ok := s.hardcover.(*hardcover.Client); ok {
@@ -1601,34 +1642,45 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 	var outcomeReason string
 	var outcomeError error
 	ownershipState := &processBookOwnershipState{}
+	editionCorrectionState := &processBookOwnershipState{}
+	var (
+		hcBook    *models.HardcoverBook
+		findErr   error
+		editionID string
+		stateKey  string
+	)
 	setOutcome := func(outcome SyncOutcome, reason string) {
 		outcomeHint = outcome
 		outcomeReason = reason
 	}
 	ctx = context.WithValue(ctx, processBookOutcomeReporterKey{}, processBookOutcomeReporter(setOutcome))
 	ctx = context.WithValue(ctx, processBookOwnershipStateKey{}, ownershipState)
+	ctx = context.WithValue(ctx, processBookEditionCorrectionStateKey{}, editionCorrectionState)
 	defer func() {
-		// Ownership is a real Hardcover mutation that happens while matching an
-		// item, before later progress classification. Preserve that mutation in
-		// the final outcome when later work is only a no-op or threshold skip.
-		switch ownershipState.outcome {
-		case OutcomeFailed:
-			if outcomeHint != OutcomeFailed {
-				outcomeHint = OutcomeFailed
-				outcomeReason = ownershipState.reason
-			}
-			if outcomeError == nil {
-				outcomeError = ownershipState.err
-			}
-		case OutcomeSynced:
-			if outcomeHint == "" || outcomeHint == OutcomeAlreadyCurrent || outcomeHint == OutcomeSkipped {
-				outcomeHint = OutcomeSynced
-				outcomeReason = ownershipState.reason
-			}
-		case OutcomeWouldSync:
-			if outcomeHint == "" || outcomeHint == OutcomeAlreadyCurrent || outcomeHint == OutcomeSkipped {
-				outcomeHint = OutcomeWouldSync
-				outcomeReason = ownershipState.reason
+		// Ownership and edition correction are real Hardcover mutations that can
+		// happen while matching an item, before later progress classification.
+		// Preserve either mutation in the final outcome when later work is only a
+		// no-op or threshold skip.
+		for _, mutationState := range []*processBookOwnershipState{ownershipState, editionCorrectionState} {
+			switch mutationState.outcome {
+			case OutcomeFailed:
+				if outcomeHint != OutcomeFailed {
+					outcomeHint = OutcomeFailed
+					outcomeReason = mutationState.reason
+				}
+				if outcomeError == nil {
+					outcomeError = mutationState.err
+				}
+			case OutcomeSynced:
+				if outcomeHint == "" || outcomeHint == OutcomeAlreadyCurrent || outcomeHint == OutcomeSkipped {
+					outcomeHint = OutcomeSynced
+					outcomeReason = mutationState.reason
+				}
+			case OutcomeWouldSync:
+				if outcomeHint == "" || outcomeHint == OutcomeAlreadyCurrent || outcomeHint == OutcomeSkipped {
+					outcomeHint = OutcomeWouldSync
+					outcomeReason = mutationState.reason
+				}
 			}
 		}
 		if outcomeHint == "" {
@@ -1642,10 +1694,10 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 				outcomeHint = OutcomeSkipped
 			}
 		}
-		s.recordBookOutcome(book, outcomeHint, outcomeReason, outcomeError, nil)
+		s.recordBookOutcome(book, outcomeHint, outcomeReason, outcomeError, hcBook)
 		bookLog.Debug("Book processing outcome recorded", map[string]interface{}{
 			"outcome":               outcomeHint,
-			"total_books_processed": s.GetSnapshot().ProcessedSoFar,
+			"total_books_processed": s.processedOutcomeTotal(),
 		})
 	}()
 
@@ -1742,14 +1794,6 @@ func (s *Service) processBook(ctx context.Context, book models.AudiobookshelfBoo
 			"change_threshold": minChangeThreshold,
 		})
 	}
-
-	// Declare variables at the top of the function to avoid redeclaration
-	var (
-		hcBook    *models.HardcoverBook
-		findErr   error
-		editionID string
-		stateKey  string
-	)
 
 	// Find the book in Hardcover to get the edition ID
 	hcBook, findErr = s.findBookInHardcover(ctx, book)
@@ -3120,6 +3164,11 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 			logCtx["last_update_time"] = lastUpdate.timestamp
 			logCtx["last_progress"] = lastUpdate.progress
 			logCtx["progress_diff"] = progressDiff
+			if hcBook == nil || hcBook.BookStatusID == 0 {
+				reportProcessBookOutcome(ctx, OutcomeFailed, "Hardcover status unavailable while verifying recent progress")
+				log.Warn("Skipping update - Hardcover status is unavailable", logCtx)
+				return nil
+			}
 			if !statusNeedsReconcile() {
 				reportProcessBookOutcome(ctx, OutcomeAlreadyCurrent, "recent Hardcover progress update is current")
 				log.Info("Skipping update - recently updated with similar progress", logCtx)
@@ -3440,6 +3489,10 @@ func (s *Service) handleInProgressBook(ctx context.Context, userBookID int64, bo
 			handleSkippedProgressUpdate := func(shouldUpdateSyncState bool) error {
 				// Status reconciliation is independent of progress, but a threshold
 				// skip must not checkpoint progress that was never written to Hardcover.
+				if hcBook == nil || hcBook.BookStatusID == 0 {
+					reportProcessBookOutcome(ctx, OutcomeFailed, "Hardcover status unavailable while verifying progress")
+					return nil
+				}
 				if !statusNeedsReconcile() {
 					reportProcessBookOutcome(ctx, OutcomeAlreadyCurrent, "Hardcover progress and status already current")
 					// A no-op can advance local state only when Hardcover returned a
@@ -4514,11 +4567,9 @@ func (s *Service) findBookInHardcover(ctx context.Context, book models.Audiobook
 					ID: bookErr.BookID,
 				}, nil
 			}
-			// Cache the negative result to avoid repeated failed lookups
-			s.setASINInCache(book.Media.Metadata.ASIN, nil)
-			log.Debug("Cached negative ASIN lookup result", map[string]interface{}{
-				"asin": book.Media.Metadata.ASIN,
-			})
+			// Technical failures are deliberately not cached. A transient API or
+			// network error must be retried by later items and sync runs rather than
+			// being mistaken for a conclusive missing-book result.
 			log.Warn(fmt.Sprintf("Search by ASIN failed, will try other methods: %v", err), nil)
 		} else if hcBook != nil {
 			// Cache the ASIN lookup result for future use

@@ -265,6 +265,59 @@ func TestHandleInProgressBook_MatchingReadNoOpStateHandling(t *testing.T) {
 	}
 }
 
+func TestHandleInProgressBook_UnavailableStatusNeverReportsAlreadyCurrent(t *testing.T) {
+	tests := []struct {
+		name         string
+		currentTime  float64
+		readProgress int
+		recent       bool
+	}{
+		{name: "recent progress guard", currentTime: 100, readProgress: 100, recent: true},
+		{name: "below progress threshold", currentTime: 150, readProgress: 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, mockClient := createTestService()
+			book := createTestBook("unavailable-status-no-op", "Unavailable Status", "Test Author", "", "")
+			book.Progress.CurrentTime = tt.currentTime
+			book.Media.Duration = 1000
+			audiobook := toAudiobookshelfBook(book)
+			userBookID := int64(141)
+			editionID := int64(470)
+			readProgress := tt.readProgress
+
+			mockClient.On("GetUserBook", mock.Anything, "141").Return(&models.HardcoverBook{
+				ID: "book-141", EditionID: "470", BookStatusID: 0,
+			}, nil).Once()
+			mockClient.On("GetUserBookReads", mock.Anything, hardcover.GetUserBookReadsInput{
+				UserBookID: userBookID,
+			}).Return([]hardcover.UserBookRead{{
+				ID: 805, ProgressSeconds: &readProgress, EditionID: &editionID,
+			}}, nil).Once()
+			if tt.recent {
+				svc.lastProgressUpdates[fmt.Sprintf("%s:%d", audiobook.ID, userBookID)] = progressUpdateInfo{
+					timestamp: time.Now().Add(-time.Minute),
+					progress:  tt.currentTime,
+				}
+			}
+
+			var gotOutcome SyncOutcome
+			ctx := context.WithValue(context.Background(), processBookOutcomeReporterKey{}, processBookOutcomeReporter(func(outcome SyncOutcome, _ string) {
+				gotOutcome = outcome
+			}))
+			err := svc.handleInProgressBook(ctx, userBookID, *audiobook, fmt.Sprintf("%s:%d", audiobook.ID, editionID))
+
+			assert.NoError(t, err)
+			assert.Equal(t, OutcomeFailed, gotOutcome)
+			assert.True(t, svc.state.NeedsSync(audiobook.ID+":470", tt.currentTime/1000, "IN_PROGRESS", 0.01))
+			mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
+			mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
 func TestHandleInProgressBook_BelowThresholdProgressRemainsRetryable(t *testing.T) {
 	svc, mockClient := createTestService()
 

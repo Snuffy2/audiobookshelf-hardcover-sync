@@ -79,6 +79,8 @@ func TestProcessBookFailsBeforeMutationWhenReadStatusLookupFails(t *testing.T) {
 	snapshot := svc.GetSnapshot()
 	require.Len(t, snapshot.BookOutcomes, 1)
 	assert.Equal(t, OutcomeFailed, snapshot.BookOutcomes[0].Outcome)
+	assert.Equal(t, "hardcover-book", snapshot.BookOutcomes[0].HardcoverBookID)
+	assert.Equal(t, "456", snapshot.BookOutcomes[0].EditionID)
 	mockClient.AssertNotCalled(t, "InsertUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "UpdateUserBookRead", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "UpdateUserBookStatus", mock.Anything, mock.Anything)
@@ -136,6 +138,27 @@ func TestProcessBookClassifiesLookupFailureSeparatelyFromNotFound(t *testing.T) 
 	assert.Equal(t, int32(0), snapshot.OutcomeCounts.NotFound)
 	assert.Contains(t, snapshot.BookOutcomes[0].Error, "request timed out")
 	assert.Empty(t, snapshot.BooksNotFound, "a lookup failure must not appear as a conclusive missing book")
+	mockClient.AssertExpectations(t)
+}
+
+func TestFindBookInHardcoverRetriesTechnicalASINFailure(t *testing.T) {
+	svc, mockClient := createTestService()
+	book := *toAudiobookshelfBook(createTestBook("retry-asin-book", "Retry ASIN Book", "Test Author", "RETRY-ASIN", ""))
+	mockClient.On("SearchBookByASIN", mock.Anything, "RETRY-ASIN").Return((*models.HardcoverBook)(nil), errors.New("request timed out")).Twice()
+	mockClient.On("SearchBooks", mock.Anything, "Retry ASIN Book Test Author", "").Return([]models.HardcoverBook{}, nil).Twice()
+
+	firstErr := func() error {
+		_, err := svc.findBookInHardcover(context.Background(), book)
+		return err
+	}()
+	secondErr := func() error {
+		_, err := svc.findBookInHardcover(context.Background(), book)
+		return err
+	}()
+
+	assert.ErrorIs(t, firstErr, errHardcoverLookupFailed)
+	assert.ErrorIs(t, secondErr, errHardcoverLookupFailed)
+	mockClient.AssertNumberOfCalls(t, "SearchBookByASIN", 2)
 	mockClient.AssertExpectations(t)
 }
 
@@ -538,6 +561,97 @@ func TestProcessBookOwnershipCheckFailureStaysFailedOnCurrentPath(t *testing.T) 
 	assert.Contains(t, snapshot.BookOutcomes[0].Error, "ownership API unavailable")
 	mockClient.AssertNotCalled(t, "MarkEditionAsOwned", mock.Anything, mock.Anything)
 	mockClient.AssertExpectations(t)
+}
+
+func TestProcessBookEditionCorrectionAffectsFinalOutcome(t *testing.T) {
+	tests := []struct {
+		name            string
+		dryRun          bool
+		updateErr       error
+		postEditionID   string
+		readEditionID   int64
+		expectedOutcome SyncOutcome
+		expectsMutation bool
+	}{
+		{
+			name:            "applied correction survives no-op progress handling",
+			postEditionID:   "456",
+			readEditionID:   456,
+			expectedOutcome: OutcomeSynced,
+			expectsMutation: true,
+		},
+		{
+			name:            "failed correction remains failed",
+			updateErr:       errors.New("edition update failed"),
+			postEditionID:   "111",
+			readEditionID:   111,
+			expectedOutcome: OutcomeFailed,
+			expectsMutation: true,
+		},
+		{
+			name:            "dry-run correction remains planned",
+			dryRun:          true,
+			postEditionID:   "111",
+			readEditionID:   111,
+			expectedOutcome: OutcomeWouldSync,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, mockClient := createTestService()
+			svc.config.Sync.ProcessUnreadBooks = true
+			svc.config.Sync.SyncOwned = false
+			svc.config.Sync.DryRun = tt.dryRun
+			svc.findExistingUserBookForBookFunc = func(context.Context, int64) (int64, error) {
+				return 789, nil
+			}
+			book := *toAudiobookshelfBook(createTestBook(
+				"edition-correction-"+tt.name, "Edition Correction", "Author", "EDITION-CORRECTION-ASIN", ""))
+			book.Progress.CurrentTime = 300
+			book.Media.Duration = 1000
+
+			mockClient.On("SearchBookByASIN", mock.Anything, "EDITION-CORRECTION-ASIN").Return(&models.HardcoverBook{
+				ID: "123", EditionID: "456",
+			}, nil).Once()
+			mockClient.On("GetEdition", mock.Anything, "456").Return(&models.Edition{
+				ID: "456", BookID: "123",
+			}, nil).Maybe()
+			mockClient.On("GetUserBook", mock.Anything, "789").Return(&models.HardcoverBook{
+				ID: "123", EditionID: "111",
+			}, nil).Once()
+			mockClient.On("GetUserBook", mock.Anything, "789").Return(&models.HardcoverBook{
+				ID: "123", EditionID: tt.postEditionID, BookStatusID: 2,
+			}, nil).Maybe()
+			if tt.expectsMutation {
+				mockClient.On("UpdateUserBookEdition", mock.Anything, 789, 456).Return(tt.updateErr).Maybe()
+			}
+			readProgress := 300
+			readEdition := tt.readEditionID
+			mockClient.On("GetUserBookReads", mock.Anything, hardcover.GetUserBookReadsInput{
+				UserBookID: 789,
+			}).Return([]hardcover.UserBookRead{{
+				ID:              901,
+				ProgressSeconds: &readProgress,
+				EditionID:       &readEdition,
+			}}, nil).Once()
+
+			err := svc.processBook(context.Background(), book, &models.AudiobookshelfUserProgress{})
+
+			require.NoError(t, err)
+			snapshot := svc.GetSnapshot()
+			require.Len(t, snapshot.BookOutcomes, 1)
+			assert.Equal(t, tt.expectedOutcome, snapshot.BookOutcomes[0].Outcome)
+			assert.Equal(t, "123", snapshot.BookOutcomes[0].HardcoverBookID)
+			assert.Equal(t, "456", snapshot.BookOutcomes[0].EditionID)
+			if tt.expectsMutation {
+				mockClient.AssertCalled(t, "UpdateUserBookEdition", mock.Anything, 789, 456)
+			} else {
+				mockClient.AssertNotCalled(t, "UpdateUserBookEdition", mock.Anything, 789, 456)
+			}
+			mockClient.AssertExpectations(t)
+		})
+	}
 }
 
 func TestGetSnapshotDeepCopiesOutcomeDetails(t *testing.T) {
