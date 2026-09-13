@@ -208,6 +208,10 @@ type Service struct {
 	// Per-run guard to prevent duplicate read inserts
 	createdReadsThisRun map[int64]struct{}
 	createdReadsMutex   sync.Mutex
+	// libraryCandidateTotals tracks which libraries have contributed their full
+	// candidate count to the current run's BooksTotal. It is accessed while
+	// holding summary's lock so pre-count and processing remain race-safe.
+	libraryCandidateTotals map[string]struct{}
 }
 
 // Config is the configuration type for the sync service
@@ -361,6 +365,28 @@ func (s *Service) beginOutcomeRun() {
 	// profile run into this snapshot.
 	s.summary.BooksNotFound = make([]BookNotFoundInfo, 0)
 	s.summary.Mismatches = make([]mismatch.BookMismatch, 0)
+	s.libraryCandidateTotals = make(map[string]struct{})
+}
+
+// recordLibraryCandidateTotal records a library's full candidate count once.
+// The count intentionally happens before processLibrary applies maxBooks so
+// TestBookLimit only limits processing, preserving the candidate total shown
+// to status callers.
+func (s *Service) recordLibraryCandidateTotal(libraryID string, total int) {
+	if s.summary == nil || libraryID == "" {
+		return
+	}
+
+	s.summary.Lock()
+	defer s.summary.Unlock()
+	if s.libraryCandidateTotals == nil {
+		s.libraryCandidateTotals = make(map[string]struct{})
+	}
+	if _, recorded := s.libraryCandidateTotals[libraryID]; recorded {
+		return
+	}
+	s.libraryCandidateTotals[libraryID] = struct{}{}
+	s.summary.BooksTotal += int32(total)
 }
 
 // setOutcomeRunState records the run-level state without changing any book
@@ -1325,9 +1351,7 @@ func (s *Service) Sync(ctx context.Context) (err error) {
 			})
 			continue
 		}
-		s.summary.Lock()
-		s.summary.BooksTotal += int32(len(items))
-		s.summary.Unlock()
+		s.recordLibraryCandidateTotal(filteredLibraries[i].ID, len(items))
 	}
 
 	// Log the test book limit if it's set
@@ -1490,6 +1514,7 @@ func (s *Service) processLibrary(ctx context.Context, library *audiobookshelf.Au
 		"library_name": library.Name,
 		"items_count":  len(items),
 	})
+	s.recordLibraryCandidateTotal(library.ID, len(items))
 
 	// If we have a maxBooks limit, apply it
 	if maxBooks > 0 && len(items) > maxBooks {
@@ -2650,6 +2675,17 @@ func (s *Service) HandleFinishedBook(ctx context.Context, book models.Audiobooks
 		s.state.UpdateBookWithUserBookID(stateKey, 100.0, "FINISHED", strconv.FormatInt(userBookID, 10))
 		s.state.SetHasProgressSeconds(stateKey)
 	}()
+
+	// findOrCreateUserBookID uses -1 to represent a new user book that would be
+	// created during a dry run. It is not a real Hardcover ID and must not be
+	// sent through read/status lookups or mutations.
+	if s.config.Sync.DryRun && userBookID == -1 {
+		reportProcessBookOutcome(ctx, OutcomeWouldSync, "would create and finish a new Hardcover user book")
+		log.Info("[DRY-RUN] Would create user book and mark it as finished", map[string]interface{}{
+			"edition_id": editionID,
+		})
+		return nil
+	}
 
 	// Check DNF status first — if the book is DNF, return without any mutations.
 	userBookIDStr := strconv.FormatInt(userBookID, 10)

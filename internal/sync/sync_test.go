@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -204,6 +205,69 @@ func TestSync(t *testing.T) {
 		// Verify mock expectations
 		mockABS.AssertExpectations(t)
 	})
+}
+
+func TestSyncRecoversBooksTotalAfterPrecountFailure(t *testing.T) {
+	svc, mockHC := createTestService()
+	svc.config.Sync.DryRun = true
+	svc.config.Sync.ProcessUnreadBooks = false
+	svc.config.Paths.MismatchOutputDir = filepath.Join(t.TempDir(), "mismatches")
+
+	mockABS := new(MockAudiobookshelfClient)
+	libraries := []audiobookshelf.AudiobookshelfLibrary{
+		{ID: "precounted-library", Name: "Precounted Library"},
+		{ID: "retry-library", Name: "Retry Library"},
+	}
+	precountedBook := *toAudiobookshelfBook(createTestBook("precounted-book", "Precounted Book", "Author", "", ""))
+	retriedBook := *toAudiobookshelfBook(createTestBook("retried-book", "Retried Book", "Author", "", ""))
+	precountedItems := []models.AudiobookshelfBook{precountedBook}
+	retriedItems := []models.AudiobookshelfBook{retriedBook}
+
+	mockABS.On("GetUserProgress", mock.Anything).Return(&models.AudiobookshelfUserProgress{}, nil).Once()
+	mockABS.On("GetLibraries", mock.Anything).Return(libraries, nil).Once()
+	// The first library succeeds during pre-count and is fetched again for
+	// processing; the second library fails transiently, then succeeds during
+	// processing. Both totals must be counted exactly once.
+	mockABS.On("GetLibraryItems", mock.Anything, "precounted-library").Return(precountedItems, nil).Once()
+	mockABS.On("GetLibraryItems", mock.Anything, "retry-library").Return([]models.AudiobookshelfBook(nil), errors.New("temporary library error")).Once()
+	mockABS.On("GetLibraryItems", mock.Anything, "precounted-library").Return(precountedItems, nil).Once()
+	mockABS.On("GetLibraryItems", mock.Anything, "retry-library").Return(retriedItems, nil).Once()
+	mockHC.On("ClearUserBookCache").Return().Once()
+	svc.audiobookshelf = mockABS
+
+	require.NoError(t, svc.Sync(context.Background()))
+
+	snapshot := svc.GetSnapshot()
+	assert.Equal(t, int32(2), snapshot.BooksTotal)
+	assert.Equal(t, int32(2), snapshot.ProcessedSoFar)
+	assert.Equal(t, int32(2), snapshot.OutcomeCounts.Skipped)
+	assert.Equal(t, snapshot.ProcessedSoFar, snapshot.OutcomeCounts.Total())
+	mockABS.AssertExpectations(t)
+	mockHC.AssertExpectations(t)
+}
+
+func TestProcessLibraryRecordsFullCandidateTotalBeforeLimit(t *testing.T) {
+	svc, _ := createTestService()
+	svc.config.Sync.ProcessUnreadBooks = false
+	mockABS := new(MockAudiobookshelfClient)
+	books := []models.AudiobookshelfBook{
+		*toAudiobookshelfBook(createTestBook("limited-book-1", "Limited Book 1", "Author", "", "")),
+		*toAudiobookshelfBook(createTestBook("limited-book-2", "Limited Book 2", "Author", "", "")),
+	}
+	mockABS.On("GetLibraryItems", mock.Anything, "limited-library").Return(books, nil).Once()
+	svc.audiobookshelf = mockABS
+
+	processed, err := svc.processLibrary(
+		context.Background(),
+		&audiobookshelf.AudiobookshelfLibrary{ID: "limited-library", Name: "Limited Library"},
+		1,
+		&models.AudiobookshelfUserProgress{},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, processed)
+	assert.Equal(t, int32(2), svc.GetSnapshot().BooksTotal)
+	mockABS.AssertExpectations(t)
 }
 
 // TestProcessLibrary tests the processLibrary function

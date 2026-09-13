@@ -241,7 +241,7 @@ func (s *MultiUserService) GetProfileStatus(profileID string) *SyncProfileStatus
 			// active service. This is defensive for an in-memory replacement
 			// observed between lifecycle updates and prevents mixed responses.
 			if generation == 0 || status.Snapshot == nil || status.Snapshot.RunID == "" || snapshot.RunID == "" || status.Snapshot.RunID == snapshot.RunID {
-				applySnapshotToStatus(status, snapshot)
+				applyLiveSnapshotToStatus(status, snapshot)
 				if status.Snapshot.UserID == "" {
 					status.Snapshot.UserID = profileID
 					status.LastSyncSummary.UserID = profileID
@@ -705,6 +705,23 @@ func applySnapshotToStatus(status *SyncProfileStatus, snapshot sync.SyncSnapshot
 		BooksNotFound:       []sync.BookNotFoundInfo{},
 		Mismatches:          []mismatch.BookMismatch{},
 	}
+}
+
+// applyLiveSnapshotToStatus keeps the returned status state aligned with a
+// terminal snapshot that the sync service has already recorded. Sync.Service
+// updates its snapshot state in a deferred cleanup just before performSync
+// publishes the profile status, so a read in that small window must not report
+// a completed snapshot as still syncing. LastSync remains sourced from the
+// stored profile status until publication supplies the new timestamp.
+func applyLiveSnapshotToStatus(status *SyncProfileStatus, snapshot sync.SyncSnapshot) {
+	if status == nil {
+		return
+	}
+	if status.Status == "syncing" && snapshot.State == "completed" {
+		status.Status = "completed"
+		status.Progress = "Sync completed successfully"
+	}
+	applySnapshotToStatus(status, snapshot)
 }
 
 func cloneProfileStatus(status *SyncProfileStatus) *SyncProfileStatus {

@@ -105,3 +105,37 @@ func TestGetProfileStatusKeepsProfilesIsolated(t *testing.T) {
 		t.Fatalf("profiles shared run IDs: a=%q b=%q", a.Snapshot.RunID, b.Snapshot.RunID)
 	}
 }
+
+func TestApplyLiveSnapshotPromotesCompletedStateWithoutChangingLastSync(t *testing.T) {
+	lastSync := time.Date(2026, time.September, 12, 22, 0, 0, 0, time.UTC)
+	run := activeSyncRun{generation: 1, runID: "run-a", startedAt: time.Date(2026, time.September, 13, 9, 0, 0, 0, time.UTC)}
+	status := &SyncProfileStatus{
+		ProfileID: "profile-a",
+		Status:    "syncing",
+		LastSync:  &lastSync,
+		Progress:  "Starting sync...",
+	}
+	snapshot := newRunSnapshot("profile-a", run, "completed")
+	snapshot.BooksTotal = 4
+	snapshot.ProcessedSoFar = 4
+	snapshot.TotalBooksProcessed = 4
+	snapshot.BooksSynced = 3
+
+	applyLiveSnapshotToStatus(status, snapshot)
+
+	if status.Status != "completed" || status.Progress != "Sync completed successfully" {
+		t.Fatalf("terminal snapshot did not promote profile status: %#v", status)
+	}
+	if status.LastSync == nil || !status.LastSync.Equal(lastSync) {
+		t.Fatalf("terminal snapshot changed stored last sync: %v", status.LastSync)
+	}
+	if status.Snapshot == nil || status.Snapshot.State != "completed" || status.Snapshot.RunID != run.runID {
+		t.Fatalf("terminal snapshot was not retained: %#v", status.Snapshot)
+	}
+	if status.BooksTotal != int(snapshot.BooksTotal) || status.BooksSynced != int(snapshot.BooksSynced) {
+		t.Fatalf("profile summary did not match terminal snapshot: total=%d synced=%d", status.BooksTotal, status.BooksSynced)
+	}
+	if status.LastSyncSummary == nil || status.LastSyncSummary.TotalBooksProcessed != snapshot.TotalBooksProcessed || status.LastSyncSummary.BooksSynced != snapshot.BooksSynced {
+		t.Fatalf("summary did not match terminal snapshot: %#v", status.LastSyncSummary)
+	}
+}
