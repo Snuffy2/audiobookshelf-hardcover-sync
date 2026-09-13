@@ -197,9 +197,14 @@ reviewable changes, each independently testable and usable after merge:
    truthful canceled/failed partial reports, separate last-attempted from
    last-successful timestamps, and persist a bounded final report across app
    restarts. This includes storage and lifecycle behavior distinct from live
-   result rendering. Add pagination or incremental detail delivery here only
-   if observed list size or poll cost warrants it; otherwise keep that as a
-   separate measured optimization.
+   result rendering. Make Start Sync acknowledge only an accepted run: validate
+   the profile and active-run constraint, record a queued run before returning
+   success, and return an error when the start is rejected. Show UI success only
+   after acceptance, then follow that run through queued, running, or failure.
+   Verify missing-profile and duplicate starts, plus the POST/status timing, at
+   the HTTP and UI boundaries. Add pagination or incremental detail delivery
+   here only if observed list size or poll cost warrants it; otherwise keep
+   that as a separate measured optimization.
 
 PRs 1 and 2 can be prepared independently; PR 3 follows PR 2. PR 4 can follow
 the core experience. Do not combine all four into one PR: it would mix a small
