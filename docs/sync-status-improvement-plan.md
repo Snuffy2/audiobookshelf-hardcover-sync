@@ -183,8 +183,11 @@ reviewable changes, each independently testable and usable after merge:
    outcome contract, remove the duplicate `Books Synced` and misleading
    all-found text, show the full category breakdown, and update an open details
    view smoothly. Keep large detail lists on a run-scoped, on-demand path and
-   validate focus/scroll preservation. This PR should not redefine backend
-   categories; any contract gaps found during UI work belong in PR 2 first.
+   validate focus/scroll preservation. Restore focus to Start/Cancel only if
+   the previously focused element was that action; never move focus from a
+   different control to Start/Cancel as a fallback when a card is replaced.
+   This PR should not redefine backend categories; any contract gaps found
+   during UI work belong in PR 2 first.
 4. **Run lifecycle and report history (follow-up).** Add phase/activity state,
    truthful canceled/failed partial reports, separate last-attempted from
    last-successful timestamps, and persist a bounded final report across app
