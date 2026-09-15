@@ -168,7 +168,14 @@ func (s *MultiUserService) getAggregateProfileStatus(profile database.SyncProfil
 	if status.ProfileName == "" {
 		status.ProfileName = profile.Name
 	}
-	status.Status = "syncing"
+	switch snapshot.State {
+	case "completed":
+		status.Status = "completed"
+	case "failed":
+		status.Status = "error"
+	default:
+		status.Status = "syncing"
+	}
 	status.Snapshot = &snapshot
 	if snapshot.BooksTotal > 0 {
 		status.BooksTotal = int(snapshot.BooksTotal)

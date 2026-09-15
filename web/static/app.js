@@ -620,6 +620,7 @@ class SyncProfileApp {
                 this.renderStatuses();
                 return;
             }
+            if (this.authEnabled && !(await this.validateSession(signal))) return;
             const { response, data: result } = await this.fetchJsonWithTimeout('/api/status', { signal });
             if (response.status === 401 || response.status === 403) {
                 this.handleAuthExpiry();
@@ -686,6 +687,37 @@ class SyncProfileApp {
                     waiters.forEach(resolve => resolve());
                 });
             }
+        }
+    }
+
+    async validateSession(signal) {
+        try {
+            const { response, data } = await this.fetchJsonWithTimeout('/api/auth/me', {
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                },
+                signal
+            });
+            const authEnabled = data.auth_enabled !== false;
+            if (response.status === 401 || response.status === 403 || (authEnabled && data.authenticated === false)) {
+                this.handleAuthExpiry();
+                return false;
+            }
+            if (response.ok && !authEnabled) {
+                this.authEnabled = false;
+                this.currentUser = null;
+            } else if (response.ok && data.authenticated && data.user) {
+                this.currentUser = data.user;
+            }
+            return true;
+        } catch (error) {
+            if (error.name === 'AbortError') return false;
+            // A transient validation failure should not log the user out or
+            // replace the last-good aggregate status snapshot.
+            return true;
         }
     }
     

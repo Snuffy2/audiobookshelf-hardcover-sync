@@ -3,11 +3,15 @@ package multiuser
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -163,6 +167,86 @@ func TestStatusAggregateOmitsErrorAndProfileStatusRetainsIt(t *testing.T) {
 	direct := service.GetProfileStatus(profileID)
 	require.NotNil(t, direct)
 	require.Equal(t, status.Error, direct.Error)
+}
+
+func TestAggregateStatusMapsLiveTerminalSnapshotState(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		librariesCode int
+		wantStatus    string
+		wantState     string
+		wantSyncError bool
+	}{
+		{name: "completed", librariesCode: http.StatusOK, wantStatus: "completed", wantState: "completed"},
+		{name: "failed", librariesCode: http.StatusInternalServerError, wantStatus: "error", wantState: "failed", wantSyncError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, _ := newStatusLookupService(t)
+			profileID := "profile-" + test.name
+			require.NoError(t, service.repository.CreateProfile(
+				profileID, "Profile", "http://audiobookshelf", "abs-token", "hc-token", database.SyncConfigData{},
+			))
+
+			absServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/me":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{}`))
+				case "/api/libraries":
+					if test.librariesCode != http.StatusOK {
+						w.WriteHeader(test.librariesCode)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"libraries":[]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(absServer.Close)
+
+			dataDir := t.TempDir()
+			cfg := config.DefaultConfig()
+			cfg.Audiobookshelf.URL = absServer.URL
+			cfg.Audiobookshelf.Token = "abs-token"
+			cfg.Sync.StateFile = filepath.Join(dataDir, "state.json")
+			cfg.Paths.CacheDir = filepath.Join(dataDir, "cache")
+			cfg.Paths.MismatchOutputDir = filepath.Join(dataDir, "mismatches")
+			hcConfig := hardcover.DefaultClientConfig()
+			hcConfig.BaseURL = "http://hardcover.invalid"
+			liveService, err := syncsvc.NewService(
+				audiobookshelf.NewClient(absServer.URL, "abs-token"),
+				hardcover.NewClientWithConfig(hcConfig, "hc-token", logger.Get()),
+				cfg,
+			)
+			require.NoError(t, err)
+
+			run := activeSyncRun{generation: 1, runID: profileID + "-run", startedAt: time.Now().UTC()}
+			service.syncMutex.Lock()
+			service.activeRuns[profileID] = run
+			service.syncMutex.Unlock()
+			require.True(t, service.registerSyncService(profileID, run.generation, liveService))
+
+			syncErr := liveService.Sync(context.Background())
+			if test.wantSyncError {
+				require.Error(t, syncErr)
+			} else {
+				require.NoError(t, syncErr)
+			}
+
+			// Keep the completed service registered and the run current to model
+			// the terminal handoff window before publication/removal.
+			statuses, err := service.GetAllProfileStatuses()
+			require.NoError(t, err)
+			require.Len(t, statuses, 1)
+			require.Equal(t, test.wantStatus, statuses[0].Status)
+			require.NotNil(t, statuses[0].Snapshot)
+			require.Equal(t, test.wantState, statuses[0].Snapshot.State)
+
+			service.removeSyncService(profileID, run.generation, liveService)
+			service.finishActiveRun(profileID, run.generation)
+		})
+	}
 }
 
 func newStatusLookupService(t *testing.T) (*MultiUserService, *gorm.DB) {
