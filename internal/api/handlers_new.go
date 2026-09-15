@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -272,6 +273,10 @@ func (h *Handler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		req.SyncConfig,
 	)
 	if err != nil {
+		if errors.Is(err, multiuser.ErrProfileStateFileNameTooLong) {
+			h.writeErrorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		h.log.Error("Failed to create sync profile: " + err.Error())
 		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to create sync profile")
 		return
@@ -381,6 +386,10 @@ func (h *Handler) UpdateProfileConfig(w http.ResponseWriter, r *http.Request) {
 		hardcoverToken,
 		req.SyncConfig,
 	); err != nil {
+		if errors.Is(err, multiuser.ErrProfileStateFileNameTooLong) {
+			h.writeErrorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		h.log.Error(fmt.Sprintf("Failed to update sync profile config %s: %s", profileID, err.Error()))
 		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to update sync profile configuration")
 		return

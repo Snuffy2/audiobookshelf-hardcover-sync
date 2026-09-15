@@ -973,6 +973,45 @@ class SyncProfileApp {
         if (container) container.style.display = 'none';
     }
 
+    captureDetailViewport(content) {
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const visible = (element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.bottom > 0 && rect.top < viewportHeight;
+        };
+        const book = [...content.querySelectorAll('[data-book-id]')].find(visible);
+        const outcome = book ? null : [...content.querySelectorAll('[data-outcome]')].find(visible);
+        const anchor = book
+            ? { type: 'book', value: book.dataset.bookId, top: book.getBoundingClientRect().top }
+            : outcome
+                ? { type: 'outcome', value: outcome.dataset.outcome, top: outcome.getBoundingClientRect().top }
+                : null;
+        return {
+            windowX: window.scrollX || 0,
+            windowY: window.scrollY || 0,
+            contentTop: content.scrollTop || 0,
+            anchor
+        };
+    }
+
+    restoreDetailViewport(content, state) {
+        if (!content || !state) return;
+        content.scrollTop = state.contentTop;
+        if (typeof window.scrollTo === 'function') window.scrollTo(state.windowX, state.windowY);
+        if (!state.anchor) return;
+        const elements = state.anchor.type === 'book'
+            ? [...content.querySelectorAll('[data-book-id]')]
+            : [...content.querySelectorAll('[data-outcome]')];
+        const anchor = elements.find(element => (state.anchor.type === 'book'
+            ? element.dataset.bookId === state.anchor.value
+            : element.dataset.outcome === state.anchor.value));
+        if (!anchor || typeof window.scrollTo !== 'function') return;
+        const delta = anchor.getBoundingClientRect().top - state.anchor.top;
+        if (Number.isFinite(delta) && delta !== 0) {
+            window.scrollTo(state.windowX, state.windowY + delta);
+        }
+    }
+
     handleAuthExpiry() {
         this.authEnabled = true;
         this.currentUser = null;
@@ -1008,7 +1047,7 @@ class SyncProfileApp {
         const summary = document.querySelector('#sync-summary-content .sync-summary');
         if (!summary || summary.dataset.runId !== open.runId) return;
         const content = document.getElementById('sync-summary-content');
-        const scrollTop = content?.scrollTop || 0;
+        const viewport = content ? this.captureDetailViewport(content) : null;
         let state = summary.querySelector('[data-details-refresh-state]');
         if (!state) {
             state = document.createElement('div');
@@ -1019,7 +1058,7 @@ class SyncProfileApp {
         state.setAttribute('role', 'status');
         state.setAttribute('aria-live', 'polite');
         state.innerHTML = `<span>Status may be stale${message ? `: ${this.escapeHtml(message)}` : ''}.</span> <button type="button" class="btn btn-sm" data-details-retry>Retry</button>`;
-        if (content) content.scrollTop = scrollTop;
+        this.restoreDetailViewport(content, viewport);
     }
 
     async fetchAndRenderDetails({ open = this.openSummary, preservePosition = false } = {}) {
@@ -1050,7 +1089,8 @@ class SyncProfileApp {
                 else this.renderDetailsStale(open, `refresh failed (${response.status})`);
                 return;
             }
-            if (preservePosition && content) open.scrollTop = content.scrollTop;
+            const viewport = preservePosition && content ? this.captureDetailViewport(content) : null;
+            if (viewport) open.viewport = viewport;
             const activeElement = document.activeElement;
             if (activeElement && content?.contains(activeElement)) {
                 open.focus = {
@@ -1062,7 +1102,7 @@ class SyncProfileApp {
             }
             this.renderDetailsSnapshot(snapshot);
             container.style.display = 'block';
-            if (content) content.scrollTop = open.scrollTop || 0;
+            this.restoreDetailViewport(content, open.viewport);
             if (open.focus) {
                 const candidates = content ? [...content.querySelectorAll(open.focus.tagName)] : [];
                 const target = candidates.find(element => open.focus.bookId
@@ -1133,10 +1173,10 @@ class SyncProfileApp {
         });
         content.querySelectorAll('[data-outcome-filter]').forEach(button => {
             button.addEventListener('click', () => {
-                const scrollTop = content.scrollTop;
+                const viewport = this.captureDetailViewport(content);
                 open.filter = button.dataset.outcomeFilter || 'all';
                 this.renderDetailsSnapshot(open.snapshot);
-                content.scrollTop = scrollTop;
+                this.restoreDetailViewport(content, viewport);
                 content.querySelector(`[data-outcome-filter="${open.filter}"]`)?.focus({ preventScroll: true });
             });
         });

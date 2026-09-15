@@ -104,7 +104,10 @@ components:
               items:
                 type: string
               example: ["exclusive"]
-            dryRun:
+            state_file:
+              type: string
+              description: Optional state-file path stem; the profile-specific filename component must fit the supported 255-byte baseline.
+            dry_run:
               type: boolean
               example: false
     

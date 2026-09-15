@@ -362,6 +362,83 @@ func TestCreateProfileIDLengthBoundary(t *testing.T) {
 	}
 }
 
+func TestProfileStateFilenameValidationAtHTTPBoundary(t *testing.T) {
+	fixture := newStatusServiceFixture(t, "http://hardcover.invalid")
+	handler := NewHandler(fixture.multiUser, logger.Get())
+	routes := http.NewServeMux()
+	routes.HandleFunc("POST /api/profiles", handler.CreateProfile)
+	routes.HandleFunc("PUT /api/profiles/{id}/config", handler.UpdateProfileConfig)
+
+	unsafeStateFile := strings.Repeat("s", 245) + ".json"
+	createPayload, err := json.Marshal(CreateProfileRequest{
+		ID:                  "new-profile",
+		Name:                "New profile",
+		AudiobookshelfURL:   "http://audiobookshelf.invalid",
+		AudiobookshelfToken: "abs-token",
+		HardcoverToken:      "hardcover-token",
+		SyncConfig:          database.SyncConfigData{StateFile: unsafeStateFile},
+	})
+	require.NoError(t, err)
+	createResponse := httptest.NewRecorder()
+	routes.ServeHTTP(createResponse, httptest.NewRequest(http.MethodPost, "/api/profiles", bytes.NewReader(createPayload)))
+	require.Equal(t, http.StatusBadRequest, createResponse.Code, createResponse.Body.String())
+	created, err := fixture.multiUser.GetProfile("new-profile")
+	require.NoError(t, err)
+	require.Nil(t, created)
+
+	profileID := "configured-profile"
+	originalURL := "http://original.invalid"
+	originalStateFile := "original.json"
+	require.NoError(t, fixture.repo.CreateProfile(
+		profileID,
+		"Configured profile",
+		originalURL,
+		"abs-token",
+		"hardcover-token",
+		database.SyncConfigData{StateFile: originalStateFile},
+	))
+	updatePayload, err := json.Marshal(UpdateProfileConfigRequest{
+		AudiobookshelfURL: "http://should-not-persist.invalid",
+		SyncConfig:        database.SyncConfigData{StateFile: unsafeStateFile},
+	})
+	require.NoError(t, err)
+	updateResponse := httptest.NewRecorder()
+	routes.ServeHTTP(updateResponse, httptest.NewRequest(
+		http.MethodPut,
+		"/api/profiles/"+profileID+"/config",
+		bytes.NewReader(updatePayload),
+	))
+	require.Equal(t, http.StatusBadRequest, updateResponse.Code, updateResponse.Body.String())
+	unchanged, err := fixture.multiUser.GetProfile(profileID)
+	require.NoError(t, err)
+	require.NotNil(t, unchanged)
+	require.Equal(t, originalURL, unchanged.AudiobookshelfURL)
+	require.Equal(t, originalStateFile, unchanged.SyncConfig.StateFile)
+
+	legacyID := strings.Repeat("l", 245)
+	require.NoError(t, fixture.repo.CreateProfile(
+		legacyID,
+		"Legacy profile",
+		"http://legacy.invalid",
+		"abs-token",
+		"hardcover-token",
+		database.SyncConfigData{},
+	))
+	legacyPayload, err := json.Marshal(UpdateProfileConfigRequest{AudiobookshelfToken: "updated-token"})
+	require.NoError(t, err)
+	legacyResponse := httptest.NewRecorder()
+	routes.ServeHTTP(legacyResponse, httptest.NewRequest(
+		http.MethodPut,
+		"/api/profiles/"+legacyID+"/config",
+		bytes.NewReader(legacyPayload),
+	))
+	require.Equal(t, http.StatusOK, legacyResponse.Code, legacyResponse.Body.String())
+	legacy, err := fixture.multiUser.GetProfile(legacyID)
+	require.NoError(t, err)
+	require.NotNil(t, legacy)
+	require.Equal(t, "updated-token", legacy.AudiobookshelfToken)
+}
+
 func TestPublicAggregateOmitsRunErrorWhileProfileStatusRetainsIt(t *testing.T) {
 	fixture := newStatusServiceFixture(t, "http://hardcover.invalid")
 	profileID := "error-profile"

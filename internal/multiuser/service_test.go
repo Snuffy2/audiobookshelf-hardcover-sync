@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -245,6 +246,47 @@ func TestAggregateStatusMapsLiveTerminalSnapshotState(t *testing.T) {
 
 			service.removeSyncService(profileID, run.generation, liveService)
 			service.finishActiveRun(profileID, run.generation)
+		})
+	}
+}
+
+func TestCreateProfileValidatesComposedStateFilenameLength(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		profileID      string
+		configuredPath string
+		wantBaseBytes  int
+		wantError      bool
+	}{
+		{name: "default 255 bytes", profileID: strings.Repeat("d", 244), wantBaseBytes: 255},
+		{name: "default 256 bytes", profileID: strings.Repeat("d", 245), wantBaseBytes: 256, wantError: true},
+		{name: "custom 255 bytes", profileID: "id", configuredPath: strings.Repeat("c", 252) + ".json", wantBaseBytes: 255},
+		{name: "custom 256 bytes", profileID: "id", configuredPath: strings.Repeat("c", 253) + ".json", wantBaseBytes: 256, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, _ := newStatusLookupService(t)
+			service.globalConfig.Paths.DataDir = t.TempDir()
+			derivedPath := service.profileSpecificStatePath(test.profileID, test.configuredPath)
+			require.Len(t, []byte(filepath.Base(derivedPath)), test.wantBaseBytes)
+			err := service.CreateProfile(
+				test.profileID,
+				"Profile",
+				"http://audiobookshelf",
+				"abs-token",
+				"hc-token",
+				database.SyncConfigData{StateFile: test.configuredPath},
+			)
+			if test.wantError {
+				require.ErrorIs(t, err, ErrProfileStateFileNameTooLong)
+				profile, getErr := service.GetProfile(test.profileID)
+				require.NoError(t, getErr)
+				require.Nil(t, profile)
+				return
+			}
+			require.NoError(t, err)
+			profile, getErr := service.GetProfile(test.profileID)
+			require.NoError(t, getErr)
+			require.NotNil(t, profile)
 		})
 	}
 }

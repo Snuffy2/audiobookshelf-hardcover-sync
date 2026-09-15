@@ -2,6 +2,7 @@ package multiuser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,12 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/mismatch"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
+
+const maxStateFileComponentBytes = 255
+
+// ErrProfileStateFileNameTooLong indicates that profile-specific state-file
+// composition exceeds the supported filename-component baseline.
+var ErrProfileStateFileNameTooLong = errors.New("profile-specific state filename exceeds 255 bytes")
 
 // SyncProfileStatus represents the sync status for a profile
 type SyncProfileStatus struct {
@@ -83,6 +90,9 @@ func (s *MultiUserService) GetProfile(profileID string) (*database.ProfileWithTo
 
 // CreateProfile creates a new sync profile
 func (s *MultiUserService) CreateProfile(profileID, name, audiobookshelfURL, audiobookshelfToken, hardcoverToken string, syncConfig database.SyncConfigData) error {
+	if err := s.validateProfileStateFile(profileID, syncConfig.StateFile); err != nil {
+		return err
+	}
 	return s.repository.CreateProfile(profileID, name, audiobookshelfURL, audiobookshelfToken, hardcoverToken, syncConfig)
 }
 
@@ -93,6 +103,11 @@ func (s *MultiUserService) UpdateProfile(profileID, name string) error {
 
 // UpdateProfileConfig updates profile configuration
 func (s *MultiUserService) UpdateProfileConfig(profileID, audiobookshelfURL, audiobookshelfToken, hardcoverToken string, syncConfig database.SyncConfigData) error {
+	if syncConfig.StateFile != "" {
+		if err := s.validateProfileStateFile(profileID, syncConfig.StateFile); err != nil {
+			return err
+		}
+	}
 	return s.repository.UpdateUserConfig(profileID, audiobookshelfURL, audiobookshelfToken, hardcoverToken, syncConfig)
 }
 
@@ -697,23 +712,10 @@ func (s *MultiUserService) createProfileSpecificConfig(profileConfig *database.P
 
 	// Apply all sync config values from the profile
 	config.Sync.Incremental = syncConfig.Incremental
-	// Make state file path profile-specific to avoid conflicts
-	// Resolve state file path using paths.data_dir if not set or relative
-	statePath := syncConfig.StateFile
-	if statePath == "" {
-		// Use paths.data_dir for default state file location
-		if s.globalConfig != nil && s.globalConfig.Paths.DataDir != "" {
-			statePath = fmt.Sprintf("%s/sync_state.json", strings.TrimSuffix(s.globalConfig.Paths.DataDir, "/"))
-		} else {
-			statePath = "/data/sync_state.json" // Container-friendly default
-		}
-	} else if !filepath.IsAbs(statePath) {
-		// If relative, resolve it against paths.data_dir (preserving the relative filename).
-		if s.globalConfig != nil && s.globalConfig.Paths.DataDir != "" {
-			statePath = filepath.Join(s.globalConfig.Paths.DataDir, statePath)
-		}
-	}
-	config.Sync.StateFile = fmt.Sprintf("%s.%s", strings.TrimSuffix(statePath, ".json"), profileConfig.Profile.ID)
+	// Make state file path profile-specific to avoid conflicts. Keep this
+	// derivation centralized because profile creation/update validation must
+	// inspect the exact path used by runtime setup.
+	config.Sync.StateFile = s.profileSpecificStatePath(profileConfig.Profile.ID, syncConfig.StateFile)
 	config.Sync.MinChangeThreshold = syncConfig.MinChangeThreshold
 	config.Sync.Libraries.Include = syncConfig.Libraries.Include
 	config.Sync.Libraries.Exclude = syncConfig.Libraries.Exclude
@@ -736,6 +738,28 @@ func (s *MultiUserService) createProfileSpecificConfig(profileConfig *database.P
 	})
 
 	return &config
+}
+
+func (s *MultiUserService) profileSpecificStatePath(profileID, configuredPath string) string {
+	statePath := configuredPath
+	if statePath == "" {
+		if s.globalConfig != nil && s.globalConfig.Paths.DataDir != "" {
+			statePath = fmt.Sprintf("%s/sync_state.json", strings.TrimSuffix(s.globalConfig.Paths.DataDir, "/"))
+		} else {
+			statePath = "/data/sync_state.json"
+		}
+	} else if !filepath.IsAbs(statePath) && s.globalConfig != nil && s.globalConfig.Paths.DataDir != "" {
+		statePath = filepath.Join(s.globalConfig.Paths.DataDir, statePath)
+	}
+	return fmt.Sprintf("%s.%s", strings.TrimSuffix(statePath, ".json"), profileID)
+}
+
+func (s *MultiUserService) validateProfileStateFile(profileID, configuredPath string) error {
+	derivedPath := s.profileSpecificStatePath(profileID, configuredPath)
+	if len([]byte(filepath.Base(derivedPath))) > maxStateFileComponentBytes {
+		return fmt.Errorf("%w: %q", ErrProfileStateFileNameTooLong, filepath.Base(derivedPath))
+	}
+	return nil
 }
 
 func cloneBookMismatch(record mismatch.BookMismatch) mismatch.BookMismatch {
