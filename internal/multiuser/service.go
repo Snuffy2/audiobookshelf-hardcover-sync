@@ -51,6 +51,7 @@ type MultiUserService struct {
 	activeRuns      map[string]activeSyncRun
 	nextGeneration  uint64
 	syncMutex       stdSync.RWMutex
+	syncWaitGroup   stdSync.WaitGroup
 	syncServices    map[string]*sync.Service // Maps profile ID to its sync service
 	serviceRuns     map[string]uint64
 	servicesMutex   stdSync.RWMutex
@@ -122,16 +123,93 @@ func (s *MultiUserService) GetAllProfileStatuses() ([]*SyncProfileStatus, error)
 
 	statuses := make([]*SyncProfileStatus, 0, len(profiles))
 
-	// The aggregate endpoint is intentionally scalar-only. Reading a full
-	// profile status here would copy every book outcome before redacting it.
-	s.statusMutex.RLock()
-	defer s.statusMutex.RUnlock()
-
 	for _, profile := range profiles {
-		statuses = append(statuses, aggregateProfileStatus(profile, s.profileStatuses[profile.ID]))
+		statuses = append(statuses, s.getAggregateProfileStatus(profile))
 	}
 
 	return statuses, nil
+}
+
+// getAggregateProfileStatus reads the active service's scalar snapshot while
+// holding the profile-run lock that keeps service replacement from racing the
+// read. Stored status is used for inactive runs so terminal and setup errors
+// remain visible. This path deliberately avoids getProfileStatus because that
+// endpoint needs the full snapshot and legacy detail arrays.
+func (s *MultiUserService) getAggregateProfileStatus(profile database.SyncProfile) *SyncProfileStatus {
+	s.syncMutex.RLock()
+	defer s.syncMutex.RUnlock()
+
+	status := s.getStoredAggregateStatus(profile)
+	service, generation := s.currentSyncServiceLocked(profile.ID)
+	if service == nil {
+		return aggregateProfileStatus(profile, status)
+	}
+
+	snapshot := service.GetSnapshotStatus()
+	if run, ok := s.activeRuns[profile.ID]; ok && run.generation == generation {
+		snapshot.UserID = profile.ID
+		snapshot.RunID = run.runID
+		snapshot.RunStartedAt = run.startedAt
+		if snapshot.State == "" || snapshot.State == "idle" {
+			snapshot.State = "syncing"
+		}
+	}
+
+	if status == nil {
+		status = &SyncProfileStatus{
+			ProfileID:   profile.ID,
+			ProfileName: profile.Name,
+			Status:      "syncing",
+		}
+	}
+	if status.ProfileID == "" {
+		status.ProfileID = profile.ID
+	}
+	if status.ProfileName == "" {
+		status.ProfileName = profile.Name
+	}
+	status.Status = "syncing"
+	status.Snapshot = &snapshot
+	if snapshot.BooksTotal > 0 {
+		status.BooksTotal = int(snapshot.BooksTotal)
+	} else {
+		status.BooksTotal = int(snapshot.ProcessedSoFar)
+	}
+	status.BooksSynced = int(snapshot.BooksSynced)
+
+	return aggregateProfileStatus(profile, status)
+}
+
+// getStoredAggregateStatus copies only the scalar fields needed by aggregate
+// polling. In particular, terminal snapshots are reduced without copying
+// their per-book outcomes, attention records, not-found entries, or mismatches.
+func (s *MultiUserService) getStoredAggregateStatus(profile database.SyncProfile) *SyncProfileStatus {
+	s.statusMutex.RLock()
+	defer s.statusMutex.RUnlock()
+
+	stored := s.profileStatuses[profile.ID]
+	if stored == nil {
+		return nil
+	}
+
+	status := &SyncProfileStatus{
+		ProfileID:   stored.ProfileID,
+		ProfileName: stored.ProfileName,
+		Status:      stored.Status,
+		DryRun:      stored.DryRun,
+		Progress:    stored.Progress,
+		BooksTotal:  stored.BooksTotal,
+		BooksSynced: stored.BooksSynced,
+		Error:       stored.Error,
+	}
+	if stored.LastSync != nil {
+		lastSync := *stored.LastSync
+		status.LastSync = &lastSync
+	}
+	if stored.Snapshot != nil {
+		status.Snapshot = scalarSnapshot(stored.Snapshot)
+	}
+	return status
 }
 
 // aggregateProfileStatus projects a profile status for the unauthenticated
@@ -152,14 +230,40 @@ func aggregateProfileStatus(profile database.SyncProfile, status *SyncProfileSta
 		Status:      status.Status,
 		DryRun:      status.DryRun,
 		LastSync:    status.LastSync,
+		Error:       status.Error,
 		Progress:    status.Progress,
 		BooksTotal:  status.BooksTotal,
 		BooksSynced: status.BooksSynced,
+	}
+	if status.Snapshot != nil {
+		aggregate.Snapshot = scalarSnapshot(status.Snapshot)
 	}
 	if aggregate.Status == "" {
 		aggregate.Status = "idle"
 	}
 	return aggregate
+}
+
+// scalarSnapshot keeps aggregate polling cheap and prevents the public
+// /api/status response from copying per-book outcome and attention records.
+// The full snapshot remains available on the authenticated profile status and
+// run-details endpoints.
+func scalarSnapshot(snapshot *sync.SyncSnapshot) *sync.SyncSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	return &sync.SyncSnapshot{
+		UserID:              snapshot.UserID,
+		RunID:               snapshot.RunID,
+		RunStartedAt:        snapshot.RunStartedAt,
+		State:               snapshot.State,
+		BooksTotal:          snapshot.BooksTotal,
+		ProcessedSoFar:      snapshot.ProcessedSoFar,
+		ProcessedCount:      snapshot.ProcessedCount,
+		OutcomeCounts:       snapshot.OutcomeCounts,
+		TotalBooksProcessed: snapshot.TotalBooksProcessed,
+		BooksSynced:         snapshot.BooksSynced,
+	}
 }
 
 // GetSyncService returns the sync service for a profile, if it exists
@@ -311,8 +415,19 @@ func (s *MultiUserService) StartSync(profileID string) error {
 	s.updateProfileStatus(profileID, initialStatus)
 
 	// Start the sync in background
-	go s.performSync(ctx, profileID, profileConfig, run.generation)
+	s.syncWaitGroup.Add(1)
+	go func() {
+		defer s.syncWaitGroup.Done()
+		s.performSync(ctx, profileID, profileConfig, run.generation)
+	}()
 	return nil
+}
+
+// WaitForSyncs waits for all sync goroutines started by this service to exit.
+// It is used by lifecycle owners that must release resources, such as the
+// logger and test databases, only after asynchronous work has stopped.
+func (s *MultiUserService) WaitForSyncs() {
+	s.syncWaitGroup.Wait()
 }
 
 // CancelSync cancels a running sync operation for a profile

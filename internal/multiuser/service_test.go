@@ -15,6 +15,7 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/crypto"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
+	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
 
 func TestGetProfileStatusRechecksStatusAfterFallbackLookup(t *testing.T) {
@@ -104,7 +105,7 @@ func TestGetProfileStatusRechecksStatusAfterFallbackLookup(t *testing.T) {
 	}
 }
 
-func TestStatusAggregateOmitsErrorButProfileStatusRetainsIt(t *testing.T) {
+func TestStatusAggregatePreservesErrorAndProfileStatusRetainsIt(t *testing.T) {
 	service, _ := newStatusLookupService(t)
 	profileID := "profile-a"
 	require.NoError(t, service.repository.CreateProfile(
@@ -121,6 +122,22 @@ func TestStatusAggregateOmitsErrorButProfileStatusRetainsIt(t *testing.T) {
 		Progress:    "Processing books",
 		BooksTotal:  12,
 		BooksSynced: 7,
+		Snapshot: &syncsvc.SyncSnapshot{
+			RunID:          "profile-a-run-1",
+			State:          "failed",
+			BooksTotal:     12,
+			ProcessedSoFar: 1,
+			ProcessedCount: 1,
+			OutcomeCounts:  syncsvc.OutcomeCounts{Failed: 1},
+			BookOutcomes: []syncsvc.BookOutcomeRecord{{
+				BookID:  "book-1",
+				Outcome: syncsvc.OutcomeFailed,
+			}},
+			AttentionRecords: []syncsvc.BookOutcomeRecord{{
+				BookID:  "book-1",
+				Outcome: syncsvc.OutcomeFailed,
+			}},
+		},
 	}
 	service.updateProfileStatus(profileID, status)
 
@@ -134,7 +151,14 @@ func TestStatusAggregateOmitsErrorButProfileStatusRetainsIt(t *testing.T) {
 	require.Equal(t, status.Progress, aggregate[0].Progress)
 	require.Equal(t, status.BooksTotal, aggregate[0].BooksTotal)
 	require.Equal(t, status.BooksSynced, aggregate[0].BooksSynced)
-	require.Empty(t, aggregate[0].Error)
+	require.Equal(t, status.Error, aggregate[0].Error)
+	require.NotNil(t, aggregate[0].Snapshot)
+	require.Equal(t, status.Snapshot.RunID, aggregate[0].Snapshot.RunID)
+	require.Equal(t, status.Snapshot.OutcomeCounts, aggregate[0].Snapshot.OutcomeCounts)
+	require.Nil(t, aggregate[0].Snapshot.BookOutcomes)
+	require.Nil(t, aggregate[0].Snapshot.AttentionRecords)
+	require.Nil(t, aggregate[0].Snapshot.BooksNotFound)
+	require.Nil(t, aggregate[0].Snapshot.Mismatches)
 
 	direct := service.GetProfileStatus(profileID)
 	require.NotNil(t, direct)
