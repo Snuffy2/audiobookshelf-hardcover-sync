@@ -227,14 +227,22 @@ reviewable changes, each independently testable and usable after merge:
    successful sync, and keep legacy profile terminal status aligned with the
    failed/canceled run snapshot during the brief final-publication window. This
    includes storage and lifecycle behavior distinct from live result rendering.
+   Remove repository I/O from the global `syncMutex` critical sections in
+   `StartSync`, `CancelSync`, and final-status publication so a slow database
+   operation for one profile cannot stall sync operations for every profile.
+   Use per-profile coordination or generation-aware conditional persistence;
+   after unlocked I/O, re-check the run generation before publishing in-memory
+   status so an older run cannot persist or publish stale lifecycle state over a
+   replacement run.
    Make Start Sync acknowledge only an accepted run: validate
    the profile and active-run constraint, record a queued run before returning
    success, and return an error when the start is rejected. Show UI success only
    after acceptance, then follow that run through queued, running, or failure.
-   Verify missing-profile and duplicate starts, plus the POST/status timing, at
-   the HTTP and UI boundaries. Add pagination or incremental detail delivery
-   here only if observed list size or poll cost warrants it; otherwise keep
-   that as a separate measured optimization.
+   Verify missing-profile and duplicate starts, POST/status timing, cross-profile
+   progress while one repository call is blocked, and rejection of stale durable
+   or in-memory updates from an older generation. Add pagination or incremental
+   detail delivery here only if observed list size or poll cost warrants it;
+   otherwise keep that as a separate measured optimization.
 
 PRs 1 and 2a can be prepared independently. PR 2a must build, run, and remain
 safe with the existing UI and API even if PR 2b is delayed; PR 2b follows 2a,
