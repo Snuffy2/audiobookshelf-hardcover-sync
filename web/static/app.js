@@ -369,6 +369,12 @@ class SyncProfileApp {
         bindProfileActions('users-list', '.user-card[data-profile-id]');
         bindProfileActions('sync-status', '.status-card[data-profile-id]');
 
+        document.getElementById('sync-summary-content').addEventListener('click', (event) => {
+            if (!event.target.closest('[data-details-retry]')) return;
+            const open = this.openSummary;
+            if (open) this.fetchAndRenderDetails({ open, preservePosition: true });
+        });
+
         // Tab switching
         document.querySelectorAll('.tab-button').forEach(button => {
             button.addEventListener('click', (e) => {
@@ -638,7 +644,6 @@ class SyncProfileApp {
                     dry_run: this.toBool(status.dry_run, false),
                     last_sync: status.last_sync || null,
                     progress: status.progress || '',
-                    error: status.error || '',
                     books_total: snapshot?.books_total ?? status.books_total ?? 0,
                     snapshot
                 };
@@ -725,9 +730,6 @@ class SyncProfileApp {
                         ` : ''}
                         ${status.message ? `
                             <div class="status-message">${this.escapeHtml(status.message)}</div>
-                        ` : ''}
-                        ${status.error ? `
-                            <div class="status-error">Error: ${this.escapeHtml(status.error)}</div>
                         ` : ''}
                         ${status.unavailable || this.statusRefreshError ? `
                             <div class="status-message" role="status">Status unavailable. Showing last known data.</div>
@@ -883,14 +885,17 @@ class SyncProfileApp {
         if (!container) return;
         const previous = this.openSummary;
         const sameRun = previous?.profileId === profileId && previous?.runId === runId;
+        previous?.detailsController?.abort();
         this.openSummary = {
             profileId,
             runId,
+            generation: (previous?.generation || 0) + 1,
             filter: sameRun ? previous.filter : 'all',
             expandedIds: sameRun ? previous.expandedIds : new Set(),
             scrollTop: 0
         };
-        await this.fetchAndRenderDetails();
+        if (!sameRun) this.renderDetailsState('loading', this.openSummary);
+        await this.fetchAndRenderDetails({ open: this.openSummary });
         if (!sameRun) container.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
@@ -902,17 +907,26 @@ class SyncProfileApp {
             this.clearOpenSummary();
             return;
         }
-        // A new run replaces the open report only after its own details have
-        // arrived, so records from two runs are never mixed.
+        // Replace the open state object rather than mutating it. An older
+        // details response can then never clear or publish the new run.
         if (runId !== this.openSummary.runId) {
-            this.openSummary.runId = runId;
-            this.openSummary.filter = 'all';
-            this.openSummary.expandedIds = new Set();
+            const previous = this.openSummary;
+            previous.detailsController?.abort();
+            this.openSummary = {
+                profileId: previous.profileId,
+                runId,
+                generation: previous.generation + 1,
+                filter: 'all',
+                expandedIds: new Set(),
+                scrollTop: 0
+            };
+            this.renderDetailsState('loading', this.openSummary);
         }
-        await this.fetchAndRenderDetails({ preservePosition: true });
+        await this.fetchAndRenderDetails({ open: this.openSummary, preservePosition: true });
     }
 
     clearOpenSummary() {
+        this.openSummary?.detailsController?.abort();
         this.openSummary = null;
         const container = document.getElementById('sync-summary-container');
         const content = document.getElementById('sync-summary-content');
@@ -922,22 +936,63 @@ class SyncProfileApp {
         if (container) container.style.display = 'none';
     }
 
-    async fetchAndRenderDetails({ preservePosition = false } = {}) {
-        const open = this.openSummary;
+    renderDetailsState(state, open, message = '') {
+        if (!open || this.openSummary !== open) return;
+        const container = document.getElementById('sync-summary-container');
+        const content = document.getElementById('sync-summary-content');
+        const tabs = document.getElementById('sync-summary-tabs');
+        if (!container || !content || !tabs) return;
+        container.style.display = 'block';
+        tabs.innerHTML = `<button class="tab-button active" type="button">${this.escapeHtml(this.statuses[open.profileId]?.profile_name || `Profile ${open.profileId}`)}</button>`;
+        const isError = state === 'error';
+        content.innerHTML = `
+            <div class="details-state" data-run-id="${this.escapeHtmlAttribute(open.runId)}" role="status" aria-live="polite">
+                <p>${isError ? 'Run details could not be loaded.' : 'Loading run details…'}</p>
+                ${isError ? `<button type="button" class="btn btn-secondary" data-details-retry>Retry</button>` : ''}
+            </div>`;
+    }
+
+    renderDetailsStale(open, message = '') {
+        if (!open || this.openSummary !== open) return;
+        const summary = document.querySelector('#sync-summary-content .sync-summary');
+        if (!summary || summary.dataset.runId !== open.runId) return;
+        const content = document.getElementById('sync-summary-content');
+        const scrollTop = content?.scrollTop || 0;
+        let state = summary.querySelector('[data-details-refresh-state]');
+        if (!state) {
+            state = document.createElement('div');
+            state.dataset.detailsRefreshState = 'stale';
+            state.className = 'details-refresh-state';
+            summary.prepend(state);
+        }
+        state.setAttribute('role', 'status');
+        state.setAttribute('aria-live', 'polite');
+        state.innerHTML = `<span>Status may be stale${message ? `: ${this.escapeHtml(message)}` : ''}.</span> <button type="button" class="btn btn-sm" data-details-retry>Retry</button>`;
+        if (content) content.scrollTop = scrollTop;
+    }
+
+    async fetchAndRenderDetails({ open = this.openSummary, preservePosition = false } = {}) {
         if (!open || open.loading) return;
+        const requestGeneration = open.generation;
+        const requestRunId = open.runId;
+        const requestController = typeof AbortController === 'undefined' ? null : new AbortController();
+        open.detailsController = requestController;
         open.loading = true;
         const content = document.getElementById('sync-summary-content');
         const container = document.getElementById('sync-summary-container');
         try {
             const { response, data: result } = await this.fetchJsonWithTimeout(
-                `${this.profileUrl(open.profileId)}/runs/${encodeURIComponent(open.runId)}/details`
+                `${this.profileUrl(open.profileId)}/runs/${encodeURIComponent(requestRunId)}/details`,
+                { signal: requestController?.signal }
             );
             const snapshot = result.success ? result.data : result;
             const currentRunId = this.statuses[open.profileId]?.snapshot?.run_id;
-            const replacingRun = open.renderedRunId && open.renderedRunId !== open.runId;
-            if (this.openSummary !== open) return;
-            if (!response.ok || !snapshot || snapshot.run_id !== open.runId || currentRunId !== open.runId) {
-                if (replacingRun) this.clearOpenSummary();
+            const currentRequest = this.openSummary === open && open.generation === requestGeneration && open.runId === requestRunId;
+            const replacingRun = !open.renderedRunId || open.renderedRunId !== requestRunId;
+            if (!currentRequest) return;
+            if (!response.ok || !snapshot || snapshot.run_id !== requestRunId || currentRunId !== requestRunId) {
+                if (replacingRun) this.renderDetailsState('error', open);
+                else this.renderDetailsStale(open, `refresh failed (${response.status})`);
                 return;
             }
             if (preservePosition && content) open.scrollTop = content.scrollTop;
@@ -961,9 +1016,15 @@ class SyncProfileApp {
                 target?.focus({ preventScroll: true });
             }
         } catch (error) {
-            if (error.name !== 'AbortError') console.error('Error loading sync run details:', error);
+            const currentRequest = this.openSummary === open && open.generation === requestGeneration && open.runId === requestRunId;
+            if (error.name !== 'AbortError' && currentRequest) {
+                if (!open.renderedRunId || open.renderedRunId !== requestRunId) this.renderDetailsState('error', open);
+                else this.renderDetailsStale(open, error.message);
+                console.error('Error loading sync run details:', error);
+            }
         } finally {
             open.loading = false;
+            if (open.detailsController === requestController) open.detailsController = null;
         }
     }
 
@@ -1278,8 +1339,7 @@ class SyncProfileApp {
                 this.actionErrors.delete(profileId);
                 this.showToast('Profile deleted successfully!', 'success');
                 if (this.openSummary?.profileId === profileId) {
-                    this.openSummary = null;
-                    document.getElementById('sync-summary-container')?.style.setProperty('display', 'none');
+                    this.clearOpenSummary();
                 }
                 this.loadProfiles();
                 this.loadStatuses();

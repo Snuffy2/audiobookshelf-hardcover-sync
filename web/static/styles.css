@@ -495,6 +495,23 @@ header p {
     font-weight: 600;
 }
 
+.details-state,
+.details-refresh-state {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    margin: 0 0 1rem;
+    border: 1px solid #cbd5e0;
+    border-radius: 0.5rem;
+    background: #f7fafc;
+    color: #4a5568;
+}
+
+.details-state p { margin: 0; }
+.details-refresh-state { margin: 0 0 1rem; background: #fffaf0; border-color: #f6ad55; }
+
 .outcome-filters {
     display: flex;
     flex-wrap: wrap;

@@ -105,7 +105,7 @@ func TestGetProfileStatusRechecksStatusAfterFallbackLookup(t *testing.T) {
 	}
 }
 
-func TestStatusAggregatePreservesErrorAndProfileStatusRetainsIt(t *testing.T) {
+func TestStatusAggregateOmitsErrorAndProfileStatusRetainsIt(t *testing.T) {
 	service, _ := newStatusLookupService(t)
 	profileID := "profile-a"
 	require.NoError(t, service.repository.CreateProfile(
@@ -151,7 +151,7 @@ func TestStatusAggregatePreservesErrorAndProfileStatusRetainsIt(t *testing.T) {
 	require.Equal(t, status.Progress, aggregate[0].Progress)
 	require.Equal(t, status.BooksTotal, aggregate[0].BooksTotal)
 	require.Equal(t, status.BooksSynced, aggregate[0].BooksSynced)
-	require.Equal(t, status.Error, aggregate[0].Error)
+	require.Empty(t, aggregate[0].Error)
 	require.NotNil(t, aggregate[0].Snapshot)
 	require.Equal(t, status.Snapshot.RunID, aggregate[0].Snapshot.RunID)
 	require.Equal(t, status.Snapshot.OutcomeCounts, aggregate[0].Snapshot.OutcomeCounts)

@@ -112,7 +112,6 @@ type aggregateStatusResponse struct {
 	Status      string                     `json:"status"`
 	DryRun      bool                       `json:"dry_run,omitempty"`
 	LastSync    *time.Time                 `json:"last_sync"`
-	Error       string                     `json:"error,omitempty"`
 	Progress    string                     `json:"progress,omitempty"`
 	BooksTotal  int                        `json:"books_total,omitempty"`
 	BooksSynced int                        `json:"books_synced,omitempty"`
@@ -489,7 +488,6 @@ func (h *Handler) GetAllProfileStatuses(w http.ResponseWriter, r *http.Request) 
 			Status:      status.Status,
 			DryRun:      status.DryRun,
 			LastSync:    status.LastSync,
-			Error:       status.Error,
 			Progress:    status.Progress,
 			BooksTotal:  status.BooksTotal,
 			BooksSynced: status.BooksSynced,

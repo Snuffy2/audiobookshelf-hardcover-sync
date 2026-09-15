@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -324,6 +325,59 @@ func TestCreateProfileRejectsUnsafeIDs(t *testing.T) {
 	profile, err := fixture.multiUser.GetProfile("valid-profile_1.~")
 	require.NoError(t, err)
 	require.NotNil(t, profile)
+}
+
+func TestPublicAggregateOmitsRunErrorWhileProfileStatusRetainsIt(t *testing.T) {
+	fixture := newStatusServiceFixture(t, "http://hardcover.invalid")
+	profileID := "error-profile"
+	sentinel := "sensitive-run-error"
+	statePath := filepath.Join(fixture.dataDir, sentinel+".json")
+	profileStatePath := strings.TrimSuffix(statePath, ".json") + "." + profileID
+	require.NoError(t, os.Mkdir(profileStatePath, 0o755))
+	require.NoError(t, fixture.repo.CreateProfile(
+		profileID,
+		"Error profile",
+		"http://audiobookshelf.invalid",
+		"abs-token",
+		"hardcover-token",
+		database.SyncConfigData{StateFile: statePath, ProcessUnreadBooks: true, DryRun: true},
+	))
+	require.NoError(t, fixture.multiUser.StartSync(profileID))
+
+	terminal := waitForStatusRun(t, fixture.multiUser, profileID)
+	require.Equal(t, "error", terminal.Status)
+	require.Contains(t, terminal.Error, sentinel)
+
+	handler := NewHandler(fixture.multiUser, logger.Get())
+	routes := newMountedStatusRoutes(handler)
+	publicResponse := requestJSONRoute(routes, http.MethodGet, "/api/status")
+	require.Equal(t, http.StatusOK, publicResponse.Code, publicResponse.Body.String())
+	require.NotContains(t, publicResponse.Body.String(), sentinel)
+	var publicEnvelope struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(publicResponse.Body.Bytes(), &publicEnvelope))
+	var publicProfile map[string]json.RawMessage
+	for _, profile := range publicEnvelope.Data {
+		var id string
+		require.NoError(t, json.Unmarshal(profile["profile_id"], &id))
+		if id == profileID {
+			publicProfile = profile
+			break
+		}
+	}
+	require.NotNil(t, publicProfile)
+	_, hasError := publicProfile["error"]
+	require.False(t, hasError)
+
+	statusResponse := requestJSONRoute(routes, http.MethodGet, "/api/profiles/"+profileID+"/status")
+	require.Equal(t, http.StatusOK, statusResponse.Code, statusResponse.Body.String())
+	var authenticatedStatus statusHTTPResponse
+	require.NoError(t, json.Unmarshal(statusResponse.Body.Bytes(), &authenticatedStatus))
+	require.True(t, authenticatedStatus.Success)
+	require.Equal(t, terminal.Error, authenticatedStatus.Data.Error)
+	require.Contains(t, statusResponse.Body.String(), sentinel)
+	fixture.waitForSyncs(t)
 }
 
 func TestPublicStatusAndSummaryRoutesExposeLiveAttentionOutcomes(t *testing.T) {

@@ -200,7 +200,6 @@ func (s *MultiUserService) getStoredAggregateStatus(profile database.SyncProfile
 		Progress:    stored.Progress,
 		BooksTotal:  stored.BooksTotal,
 		BooksSynced: stored.BooksSynced,
-		Error:       stored.Error,
 	}
 	if stored.LastSync != nil {
 		lastSync := *stored.LastSync
@@ -230,7 +229,6 @@ func aggregateProfileStatus(profile database.SyncProfile, status *SyncProfileSta
 		Status:      status.Status,
 		DryRun:      status.DryRun,
 		LastSync:    status.LastSync,
-		Error:       status.Error,
 		Progress:    status.Progress,
 		BooksTotal:  status.BooksTotal,
 		BooksSynced: status.BooksSynced,
