@@ -827,7 +827,12 @@ class SyncProfileApp {
             let card = existingCards.get(profileId);
             const signature = JSON.stringify([status, this.actionErrors.get(profileId), Boolean(this.statusRefreshError)]);
             const focusInfo = card && activeElement && card.contains(activeElement)
-                ? { id: activeElement.id, tagName: activeElement.tagName, action: activeElement.dataset.profileAction }
+                ? {
+                    id: activeElement.id,
+                    tagName: activeElement.tagName,
+                    action: activeElement.dataset.profileAction,
+                    primaryAction: ['start', 'cancel'].includes(activeElement.dataset.profileAction)
+                }
                 : null;
 
             if (!card || card.__statusSignature !== signature) {
@@ -847,7 +852,9 @@ class SyncProfileApp {
                     const focusTarget = focusInfo.id
                         ? [...card.querySelectorAll('[id]')].find(element => element.id === focusInfo.id)
                         : [...card.querySelectorAll(focusInfo.tagName)].find(element =>
-                            element.dataset.profileAction === focusInfo.action);
+                            focusInfo.primaryAction
+                                ? ['start', 'cancel'].includes(element.dataset.profileAction)
+                                : element.dataset.profileAction === focusInfo.action);
                     focusTarget?.focus({ preventScroll: true });
                 }
             }
@@ -1000,6 +1007,7 @@ class SyncProfileApp {
             if (activeElement && content?.contains(activeElement)) {
                 open.focus = {
                     bookId: activeElement.closest('[data-book-id]')?.dataset.bookId,
+                    outcome: activeElement.closest('[data-outcome-category]')?.dataset.outcomeCategory,
                     tagName: activeElement.tagName,
                     className: activeElement.className
                 };
@@ -1009,10 +1017,11 @@ class SyncProfileApp {
             if (content) content.scrollTop = open.scrollTop || 0;
             if (open.focus) {
                 const candidates = content ? [...content.querySelectorAll(open.focus.tagName)] : [];
-                const target = candidates.find(element =>
-                    (open.focus.bookId && element.closest('[data-book-id]')?.dataset.bookId === open.focus.bookId) ||
-                    (!open.focus.bookId && element.className === open.focus.className)
-                );
+                const target = candidates.find(element => open.focus.bookId
+                    ? element.closest('[data-book-id]')?.dataset.bookId === open.focus.bookId
+                    : open.focus.outcome
+                        ? element.dataset.outcomeCategory === open.focus.outcome
+                        : element.className === open.focus.className);
                 target?.focus({ preventScroll: true });
             }
         } catch (error) {
@@ -1048,7 +1057,7 @@ class SyncProfileApp {
         });
         const groupsHtml = groups.filter(group => selectedFilter === 'all' || group.key === selectedFilter).map(group => `
             <details class="summary-section outcome-group" data-outcome="${group.key}" ${group.records.some(record => open.expandedIds.has(record.book_id)) ? 'open' : ''}>
-                <summary><span>${group.label}</span><span class="stat ${group.tone}">${group.count}</span></summary>
+                <summary data-outcome-category="${group.key}"><span>${group.label}</span><span class="stat ${group.tone}">${group.count}</span></summary>
                 <div class="book-list">${group.records.length ? group.records.map(record => this.renderOutcomeRecord(record, open)).join('') : '<p class="empty-state">No books in this category.</p>'}</div>
             </details>`).join('');
         const cleanMessage = terminal && unresolved === 0
