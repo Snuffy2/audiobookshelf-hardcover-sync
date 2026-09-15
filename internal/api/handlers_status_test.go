@@ -327,6 +327,41 @@ func TestCreateProfileRejectsUnsafeIDs(t *testing.T) {
 	require.NotNil(t, profile)
 }
 
+func TestCreateProfileIDLengthBoundary(t *testing.T) {
+	fixture := newStatusServiceFixture(t, "http://hardcover.invalid")
+	handler := NewHandler(fixture.multiUser, logger.Get())
+
+	for _, test := range []struct {
+		name       string
+		profileID  string
+		statusCode int
+	}{
+		{name: "maximum length", profileID: strings.Repeat("a", maxNewProfileIDBytes), statusCode: http.StatusOK},
+		{name: "one byte over maximum", profileID: strings.Repeat("a", maxNewProfileIDBytes+1), statusCode: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := json.Marshal(CreateProfileRequest{
+				ID:                  test.profileID,
+				Name:                "Length boundary",
+				AudiobookshelfURL:   "http://audiobookshelf.invalid",
+				AudiobookshelfToken: "abs-token",
+				HardcoverToken:      "hardcover-token",
+			})
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			handler.CreateProfile(recorder, httptest.NewRequest(http.MethodPost, "/api/profiles", bytes.NewReader(payload)))
+			require.Equal(t, test.statusCode, recorder.Code, recorder.Body.String())
+			profile, err := fixture.multiUser.GetProfile(test.profileID)
+			require.NoError(t, err)
+			if test.statusCode == http.StatusOK {
+				require.NotNil(t, profile)
+			} else {
+				require.Nil(t, profile)
+			}
+		})
+	}
+}
+
 func TestPublicAggregateOmitsRunErrorWhileProfileStatusRetainsIt(t *testing.T) {
 	fixture := newStatusServiceFixture(t, "http://hardcover.invalid")
 	profileID := "error-profile"

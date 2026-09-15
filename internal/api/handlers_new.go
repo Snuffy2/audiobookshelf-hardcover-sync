@@ -14,6 +14,8 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
 
+const maxNewProfileIDBytes = 244
+
 // Handler provides HTTP handlers for the sync profile API
 type Handler struct {
 	multiUserService *multiuser.MultiUserService
@@ -562,11 +564,11 @@ func runIDFromRequest(r *http.Request) string {
 	return r.PathValue("runID")
 }
 
-// isValidNewProfileID accepts the RFC 3986 unreserved characters. Existing
-// profiles are not revalidated at read/update/delete time so legacy IDs remain
-// addressable when their delimiters are URL-encoded.
+// isValidNewProfileID accepts up to 244 bytes of RFC 3986 unreserved ASCII
+// characters. Existing profiles are not revalidated at read/update/delete
+// time so legacy IDs remain addressable when their delimiters are URL-encoded.
 func isValidNewProfileID(id string) bool {
-	if id == "" || id == "." || id == ".." {
+	if id == "" || id == "." || id == ".." || len(id) > maxNewProfileIDBytes {
 		return false
 	}
 	for _, r := range id {

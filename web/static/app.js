@@ -506,7 +506,7 @@ class SyncProfileApp {
 
         try {
             const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
-            const data = await response.json();
+            const data = await response.json().catch(() => ({}));
             if (controller.signal.aborted) {
                 const error = new Error(timedOut ? 'Request timed out' : 'Request aborted');
                 error.name = timedOut ? 'TimeoutError' : 'AbortError';
@@ -622,10 +622,7 @@ class SyncProfileApp {
             }
             const { response, data: result } = await this.fetchJsonWithTimeout('/api/status', { signal });
             if (response.status === 401 || response.status === 403) {
-                this.authEnabled = true;
-                this.currentUser = null;
-                this.showToast('Authentication required. Please log in.', 'error');
-                this.redirectToLogin();
+                this.handleAuthExpiry();
                 return;
             }
             if (!response.ok) throw new Error(`Status request failed (${response.status})`);
@@ -705,6 +702,7 @@ class SyncProfileApp {
         const profileName = status.profile_name || status.profile_id || 'Unknown Profile';
         const actionError = this.actionErrors.get(profileId);
         const hasRun = Boolean(snapshot.run_id);
+        const retryable = statusState === 'error' || statusState === 'failed';
         const categories = this.outcomeCategories(counts);
 
         return `
@@ -748,7 +746,7 @@ class SyncProfileApp {
                             </button>
                         ` : `
                             <button class="btn btn-primary" data-profile-action="start">
-                                ${statusState.toLowerCase() === 'error' ? 'Retry Sync' : 'Start Sync'}
+                                ${retryable ? 'Retry Sync' : 'Start Sync'}
                             </button>
                         `}
                         ${hasRun ? `
@@ -943,6 +941,20 @@ class SyncProfileApp {
         if (container) container.style.display = 'none';
     }
 
+    handleAuthExpiry() {
+        this.authEnabled = true;
+        this.currentUser = null;
+        this.statuses = {};
+        this.statusLoadSequence += 1;
+        this.statusLoadController?.abort();
+        this.statusRefreshQueued = false;
+        this.statusRefreshWaiters.splice(0).forEach(resolve => resolve());
+        this.stopAutoRefresh();
+        this.clearOpenSummary();
+        this.showToast('Authentication required. Please log in.', 'error');
+        this.redirectToLogin();
+    }
+
     renderDetailsState(state, open, message = '') {
         if (!open || this.openSummary !== open) return;
         const container = document.getElementById('sync-summary-container');
@@ -993,6 +1005,10 @@ class SyncProfileApp {
                 { signal: requestController?.signal }
             );
             const snapshot = result.success ? result.data : result;
+            if (response.status === 401 || response.status === 403) {
+                this.handleAuthExpiry();
+                return;
+            }
             const currentRunId = this.statuses[open.profileId]?.snapshot?.run_id;
             const currentRequest = this.openSummary === open && open.generation === requestGeneration && open.runId === requestRunId;
             const replacingRun = !open.renderedRunId || open.renderedRunId !== requestRunId;
@@ -1049,7 +1065,8 @@ class SyncProfileApp {
         open.filter = selectedFilter;
         const records = new Map((snapshot.book_outcomes || []).map(record => [record.book_id, record]));
         tabs.innerHTML = `<button class="tab-button active" type="button">${this.escapeHtml(this.statuses[open.profileId]?.profile_name || `Profile ${open.profileId}`)}</button>`;
-        const terminal = String(snapshot.state || '').toLowerCase() === 'completed';
+        const snapshotState = String(snapshot.state || '').toLowerCase();
+        const terminal = snapshotState === 'completed' || snapshotState === 'failed';
         const unresolved = Number(snapshot.outcome_counts?.needs_review || 0) + Number(snapshot.outcome_counts?.not_found || 0) + Number(snapshot.outcome_counts?.failed || 0);
         const groups = categories.map(category => {
             const groupRecords = [...records.values()].filter(record => record.outcome === category.key);
@@ -1060,9 +1077,9 @@ class SyncProfileApp {
                 <summary data-outcome-category="${group.key}"><span>${group.label}</span><span class="stat ${group.tone}">${group.count}</span></summary>
                 <div class="book-list">${group.records.length ? group.records.map(record => this.renderOutcomeRecord(record, open)).join('') : '<p class="empty-state">No books in this category.</p>'}</div>
             </details>`).join('');
-        const cleanMessage = terminal && unresolved === 0
+        const cleanMessage = snapshotState === 'completed' && unresolved === 0
             ? 'This run completed without unresolved or failed outcomes.'
-            : (terminal ? 'This run has outcomes that still need attention.' : 'Results are live for the current run.');
+            : (terminal ? 'This run is finished and may need attention.' : 'Results are live for the current run.');
         content.innerHTML = `
             <div class="sync-summary" data-run-id="${this.escapeHtmlAttribute(snapshot.run_id)}">
                 <div class="summary-header"><h3>Run details</h3><div class="last-sync">Started: ${new Date(snapshot.run_started_at).toLocaleString()}</div></div>
@@ -1111,8 +1128,13 @@ class SyncProfileApp {
 
     async handleAddProfile(event) {
         const formData = new FormData(event.target);
+        const profileId = String(formData.get('id') || '');
+        if (profileId.length > 244) {
+            this.showToast('Profile ID must be 244 characters or fewer.', 'error');
+            return;
+        }
         const profileData = {
-            id: formData.get('id'),
+            id: profileId,
             name: formData.get('name'),
             audiobookshelf_url: formData.get('audiobookshelf_url'),
             audiobookshelf_token: formData.get('audiobookshelf_token'),

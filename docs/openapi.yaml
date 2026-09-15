@@ -415,6 +415,8 @@ paths:
               properties:
                 id:
                   type: string
+                  maxLength: 244
+                  description: Up to 244 ASCII RFC 3986 unreserved characters; "." and ".." are not valid profile IDs.
                   example: "profile-123"
                 name:
                   type: string
