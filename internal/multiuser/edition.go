@@ -87,10 +87,18 @@ type EditionEdits struct {
 }
 
 // EditionCreated is the result of a create request. EditionID is 0 for a dry run.
+// Warnings lists user-readable problems that did not stop the edition from
+// being created, such as a cover image that could not be uploaded. It is never
+// nil so it always serializes as an array.
 type EditionCreated struct {
-	EditionID int  `json:"edition_id"`
-	DryRun    bool `json:"dry_run"`
+	EditionID int      `json:"edition_id"`
+	DryRun    bool     `json:"dry_run"`
+	Warnings  []string `json:"warnings"`
 }
+
+// editionCoverWarning is shown when the edition exists but its cover does not.
+// It deliberately omits the underlying error, which may hold remote details.
+const editionCoverWarning = "The edition was created, but its cover image could not be uploaded."
 
 // editionTarget is a needs-review run record resolved for edition creation.
 type editionTarget struct {
@@ -196,7 +204,11 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	if err != nil {
 		return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
 	}
-	return &EditionCreated{EditionID: result.EditionID, DryRun: dryRun}, nil
+	created := &EditionCreated{EditionID: result.EditionID, DryRun: dryRun, Warnings: []string{}}
+	if result.ImageError != "" {
+		created.Warnings = append(created.Warnings, editionCoverWarning)
+	}
+	return created, nil
 }
 
 // resolveEditionTarget loads the profile and finds the needs-review record for

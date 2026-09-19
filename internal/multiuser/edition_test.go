@@ -192,7 +192,7 @@ func TestCreateEditionFromRunBook_TargetsTheRecordedHardcoverBook(t *testing.T) 
 
 	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 	require.NoError(t, err)
-	require.Equal(t, &EditionCreated{EditionID: 777, DryRun: false}, created)
+	require.Equal(t, &EditionCreated{EditionID: 777, DryRun: false, Warnings: []string{}}, created)
 
 	mutations := f.hardcover.recordedMutations()
 	require.Len(t, mutations, 1)
@@ -212,7 +212,7 @@ func TestCreateEditionFromRunBook_DryRunIssuesNoMutation(t *testing.T) {
 
 	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 	require.NoError(t, err)
-	require.Equal(t, &EditionCreated{EditionID: 0, DryRun: true}, created)
+	require.Equal(t, &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}}, created)
 	require.Empty(t, f.hardcover.recordedMutations())
 }
 

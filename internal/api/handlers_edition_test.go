@@ -352,7 +352,7 @@ func TestCreateEditionTargetsTheRunRecordAndReturnsTheEdition(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	envelope := decodeEnvelope(t, recorder)
 	require.True(t, envelope.Success)
-	require.Equal(t, map[string]interface{}{"edition_id": float64(777), "dry_run": false}, envelope.Data)
+	require.Equal(t, map[string]interface{}{"edition_id": float64(777), "dry_run": false, "warnings": []interface{}{}}, envelope.Data)
 
 	mutations := f.hardcover.recordedMutations()
 	require.Len(t, mutations, 1)
@@ -440,7 +440,7 @@ func TestEditionDryRunProfilesIssueNoHardcoverMutation(t *testing.T) {
 
 	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusOK, create.Code, create.Body.String())
-	require.Equal(t, map[string]interface{}{"edition_id": float64(0), "dry_run": true}, decodeEnvelope(t, create).Data)
+	require.Equal(t, map[string]interface{}{"edition_id": float64(0), "dry_run": true, "warnings": []interface{}{}}, decodeEnvelope(t, create).Data)
 
 	draft := f.do(http.MethodGet, editionBasePath+"item-1/edition-draft", "")
 	require.Equal(t, http.StatusOK, draft.Code, draft.Body.String())
