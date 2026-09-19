@@ -116,6 +116,11 @@ type MultiUserService struct {
 	shutdownMutex         stdSync.Mutex
 	cancellationWaitGroup stdSync.WaitGroup
 	shuttingDown          bool
+
+	// editionsInFlight guards against overlapping edition submits for one
+	// profile/book pair. It is independent of the full-sync lifecycle state.
+	editionMutex     stdSync.Mutex
+	editionsInFlight map[string]struct{}
 }
 
 // NewMultiUserService creates a new multi-user service
