@@ -322,6 +322,8 @@ func TestViewerProfileAuthorizationIsReadOnly(t *testing.T) {
 		{name: "delete profile", method: http.MethodDelete, path: "/api/profiles/viewer-owned"},
 		{name: "start sync", method: http.MethodPost, path: "/api/profiles/viewer-owned/sync"},
 		{name: "cancel sync", method: http.MethodDelete, path: "/api/profiles/viewer-owned/sync"},
+		{name: "edition draft", method: http.MethodGet, path: "/api/profiles/viewer-owned/runs/run-1/books/book-1/edition-draft"},
+		{name: "create edition", method: http.MethodPost, path: "/api/profiles/viewer-owned/runs/run-1/books/book-1/edition", body: `{}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := fixture.requestWithCookies(test.method, test.path, []byte(test.body), []*http.Cookie{viewer.cookie})
@@ -404,6 +406,8 @@ func TestForeignProfileAuthorizationReturnsNotFoundForEveryRoute(t *testing.T) {
 		{name: "run details", method: http.MethodGet, path: runDetailsPath},
 		{name: "start sync", method: http.MethodPost, path: "/api/profiles/foreign-target/sync"},
 		{name: "cancel sync", method: http.MethodDelete, path: "/api/profiles/foreign-target/sync"},
+		{name: "edition draft", method: http.MethodGet, path: "/api/profiles/foreign-target/runs/" + status.Snapshot.RunID + "/books/foreign-attention-book/edition-draft"},
+		{name: "create edition", method: http.MethodPost, path: "/api/profiles/foreign-target/runs/" + status.Snapshot.RunID + "/books/foreign-attention-book/edition", body: `{"title":"stolen","author_ids":[1]}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := fixture.requestWithCookies(test.method, test.path, []byte(test.body), []*http.Cookie{foreign.cookie})
