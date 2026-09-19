@@ -159,12 +159,20 @@ envelope.
   the cover from Audiobookshelf. A missing title or author, a malformed
   `release_date`, more than 50 author or narrator IDs, an author or narrator ID
   that is not positive, or a negative publisher, language, country, or audio
-  length is rejected with `422`. On success, `data` is
-  `{"edition_id": <id>, "dry_run": <bool>}`. If an edition with the same ASIN
-  already exists on Hardcover, its ID is returned instead of creating a
-  duplicate.
-- **`edition_format`**: the API accepts this field, but the edition is
-  currently created on Hardcover as an audiobook regardless of the value sent.
+  length, or an `edition_format` longer than 100 characters, is rejected with
+  `422`. On success, `data` is
+  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`. If an
+  edition with the same ASIN already exists on Hardcover, its ID is returned
+  instead of creating a duplicate.
+- **Cover warnings**: `warnings` is always an array. If the edition was created
+  but its cover image could not be downloaded, uploaded, or attached, the
+  request still succeeds with `200` and `warnings` holds one entry, `The
+  edition was created, but its cover image could not be uploaded.` Otherwise it
+  is `[]`, and a dry run never has warnings.
+- **`edition_format`**: free text that is sent to Hardcover as the edition
+  format, after trimming whitespace; an empty value becomes `Audiobook`. It may
+  be at most 100 characters, counted after trimming; a longer value is rejected
+  with `422`.
 - **Dry run**: if the profile is in dry-run mode, the request is still
   validated, but nothing is created on Hardcover and `edition_id` is `0`.
 - **Timeout**: creation continues even if the caller disconnects, and is

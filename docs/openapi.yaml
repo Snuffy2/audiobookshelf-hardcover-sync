@@ -378,7 +378,7 @@ components:
 
     EditionCreateRequest:
       type: object
-      description: Edition fields to create on Hardcover. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400; in particular book_id and image_url are not accepted, because the server takes the Hardcover book from the run record and the cover from Audiobookshelf. title and author_ids are required, but a missing value is reported by validation as 422, not 400. Validation also returns 422 for a malformed release_date, more than 50 author or narrator IDs, an author or narrator ID that is not positive, or a negative publisher_id, language_id, country_id, or audio_seconds.
+      description: Edition fields to create on Hardcover. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400; in particular book_id and image_url are not accepted, because the server takes the Hardcover book from the run record and the cover from Audiobookshelf. title and author_ids are required, but a missing value is reported by validation as 422, not 400. Validation also returns 422 for a malformed release_date, more than 50 author or narrator IDs, an author or narrator ID that is not positive, an edition_format longer than 100 characters, or a negative publisher_id, language_id, country_id, or audio_seconds.
       additionalProperties: false
       required: [title, author_ids]
       properties:
@@ -394,7 +394,8 @@ components:
         edition_information: {type: string}
         edition_format:
           type: string
-          description: Accepted, but the edition is currently created on Hardcover as an audiobook regardless of the value.
+          maxLength: 100
+          description: Free text sent to Hardcover as the edition format after trimming whitespace; empty defaults to "Audiobook". At most 100 characters after trimming (counted in characters); a longer value returns 422.
         audio_seconds: {type: integer}
         language_id: {type: integer}
         country_id: {type: integer}
@@ -415,7 +416,7 @@ components:
 
     EditionCreateResult:
       type: object
-      required: [edition_id, dry_run]
+      required: [edition_id, dry_run, warnings]
       properties:
         edition_id:
           type: integer
@@ -423,6 +424,10 @@ components:
         dry_run:
           type: boolean
           description: True when the profile is in dry-run mode and nothing was created on Hardcover.
+        warnings:
+          type: array
+          description: Problems that did not stop the edition from being created. Never null; empty when there is nothing to report and always empty in dry-run mode. When the cover image could not be downloaded, uploaded, or attached it holds one entry, "The edition was created, but its cover image could not be uploaded."
+          items: {type: string}
 
 security:
   - BearerAuth: []
