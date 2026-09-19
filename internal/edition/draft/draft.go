@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -53,11 +54,18 @@ type Draft struct {
 // URL a draft may carry, because the edition creator can attach the
 // Audiobookshelf token to the image download.
 func CoverURL(absBaseURL string, absBook models.AudiobookshelfBook) string {
-	base := strings.TrimRight(strings.TrimSpace(absBaseURL), "/")
-	if base == "" || absBook.ID == "" || absBook.Media.CoverPath == "" {
+	if absBook.ID == "" || absBook.Media.CoverPath == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/api/items/%s/cover", base, absBook.ID)
+	base, err := url.Parse(strings.TrimSpace(absBaseURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return ""
+	}
+	// Never carry credentials, query data, or a fragment into the image URL.
+	base.User = nil
+	base.RawQuery = ""
+	base.Fragment = ""
+	return fmt.Sprintf("%s/api/items/%s/cover", strings.TrimRight(base.String(), "/"), url.PathEscape(absBook.ID))
 }
 
 // New builds a draft for absBook using the existing mismatch export pipeline.

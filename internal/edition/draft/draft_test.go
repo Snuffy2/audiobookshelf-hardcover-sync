@@ -226,6 +226,8 @@ func TestNew_CoverURL(t *testing.T) {
 	}{
 		{"forced to the base URL", "https://abs.example.com", nil, "https://abs.example.com/api/items/li_draft1/cover"},
 		{"trailing slash trimmed", "https://abs.example.com/", nil, "https://abs.example.com/api/items/li_draft1/cover"},
+		{"credentials and query stripped", "https://user:pw@abs.example.com/?token=x#frag", nil, "https://abs.example.com/api/items/li_draft1/cover"},
+		{"unparseable base URL leaves it empty", "not a url", nil, ""},
 		{"path prefix preserved", "https://example.com/abs/", nil, "https://example.com/abs/api/items/li_draft1/cover"},
 		{"no cover path leaves it empty", "https://abs.example.com", func(b *models.AudiobookshelfBook) { b.Media.CoverPath = "" }, ""},
 		{"no base URL leaves it empty", "", nil, ""},
