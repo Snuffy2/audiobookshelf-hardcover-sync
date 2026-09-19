@@ -17,6 +17,7 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/config"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 	statepkg "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync/state"
@@ -121,6 +122,10 @@ type MultiUserService struct {
 	// profile/book pair. It is independent of the full-sync lifecycle state.
 	editionMutex     stdSync.Mutex
 	editionsInFlight map[string]struct{}
+	// newEditionCreator, when set, replaces how an edition create request builds
+	// its creator. It exists so tests can inject the HTTP client used for cover
+	// transfers; production leaves it nil.
+	newEditionCreator func(client edition.HardcoverClient, dryRun bool, audiobookshelfToken string) *edition.Creator
 }
 
 // NewMultiUserService creates a new multi-user service

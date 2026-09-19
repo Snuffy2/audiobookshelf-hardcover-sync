@@ -187,13 +187,7 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	hcClient := s.newHardcoverClient(target.profile.HardcoverToken)
 	// Dry run is enforced at both the creator and the concrete client boundary.
 	hcClient.SetDryRun(dryRun)
-	creator := edition.NewCreatorWithHTTPClient(
-		hcClient,
-		s.logger,
-		dryRun,
-		target.profile.AudiobookshelfToken,
-		&http.Client{Timeout: editionImageClientTimeout},
-	)
+	creator := s.editionCreator(hcClient, dryRun, target.profile.AudiobookshelfToken)
 	creator.SetAudiobookshelfBaseURL(target.profile.AudiobookshelfURL)
 
 	// Finish the creation even if the caller disconnects, so an edition is not
@@ -209,6 +203,21 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		created.Warnings = append(created.Warnings, editionCoverWarning)
 	}
 	return created, nil
+}
+
+// editionCreator builds the creator for one create request, using
+// s.newEditionCreator when a test has replaced it.
+func (s *MultiUserService) editionCreator(client edition.HardcoverClient, dryRun bool, audiobookshelfToken string) *edition.Creator {
+	if s.newEditionCreator != nil {
+		return s.newEditionCreator(client, dryRun, audiobookshelfToken)
+	}
+	return edition.NewCreatorWithHTTPClient(
+		client,
+		s.logger,
+		dryRun,
+		audiobookshelfToken,
+		&http.Client{Timeout: editionImageClientTimeout},
+	)
 }
 
 // resolveEditionTarget loads the profile and finds the needs-review record for

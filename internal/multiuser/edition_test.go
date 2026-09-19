@@ -25,7 +25,8 @@ type editionHardcoverFake struct {
 	mu        stdSync.Mutex
 	authors   map[string]int
 	mutations []map[string]interface{}
-	failWith  string // GraphQL error message returned for insert_edition
+	writes    []string // every GraphQL mutation document received, of any kind
+	failWith  string   // GraphQL error message returned for insert_edition
 
 	entered chan struct{} // receives once per insert_edition that has started
 	release chan struct{} // when non-nil, insert_edition waits for it to close
@@ -50,6 +51,12 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
 		}
 
+		if strings.HasPrefix(strings.TrimSpace(request.Query), "mutation") {
+			fake.mu.Lock()
+			fake.writes = append(fake.writes, request.Query)
+			fake.mu.Unlock()
+		}
+
 		switch {
 		case strings.Contains(request.Query, "insert_edition"):
 			fake.mu.Lock()
@@ -65,6 +72,10 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 				return
 			}
 			respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
+		case strings.Contains(request.Query, "insert_image"):
+			respond(map[string]interface{}{"insert_image": map[string]interface{}{"id": 55}})
+		case strings.Contains(request.Query, "update_edition"):
+			respond(map[string]interface{}{"update_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
 		case strings.Contains(request.Query, "SearchPeopleDirect") || strings.Contains(request.Query, "SearchNarrators"):
 			name, _ := request.Variables["name"].(string)
 			people := []map[string]interface{}{}
@@ -92,6 +103,12 @@ func (f *editionHardcoverFake) recordedMutations() []map[string]interface{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]map[string]interface{}(nil), f.mutations...)
+}
+
+func (f *editionHardcoverFake) recordedWrites() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.writes...)
 }
 
 // editionAudiobookshelfFake serves /api/items/{id} for a fixed set of items.
@@ -132,6 +149,14 @@ func editionItem(id, title, author string) map[string]interface{} {
 			"duration": 3600.0,
 		},
 	}
+}
+
+// editionItemWithCover is editionItem with a cover, so creating its edition
+// downloads the cover from Audiobookshelf and uploads it to Hardcover.
+func editionItemWithCover(id, title, author string) map[string]interface{} {
+	item := editionItem(id, title, author)
+	item["media"].(map[string]interface{})["coverPath"] = "/covers/" + id + ".jpg"
+	return item
 }
 
 type editionFixture struct {
