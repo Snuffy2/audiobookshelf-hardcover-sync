@@ -362,6 +362,42 @@ func TestCreateEditionTargetsTheRunRecordAndReturnsTheEdition(t *testing.T) {
 	require.Equal(t, "2021-02-03", dto["release_date"])
 }
 
+func TestCreateEditionSendsTheRequestedEditionFormat(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantFormat string
+	}{
+		{"provided format", strings.TrimSuffix(validEditionBody, "}") + `,"edition_format":"Audible Audio"}`, "Audible Audio"},
+		{"format at the length limit", strings.TrimSuffix(validEditionBody, "}") + `,"edition_format":"` + strings.Repeat("f", 100) + `"}`, strings.Repeat("f", 100)},
+		{"omitted format", validEditionBody, "Audiobook"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+
+			recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", tt.body)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+			mutations := f.hardcover.recordedMutations()
+			require.Len(t, mutations, 1)
+			dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+			require.Equal(t, tt.wantFormat, dto["edition_format"])
+			require.EqualValues(t, 2, dto["reading_format_id"], "the reading format stays Audiobook")
+		})
+	}
+}
+
+func TestCreateEditionRejectsAnOverlongEditionFormat(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	body := strings.TrimSuffix(validEditionBody, "}") + `,"edition_format":"` + strings.Repeat("f", 101) + `"}`
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
+	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
+	require.Contains(t, decodeEnvelope(t, recorder).Error, "edition format")
+	require.Empty(t, f.hardcover.recordedMutations())
+}
+
 func TestCreateEditionRejectsClientControlledTargetsAndBadBodies(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
 	withField := func(field string) string {

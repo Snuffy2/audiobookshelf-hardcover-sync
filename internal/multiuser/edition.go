@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
@@ -19,6 +21,8 @@ import (
 const (
 	// maxEditionPeople bounds the author and narrator ID lists a caller may submit.
 	maxEditionPeople = 50
+	// maxEditionFormatLength bounds the free-text edition format label.
+	maxEditionFormatLength = 100
 	// editionCreateTimeout bounds one edition creation, including the cover upload.
 	editionCreateTimeout = 2 * time.Minute
 	// editionImageClientTimeout bounds a single cover download or upload request.
@@ -279,6 +283,9 @@ func validateEditionInput(input *edition.EditionInput) error {
 		if id <= 0 {
 			return errors.New("author and narrator IDs must be positive")
 		}
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(input.EditionFormat)) > maxEditionFormatLength {
+		return fmt.Errorf("edition format must be at most %d characters", maxEditionFormatLength)
 	}
 	if input.PublisherID < 0 || input.LanguageID < 0 || input.CountryID < 0 || input.AudioLength < 0 {
 		return errors.New("publisher, language, country, and audio length must not be negative")

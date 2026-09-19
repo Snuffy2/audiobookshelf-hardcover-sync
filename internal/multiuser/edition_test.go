@@ -271,6 +271,7 @@ func TestCreateEditionFromRunBook_RejectsInvalidEdits(t *testing.T) {
 		{"non-positive author ID", func(e *EditionEdits) { e.AuthorIDs = []int{0} }},
 		{"non-positive narrator ID", func(e *EditionEdits) { e.NarratorIDs = []int{-1} }},
 		{"negative audio length", func(e *EditionEdits) { e.AudioSeconds = -1 }},
+		{"edition format over the length limit", func(e *EditionEdits) { e.EditionFormat = strings.Repeat("f", maxEditionFormatLength+1) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
