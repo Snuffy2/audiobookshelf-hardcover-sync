@@ -67,6 +67,8 @@ Existing single-profile setups are **automatically migrated** on first startup:
 | `DELETE` | `/api/profiles/{id}` | Delete profile |
 | `PUT` | `/api/profiles/{id}/config` | Update profile configuration |
 | `GET` | `/api/profiles/{id}/runs/{runId}/details` | Get book-level details for a retained sync run |
+| `GET` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition-draft` | Get a draft Hardcover edition for a `needs_review` book in a retained run |
+| `POST` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition` | Create a Hardcover edition for a `needs_review` book in a retained run |
 | `POST` | `/api/profiles/{id}/sync` | Start sync |
 | `DELETE` | `/api/profiles/{id}/sync` | Cancel sync |
 | `GET` | `/api/status` | All profile statuses |
@@ -107,6 +109,83 @@ history return `404`. Clients can filter `book_outcomes` for `needs_review`,
 `not_found`, and `failed` records. `last_attempted_at` includes dry-run,
 failed, and canceled attempts; `last_successful_at` is updated only by a
 successful non-dry-run completion.
+
+### Create an edition for a `needs_review` book (API)
+
+When a sync run marks a book `needs_review` and its record has a Hardcover
+candidate (`hardcover_book_id`), an authenticated caller can build a draft of
+a new Hardcover edition from the Audiobookshelf item and then create it. This
+is an API-only workflow; the web interface does not offer it yet. Both routes
+are scoped to a retained run and to a book in that run, and require write
+permission on the profile. `{bookId}` is the Audiobookshelf library item ID
+from `book_outcomes[].book_id` in the run-details response.
+
+```bash
+# 1. Fetch the draft (authenticated; use your own host, IDs, and token)
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/profiles/$PROFILE_ID/runs/$RUN_ID/books/$BOOK_ID/edition-draft"
+
+# 2. Post the edition fields, edited as needed. Send only the fields listed below;
+#    the draft's other keys (for example hardcover_book_id) are rejected with 400.
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title": "Example Title", "asin": "B000000000", "release_date": "2024-01-31",
+       "audio_seconds": 36000,
+       "language_id": 1, "country_id": 1, "author_ids": [123], "narrator_ids": [456]}' \
+  "http://localhost:8080/api/profiles/$PROFILE_ID/runs/$RUN_ID/books/$BOOK_ID/edition"
+```
+
+Both responses use the usual `{"success": ..., "data": ..., "error": ...}`
+envelope.
+
+- **Draft (`GET`)**: `data` always contains every one of these keys: the
+  editable edition fields (`title`, `subtitle`, `asin`, `isbn_10`, `isbn_13`,
+  `release_date`, `edition_information`, `edition_format`, `audio_seconds`,
+  `language_id`, `country_id`, `author_ids`, `narrator_ids`, `publisher_id`),
+  the target `hardcover_book_id`, display names (`author_names`,
+  `narrator_names`, `publisher_name`), the Audiobookshelf `cover_url` (empty
+  when the item has no cover), `dry_run`, and `warnings`. The ID lists and
+  `warnings` are arrays and are never `null`. The Hardcover book is taken from
+  the run record. A `publisher_id` of `0` means no publisher. Warnings flag
+  things to review before creating the edition: no author that could be
+  resolved on Hardcover (creation would then fail), no release date, a
+  publisher not found on Hardcover, and no narrator.
+- **Create (`POST`)**: the body must be exactly one JSON object of at most
+  64 KiB with only these fields: `title` (required), `subtitle`, `asin`,
+  `isbn_10`, `isbn_13`, `release_date` (`YYYY-MM-DD`), `edition_information`,
+  `edition_format`, `audio_seconds`, `language_id`, `country_id`, `author_ids`
+  (at least one required), `narrator_ids`, and `publisher_id`. Unknown fields
+  are rejected with `400`; in particular, `book_id` and `image_url` are not
+  accepted, because the server takes the Hardcover book from the run record and
+  the cover from Audiobookshelf. A missing title or author, a malformed
+  `release_date`, more than 50 author or narrator IDs, an author or narrator ID
+  that is not positive, or a negative publisher, language, country, or audio
+  length is rejected with `422`. On success, `data` is
+  `{"edition_id": <id>, "dry_run": <bool>}`. If an edition with the same ASIN
+  already exists on Hardcover, its ID is returned instead of creating a
+  duplicate.
+- **`edition_format`**: the API accepts this field, but the edition is
+  currently created on Hardcover as an audiobook regardless of the value sent.
+- **Dry run**: if the profile is in dry-run mode, the request is still
+  validated, but nothing is created on Hardcover and `edition_id` is `0`.
+- **Timeout**: creation continues even if the caller disconnects, and is
+  limited to 2 minutes, including the cover upload.
+- **Audiobookshelf token**: the profile's Audiobookshelf token is used only on
+  the server, to fetch the item and its cover, and is never returned.
+
+Errors (`GET` returns every listed status except `422`; `POST` can return all
+of them):
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Empty path IDs, malformed or oversize body, an unknown field, or a body that is not exactly one JSON object |
+| `401` | Authentication is enabled and the request is not authenticated |
+| `403` | The caller is a viewer without write permission |
+| `404` | Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found |
+| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress |
+| `422` | (`POST`) The submitted edition fails validation; the response carries the message |
+| `500` | Unexpected server failure |
+| `502` | Audiobookshelf or Hardcover failed; the message is generic and names only the service |
+| `503` | The service is shutting down |
 
 ### Environment Variables (Multi-Profile)
 

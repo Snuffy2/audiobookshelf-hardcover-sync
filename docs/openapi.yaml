@@ -44,6 +44,8 @@ tags:
     description: Control sync operations
   - name: Status
     description: Check sync status
+  - name: Editions
+    description: Create Hardcover editions for needs-review books
 
 components:
   securitySchemes:
@@ -321,6 +323,107 @@ components:
           items:
             $ref: '#/components/schemas/BookOutcomeRecord'
 
+    EditionDraft:
+      type: object
+      description: Draft of a new Hardcover edition built from an Audiobookshelf item. The editable fields can be edited and sent back as an EditionCreateRequest. The remaining fields (hardcover_book_id, author_names, narrator_names, publisher_name, cover_url, dry_run, warnings) are informational and must be omitted from the create request, which rejects unknown fields with 400.
+      required: [hardcover_book_id, title, subtitle, asin, isbn_10, isbn_13, release_date, edition_information, edition_format, audio_seconds, language_id, country_id, author_ids, narrator_ids, publisher_id, author_names, narrator_names, publisher_name, cover_url, dry_run, warnings]
+      properties:
+        hardcover_book_id:
+          type: integer
+          description: Hardcover book the edition will be attached to. Taken from the run record, never from the client.
+        title: {type: string}
+        subtitle: {type: string}
+        asin: {type: string}
+        isbn_10: {type: string}
+        isbn_13: {type: string}
+        release_date:
+          type: string
+          description: Release date as YYYY-MM-DD; may be empty.
+          example: "2024-01-31"
+        edition_information: {type: string}
+        edition_format: {type: string}
+        audio_seconds: {type: integer}
+        language_id: {type: integer}
+        country_id: {type: integer}
+        author_ids:
+          type: array
+          description: Never null; empty when no author was resolved on Hardcover.
+          items: {type: integer}
+        narrator_ids:
+          type: array
+          description: Never null.
+          items: {type: integer}
+        publisher_id:
+          type: integer
+          description: Hardcover publisher ID; 0 means no publisher.
+        author_names:
+          type: string
+          description: Display string for the author IDs.
+        narrator_names:
+          type: string
+          description: Display string for the narrator IDs.
+        publisher_name:
+          type: string
+          description: Display string for the publisher.
+        cover_url:
+          type: string
+          description: Audiobookshelf cover URL; empty when the item has no cover.
+        dry_run:
+          type: boolean
+          description: True when the profile is in dry-run mode, so creating the edition will not change Hardcover.
+        warnings:
+          type: array
+          description: Things to review before creating the edition, such as no author resolved on Hardcover (creation would then fail), no release date, a publisher not found on Hardcover, or no narrator. Never null; empty when there is nothing to flag.
+          items: {type: string}
+
+    EditionCreateRequest:
+      type: object
+      description: Edition fields to create on Hardcover. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400; in particular book_id and image_url are not accepted, because the server takes the Hardcover book from the run record and the cover from Audiobookshelf. title and author_ids are required, but a missing value is reported by validation as 422, not 400. Validation also returns 422 for a malformed release_date, more than 50 author or narrator IDs, an author or narrator ID that is not positive, or a negative publisher_id, language_id, country_id, or audio_seconds.
+      additionalProperties: false
+      required: [title, author_ids]
+      properties:
+        title: {type: string}
+        subtitle: {type: string}
+        asin: {type: string}
+        isbn_10: {type: string}
+        isbn_13: {type: string}
+        release_date:
+          type: string
+          description: Release date as YYYY-MM-DD.
+          example: "2024-01-31"
+        edition_information: {type: string}
+        edition_format:
+          type: string
+          description: Accepted, but the edition is currently created on Hardcover as an audiobook regardless of the value.
+        audio_seconds: {type: integer}
+        language_id: {type: integer}
+        country_id: {type: integer}
+        author_ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: Hardcover author IDs; at least one is required, each must be positive.
+          items: {type: integer}
+        narrator_ids:
+          type: array
+          maxItems: 50
+          description: Hardcover narrator IDs; each must be positive.
+          items: {type: integer}
+        publisher_id:
+          type: integer
+          description: Hardcover publisher ID; 0 or omitted means no publisher.
+
+    EditionCreateResult:
+      type: object
+      required: [edition_id, dry_run]
+      properties:
+        edition_id:
+          type: integer
+          description: ID of the created Hardcover edition, or of the existing edition when one with the same ASIN already exists. 0 in dry-run mode, when nothing is created (the request is still validated).
+        dry_run:
+          type: boolean
+          description: True when the profile is in dry-run mode and nothing was created on Hardcover.
+
 security:
   - BearerAuth: []
 
@@ -578,6 +681,192 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
   
+  /profiles/{profileId}/runs/{runId}/books/{bookId}/edition-draft:
+    get:
+      tags: [Editions]
+      summary: Get a draft Hardcover edition for a needs-review book
+      description: Builds a draft of a new Hardcover edition from the Audiobookshelf item of a book that a retained run marked needs_review and that has a Hardcover candidate (hardcover_book_id). Requires write permission on the profile. The profile's Audiobookshelf token is used only on the server to fetch the item and is never returned.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "profile-123"
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "profile-123-1700000000000000000-1"
+        - name: bookId
+          in: path
+          required: true
+          description: Audiobookshelf library item ID, from book_outcomes[].book_id of the run details.
+          schema:
+            type: string
+          example: "li_abc123"
+      responses:
+        '200':
+          description: Draft edition
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/EditionDraft'
+        '400':
+          description: Empty path IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication is enabled and the request is not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is a viewer without write permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The book is not needs_review or has no numeric Hardcover book ID, or the profile is being deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Audiobookshelf or Hardcover request failed; the message is generic and names only the service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: The service is shutting down
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /profiles/{profileId}/runs/{runId}/books/{bookId}/edition:
+    post:
+      tags: [Editions]
+      summary: Create a Hardcover edition for a needs-review book
+      description: Creates a Hardcover edition for a book that a retained run marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. If an edition with the same ASIN already exists on Hardcover, its ID is returned instead of creating a duplicate. Requires write permission on the profile.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "profile-123"
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "profile-123-1700000000000000000-1"
+        - name: bookId
+          in: path
+          required: true
+          description: Audiobookshelf library item ID, from book_outcomes[].book_id of the run details.
+          schema:
+            type: string
+          example: "li_abc123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditionCreateRequest'
+      responses:
+        '200':
+          description: Edition created, already existing, or (in dry-run mode) not created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/EditionCreateResult'
+        '400':
+          description: Empty path IDs, malformed or oversize body, an unknown field (including book_id and image_url), or a body that is not exactly one JSON object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication is enabled and the request is not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is a viewer without write permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The book is not needs_review or has no numeric Hardcover book ID, the profile is being deleted, or an edition create for the same book is already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The submitted edition fails validation; the error carries the message (for example, no author)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Audiobookshelf or Hardcover request failed; the message is generic and names only the service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: The service is shutting down
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /status:
     get:
       tags: [Status]
