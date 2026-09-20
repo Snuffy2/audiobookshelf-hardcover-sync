@@ -171,7 +171,7 @@ envelope.
   an author or narrator ID that is not positive, or a negative publisher, language, country, or audio
   length, or an `edition_format` longer than 100 characters, is rejected with
   `422`. On success, `data` is
-  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`. 
+  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`.
   Before creating, Hardcover is searched for an existing audiobook edition with
   the same ASIN, ISBN-13 or ISBN-10 (an ISBN is also searched under its
   converted ISBN-10 or ISBN-13 form); an edition in another format, or with no
@@ -213,7 +213,7 @@ of them):
 | `401` | Authentication is enabled and the request is not authenticated |
 | `403` | The caller is a viewer without write permission |
 | `404` | Profile (including another user's profile), run, book record, or Audiobookshelf item not found |
-| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, its Audiobookshelf item has no ASIN or valid ISBN, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress or the submitted ASIN or ISBN-13 belongs to an edition of another Hardcover book or one whose book could not be confirmed |
+| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, its Audiobookshelf item has no ASIN or valid ISBN, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress or the submitted ASIN or ISBN belongs to an edition of another Hardcover book or one whose book could not be confirmed |
 | `422` | (`POST`) The submitted edition fails validation; the response carries the message |
 | `500` | Unexpected server failure |
 | `502` | Audiobookshelf or Hardcover failed; the message is generic and names only the service |
