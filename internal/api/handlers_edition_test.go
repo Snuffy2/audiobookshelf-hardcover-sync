@@ -332,7 +332,7 @@ func TestGetEditionDraftReturnsTheDraftContract(t *testing.T) {
 	require.Equal(t, []string{
 		"asin", "audio_seconds", "author_ids", "author_names", "country_id", "cover_url", "dry_run",
 		"edition_format", "edition_information", "hardcover_book_id", "isbn_10", "isbn_13", "language_id",
-		"narrator_ids", "narrator_names", "publisher_id", "publisher_name", "release_date", "subtitle",
+		"narrator_ids", "narrator_names", "publisher_id", "publisher_name", "reading_format", "release_date", "subtitle",
 		"title", "warnings",
 	}, keys)
 	require.EqualValues(t, 4242, envelope.Data["hardcover_book_id"])
@@ -466,6 +466,50 @@ func TestEditionEndpointsRejectABookWithoutAnASINOrISBN(t *testing.T) {
 	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusConflict, create.Code, create.Body.String())
 	require.Equal(t, want, decodeEnvelope(t, create).Error)
+	require.Empty(t, f.hardcover.recordedMutations())
+}
+
+func ebookAPIItem() map[string]interface{} {
+	item := editionAPIItem("item-1", "Ebook Title", "Ebook Author", "/cover.jpg")
+	media := item["media"].(map[string]interface{})
+	delete(media, "duration")
+	media["ebookFormat"] = "epub"
+	return item
+}
+
+func TestEbookEditionEndpointsCreateAnEbookEdition(t *testing.T) {
+	f := singleItemFixture(t, false, ebookAPIItem())
+	f.hardcover.authors["Ebook Author"] = 55
+
+	draft := f.do(http.MethodGet, editionBasePath+"item-1/edition-draft", "")
+	require.Equal(t, http.StatusOK, draft.Code, draft.Body.String())
+	data := decodeEnvelope(t, draft).Data
+	require.Equal(t, "ebook", data["reading_format"])
+	require.Equal(t, "Ebook", data["edition_format"])
+	require.EqualValues(t, 0, data["audio_seconds"])
+	require.Equal(t, []interface{}{}, data["narrator_ids"])
+
+	// The request still carries audiobook-only fields; the server sends none of them.
+	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
+	require.Equal(t, http.StatusOK, create.Code, create.Body.String())
+	mutations := f.hardcover.recordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.EqualValues(t, 4, dto["reading_format_id"])
+	require.Equal(t, "Ebook", dto["edition_format"])
+	require.NotContains(t, dto, "audio_seconds")
+	for _, c := range dto["contributions"].([]interface{}) {
+		require.NotEqual(t, "Narrator", c.(map[string]interface{})["contribution"])
+	}
+}
+
+func TestEditionRequestCannotChooseTheReadingFormat(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
+		strings.TrimSuffix(validEditionBody, "}")+`,"reading_format":"ebook"}`)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
 	require.Empty(t, f.hardcover.recordedMutations())
 }
 

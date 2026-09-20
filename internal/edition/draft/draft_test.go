@@ -324,7 +324,7 @@ func TestDraft_JSONContract(t *testing.T) {
 	want := []string{
 		"asin", "audio_seconds", "author_ids", "author_names", "country_id", "cover_url", "dry_run",
 		"edition_format", "edition_information", "hardcover_book_id", "isbn_10", "isbn_13", "language_id",
-		"narrator_ids", "narrator_names", "publisher_id", "publisher_name", "release_date", "subtitle",
+		"narrator_ids", "narrator_names", "publisher_id", "publisher_name", "reading_format", "release_date", "subtitle",
 		"title", "warnings",
 	}
 	if !reflect.DeepEqual(keys, want) {
@@ -334,5 +334,50 @@ func TestDraft_JSONContract(t *testing.T) {
 		if strings.TrimSpace(string(got[k])) == "null" {
 			t.Errorf("%s serialized as null, want an array", k)
 		}
+	}
+}
+
+// TestNew_EbookDraft checks that an ebook-only item drafts an ebook edition: it
+// is labeled as one and carries no narrators, audio length or narrator warning.
+func TestNew_EbookDraft(t *testing.T) {
+	hc := &fakeHardcover{
+		authors:   map[string]string{"Ada Draftwright": "101"},
+		narrators: map[string]string{"Nora Voicer": "202"},
+	}
+	ebook := absItem(func(b *models.AudiobookshelfBook) {
+		b.Media.Duration = 0
+		b.Media.EbookFormat = "epub"
+	})
+
+	d, err := draft.New(context.Background(), ebook, 42, "https://abs.example.com/", hc, "us")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if d.ReadingFormat != "ebook" || d.EditionFormat != "Ebook" {
+		t.Errorf("reading format %q, edition format %q, want ebook and Ebook", d.ReadingFormat, d.EditionFormat)
+	}
+	if len(d.NarratorIDs) != 0 || d.NarratorNames != "" || d.AudioSeconds != 0 {
+		t.Errorf("narrators %v (%q), audio seconds %d, want none", d.NarratorIDs, d.NarratorNames, d.AudioSeconds)
+	}
+	if d.EditionInformation != "" {
+		t.Errorf("edition information = %q, want none for an ebook", d.EditionInformation)
+	}
+	for _, w := range d.Warnings {
+		if strings.Contains(w, "narrator") {
+			t.Errorf("an ebook draft warned about a narrator: %q", w)
+		}
+	}
+}
+
+// TestNew_AudiobookDraftReportsItsReadingFormat guards the audiobook default.
+func TestNew_AudiobookDraftReportsItsReadingFormat(t *testing.T) {
+	hc := &fakeHardcover{authors: map[string]string{"Ada Draftwright": "101"}}
+	d, err := draft.New(context.Background(), absItem(nil), 42, "https://abs.example.com/", hc, "us")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if d.ReadingFormat != "audiobook" {
+		t.Errorf("ReadingFormat = %q, want audiobook", d.ReadingFormat)
 	}
 }

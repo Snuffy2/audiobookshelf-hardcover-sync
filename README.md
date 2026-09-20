@@ -141,7 +141,8 @@ envelope.
   editable edition fields (`title`, `subtitle`, `asin`, `isbn_10`, `isbn_13`,
   `release_date`, `edition_information`, `edition_format`, `audio_seconds`,
   `language_id`, `country_id`, `author_ids`, `narrator_ids`, `publisher_id`),
-  the target `hardcover_book_id`, display names (`author_names`,
+  the target `hardcover_book_id`, the `reading_format` (`audiobook` or
+  `ebook`, decided by the Audiobookshelf item), display names (`author_names`,
   `narrator_names`, `publisher_name`), the Audiobookshelf `cover_url` (empty
   when the item has no cover), `dry_run`, and `warnings`. The ID lists and
   `warnings` are arrays and are never `null`. The Hardcover book is taken from
@@ -189,9 +190,18 @@ envelope.
   edition was created, but its cover image could not be uploaded.` Otherwise it
   is `[]`, and a dry run never has warnings.
 - **`edition_format`**: free text that is sent to Hardcover as the edition
-  format, after trimming whitespace; an empty value becomes `Audiobook`. It may
-  be at most 100 characters, counted after trimming; a longer value is rejected
-  with `422`.
+  format, after trimming whitespace; an empty value becomes `Audiobook` (`Ebook`
+  for an ebook). It may be at most 100 characters, counted after trimming; a
+  longer value is rejected with `422`.
+- **Ebooks**: an Audiobookshelf item that has an ebook file and no audio (the
+  same rule the sync uses) gets an ebook edition. The server sets the
+  `reading_format` from the item, so a request cannot choose it (an unknown
+  `reading_format` field is rejected with `400`). An ebook edition is created
+  with Hardcover's ebook reading format, an `Ebook` default `edition_format`, no
+  `Unabridged` default, and no narrators or `audio_seconds` even if the request
+  sends them. Existing-edition detection by ASIN and ISBN only considers ebook
+  editions for an ebook item and audiobook editions for an audiobook. An
+  audiobook that also has an ebook file is still an audiobook.
 - **Dry run**: if the profile is in dry-run mode, the request is still
   validated, but nothing is created on Hardcover and `edition_id` is `0`.
 - **Timeout**: creation continues even if the caller disconnects, and is

@@ -69,8 +69,14 @@ func (b *BookMismatch) ToEditionExport(ctx context.Context, hc hardcover.Hardcov
 	})
 
 	// Set edition format based on purchase source (ASIN indicates Audible/Amazon) and publisher
+	ebook := strings.EqualFold(b.ReadingFormat, "ebook")
 	editionFormat := b.EditionFormat
-	if editionFormat == "" || editionFormat == "Audiobook" {
+	if ebook {
+		// The audiobook platform hints below do not apply to an ebook.
+		if editionFormat == "" || editionFormat == "Audiobook" {
+			editionFormat = "Ebook"
+		}
+	} else if editionFormat == "" || editionFormat == "Audiobook" {
 		// Primary check: ASIN indicates Audible/Amazon purchase
 		if b.ASIN != "" {
 			editionFormat = "Audible Audio"
@@ -119,6 +125,10 @@ func (b *BookMismatch) ToEditionExport(ctx context.Context, hc hardcover.Hardcov
 	// Set edition information to describe the edition (e.g., "Unabridged")
 	// Default to empty string if we don't know
 	editionInfo := ""
+	audioSeconds := b.DurationSeconds
+	if ebook {
+		audioSeconds = 0
+	}
 
 	// If EditionInfo is already set in the mismatch, check if it's valid
 	if b.EditionInfo != "" &&
@@ -128,7 +138,7 @@ func (b *BookMismatch) ToEditionExport(ctx context.Context, hc hardcover.Hardcov
 		!strings.Contains(b.EditionInfo, "Audiobookshelf") {
 		// Use existing value if it appears valid
 		editionInfo = strings.TrimSpace(b.EditionInfo)
-	} else {
+	} else if !ebook {
 		// Otherwise, use "Unabridged" for audiobooks as a reasonable default
 		editionInfo = "Unabridged"
 	}
@@ -207,8 +217,9 @@ func (b *BookMismatch) ToEditionExport(ctx context.Context, hc hardcover.Hardcov
 		NarratorIDs:   narratorIDs,
 		PublisherID:   publisherID,
 		ReleaseDate:   b.ReleaseDate,
-		AudioSeconds:  b.DurationSeconds,
+		AudioSeconds:  audioSeconds,
 		EditionFormat: editionFormat,
+		ReadingFormat: b.ReadingFormat,
 		EditionInfo:   editionInfo,
 		LanguageID:    languageID,
 		CountryID:     countryID,
@@ -386,6 +397,8 @@ type BookMismatch struct {
 
 	// Hardcover-specific fields
 	EditionFormat string `json:"edition_format,omitempty"`
+	// ReadingFormat is "ebook" for an ebook item and empty for an audiobook.
+	ReadingFormat string `json:"reading_format,omitempty"`
 	EditionInfo   string `json:"edition_information,omitempty"`
 	LanguageID    int    `json:"language_id,omitempty"`
 	CountryID     int    `json:"country_id,omitempty"`
@@ -448,6 +461,8 @@ type EditionExport struct {
 	ReleaseDate   string `json:"release_date"`
 	AudioSeconds  int    `json:"audio_seconds"`
 	EditionFormat string `json:"edition_format"`
+	// ReadingFormat is "ebook" for an ebook item and omitted for an audiobook.
+	ReadingFormat string `json:"reading_format,omitempty"`
 	EditionInfo   string `json:"edition_information"`
 	LanguageID    int    `json:"language_id"`
 	CountryID     int    `json:"country_id"`

@@ -200,6 +200,9 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		ReleaseDate:   edits.ReleaseDate,
 		EditionInfo:   edits.EditionInformation,
 		EditionFormat: edits.EditionFormat,
+		// The format comes from the Audiobookshelf item, never from the request,
+		// so an ebook cannot be created as an audiobook edition or the reverse.
+		ReadingFormat: draft.ReadingFormat(*item),
 	}
 	if err := validateEditionInput(input); err != nil {
 		return nil, &EditionValidationError{Err: err}

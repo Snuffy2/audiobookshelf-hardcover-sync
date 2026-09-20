@@ -35,6 +35,7 @@ type Draft struct {
 	ReleaseDate        string   `json:"release_date"`
 	EditionInformation string   `json:"edition_information"`
 	EditionFormat      string   `json:"edition_format"`
+	ReadingFormat      string   `json:"reading_format"`
 	AudioSeconds       int      `json:"audio_seconds"`
 	LanguageID         int      `json:"language_id"`
 	CountryID          int      `json:"country_id"`
@@ -47,6 +48,16 @@ type Draft struct {
 	CoverURL           string   `json:"cover_url"`
 	DryRun             bool     `json:"dry_run"`
 	Warnings           []string `json:"warnings"`
+}
+
+// ReadingFormat returns the reading format ("ebook" or "audiobook") of the
+// Audiobookshelf item, the same way the sync decides which Hardcover editions
+// can match it.
+func ReadingFormat(absBook models.AudiobookshelfBook) string {
+	if absBook.IsEbook() {
+		return models.ReadingFormatEbook
+	}
+	return models.ReadingFormatAudiobook
 }
 
 // CoverURL returns the server-controlled Audiobookshelf cover URL for an item,
@@ -85,13 +96,20 @@ func New(ctx context.Context, absBook models.AudiobookshelfBook, hardcoverBookID
 
 	coverURL := CoverURL(absBaseURL, absBook)
 	meta := absBook.Media.Metadata
+	readingFormat := ReadingFormat(absBook)
+	ebook := readingFormat == models.ReadingFormatEbook
+	narrator := meta.NarratorName
+	if ebook {
+		// Narrators and audio length only apply to audiobooks.
+		narrator = ""
+	}
 
 	record := mismatch.NewCollector().AddWithMetadata(
 		mismatch.MediaMetadata{
 			Title:         meta.Title,
 			Subtitle:      meta.Subtitle,
 			AuthorName:    meta.AuthorName,
-			NarratorName:  meta.NarratorName,
+			NarratorName:  narrator,
 			Publisher:     meta.Publisher,
 			PublishedYear: meta.PublishedYear,
 			ISBN:          meta.ISBN,
@@ -99,6 +117,7 @@ func New(ctx context.Context, absBook models.AudiobookshelfBook, hardcoverBookID
 			CoverURL:      coverURL,
 			Duration:      absBook.Media.Duration,
 			LibraryID:     absBook.LibraryID,
+			ReadingFormat: readingFormat,
 		},
 		absBook.ID,
 		"",
@@ -128,6 +147,7 @@ func New(ctx context.Context, absBook models.AudiobookshelfBook, hardcoverBookID
 		ReleaseDate:        export.ReleaseDate,
 		EditionInformation: export.EditionInfo,
 		EditionFormat:      export.EditionFormat,
+		ReadingFormat:      readingFormat,
 		AudioSeconds:       export.AudioSeconds,
 		LanguageID:         export.LanguageID,
 		CountryID:          export.CountryID,
@@ -179,7 +199,7 @@ func (d *Draft) buildWarnings() []string {
 	if d.PublisherID == 0 && d.PublisherName != "" {
 		warnings = append(warnings, fmt.Sprintf("Publisher %q was not found on Hardcover, so the edition will have no publisher.", d.PublisherName))
 	}
-	if len(d.NarratorIDs) == 0 {
+	if len(d.NarratorIDs) == 0 && d.ReadingFormat != models.ReadingFormatEbook {
 		if d.NarratorNames == "" {
 			warnings = append(warnings, "The Audiobookshelf item lists no narrator, so the edition will have none.")
 		} else {

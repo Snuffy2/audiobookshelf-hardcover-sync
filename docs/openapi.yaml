@@ -325,8 +325,8 @@ components:
 
     EditionDraft:
       type: object
-      description: Draft of a new Hardcover edition built from an Audiobookshelf item. The editable fields can be edited and sent back as an EditionCreateRequest. The remaining fields (hardcover_book_id, author_names, narrator_names, publisher_name, cover_url, dry_run, warnings) are informational and must be omitted from the create request, which rejects unknown fields with 400.
-      required: [hardcover_book_id, title, subtitle, asin, isbn_10, isbn_13, release_date, edition_information, edition_format, audio_seconds, language_id, country_id, author_ids, narrator_ids, publisher_id, author_names, narrator_names, publisher_name, cover_url, dry_run, warnings]
+      description: Draft of a new Hardcover edition built from an Audiobookshelf item. The editable fields can be edited and sent back as an EditionCreateRequest. The remaining fields (hardcover_book_id, reading_format, author_names, narrator_names, publisher_name, cover_url, dry_run, warnings) are informational and must be omitted from the create request, which rejects unknown fields with 400.
+      required: [hardcover_book_id, title, subtitle, asin, isbn_10, isbn_13, release_date, edition_information, edition_format, reading_format, audio_seconds, language_id, country_id, author_ids, narrator_ids, publisher_id, author_names, narrator_names, publisher_name, cover_url, dry_run, warnings]
       properties:
         hardcover_book_id:
           type: integer
@@ -342,6 +342,10 @@ components:
           example: "2024-01-31"
         edition_information: {type: string}
         edition_format: {type: string}
+        reading_format:
+          type: string
+          enum: [audiobook, ebook]
+          description: Decided by the Audiobookshelf item (an ebook file and no audio is an ebook) and applied by the server when creating; it cannot be sent in the create request. An ebook draft has no narrators or audio_seconds.
         audio_seconds: {type: integer}
         language_id: {type: integer}
         country_id: {type: integer}
@@ -395,8 +399,10 @@ components:
         edition_format:
           type: string
           maxLength: 100
-          description: Free text sent to Hardcover as the edition format after trimming whitespace; empty defaults to "Audiobook". At most 100 characters after trimming (counted in characters); a longer value returns 422.
-        audio_seconds: {type: integer}
+          description: Free text sent to Hardcover as the edition format after trimming whitespace; empty defaults to "Audiobook" ("Ebook" for an ebook item). At most 100 characters after trimming (counted in characters); a longer value returns 422.
+        audio_seconds:
+          type: integer
+          description: Audio length in seconds. Not sent to Hardcover for an ebook item.
         language_id: {type: integer}
         country_id: {type: integer}
         author_ids:
@@ -408,7 +414,7 @@ components:
         narrator_ids:
           type: array
           maxItems: 50
-          description: Hardcover narrator IDs; each must be positive.
+          description: Hardcover narrator IDs; each must be positive. Not sent to Hardcover for an ebook item.
           items: {type: integer}
         publisher_id:
           type: integer
@@ -771,7 +777,7 @@ paths:
     post:
       tags: [Editions]
       summary: Create a Hardcover edition for a needs-review book
-      description: Creates a Hardcover edition for a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. On shutdown, running syncs are cancelled first and in-flight creates are allowed to finish, bounded by the shutdown timeout; requests that start after shutdown begins get 503. Deleting a profile likewise waits for its in-flight edition creates (up to the create timeout), so the DELETE response can be delayed and can outlast the server write timeout even though the deletion succeeds. Before creating, Hardcover is searched for an existing audiobook edition with the same ASIN, ISBN-13 or ISBN-10 (an ISBN is also searched under its converted ISBN-10 or ISBN-13 form); an edition in another format, or with no reading format, is not a match. One of the same Hardcover book is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. A race with another creator, or a failed lookup, can still let a new edition be created. If the found edition belongs to another book, or its book cannot be confirmed (unknown or merged book ID), the request is rejected with 409; retry, or add the edition manually on Hardcover. A dry run performs no lookup, so it never reports an existing edition or this conflict. Requires write permission on the profile.
+      description: Creates a Hardcover edition for a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. On shutdown, running syncs are cancelled first and in-flight creates are allowed to finish, bounded by the shutdown timeout; requests that start after shutdown begins get 503. Deleting a profile likewise waits for its in-flight edition creates (up to the create timeout), so the DELETE response can be delayed and can outlast the server write timeout even though the deletion succeeds. Before creating, Hardcover is searched for an existing audiobook edition with the same ASIN, ISBN-13 or ISBN-10 (an ISBN is also searched under its converted ISBN-10 or ISBN-13 form); an edition in another format, or with no reading format, is not a match (an ebook item is matched against ebook editions, an audiobook against audiobook editions). One of the same Hardcover book is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. A race with another creator, or a failed lookup, can still let a new edition be created. If the found edition belongs to another book, or its book cannot be confirmed (unknown or merged book ID), the request is rejected with 409; retry, or add the edition manually on Hardcover. A dry run performs no lookup, so it never reports an existing edition or this conflict. Requires write permission on the profile.
       parameters:
         - name: profileId
           in: path
