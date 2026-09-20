@@ -42,11 +42,11 @@ var (
 	// ErrEditionItemNotFound indicates that Audiobookshelf no longer has the item.
 	ErrEditionItemNotFound = errors.New("audiobookshelf item not found")
 
-	// ErrEditionConflict indicates that the submitted ASIN or ISBN-13 already
+	// ErrEditionConflict indicates that the submitted ASIN or ISBN already
 	// belongs to an edition that is not confirmed to be of the run record's
 	// Hardcover book: another book's, or one whose book ID is unknown or differs
 	// for another reason, such as a merged or canonical book.
-	ErrEditionConflict = errors.New("asin or isbn-13 belongs to an edition of a different hardcover book")
+	ErrEditionConflict = errors.New("asin or isbn belongs to an edition of a different hardcover book")
 
 	// ErrEditionNoIdentifier indicates that the Audiobookshelf item has neither
 	// an ASIN nor a valid ISBN, so an edition created for it could never be
@@ -100,7 +100,7 @@ type EditionEdits struct {
 }
 
 // EditionCreated is the result of a create request. EditionID is 0 for a dry run.
-// When the ASIN or ISBN-13 already identifies an edition of the target book,
+// When the ASIN or ISBN already identifies an edition of the target book,
 // that edition is returned untouched and nothing is created.
 // Warnings lists user-readable problems that did not stop the edition from
 // being created, such as a cover image that could not be uploaded. It is never
