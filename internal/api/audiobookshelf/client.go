@@ -39,6 +39,9 @@ type Client struct {
 	logger  *logger.Logger
 }
 
+// RequestTimeout bounds each request the client makes to Audiobookshelf.
+const RequestTimeout = 30 * time.Second
+
 // NewClient creates a new Audiobookshelf client
 func NewClient(baseURL, token string) *Client {
 	log := logger.Get()
@@ -50,7 +53,7 @@ func NewClient(baseURL, token string) *Client {
 		baseURL: baseURL,
 		token:   token,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: RequestTimeout,
 		},
 		logger: log,
 	}

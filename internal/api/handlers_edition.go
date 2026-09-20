@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/multiuser"
 )
 
@@ -16,12 +17,14 @@ const maxEditionRequestBytes = 64 << 10
 
 // editionWriteDeadline is how long the response of an edition request may take
 // to be written, measured from when the handler starts. The server's default
-// write timeout is far shorter than an edition create, which may run for
-// multiuser.EditionCreateTimeout, so without this a slow request would finish
-// its work but the client would see a closed connection and retry into a
-// duplicate. The margin covers the requests around the create itself. Drafts
-// make many sequential paced Hardcover lookups and share the bound.
-const editionWriteDeadline = multiuser.EditionCreateTimeout + 15*time.Second
+// write timeout is far shorter than an edition create, so without this a slow
+// request would finish its work but the client would see a closed connection
+// and retry into a duplicate. A create first fetches the Audiobookshelf item
+// (at most audiobookshelf.RequestTimeout) and only then starts its own
+// multiuser.EditionCreateTimeout, so the bound is both plus a margin for the
+// work around them. Drafts make many sequential paced Hardcover lookups and
+// share the bound.
+const editionWriteDeadline = audiobookshelf.RequestTimeout + multiuser.EditionCreateTimeout + 15*time.Second
 
 // GetEditionDraft handles
 // GET /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft.

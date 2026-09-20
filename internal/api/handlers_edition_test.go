@@ -525,6 +525,11 @@ func TestCreateEditionRejectsInvalidEditsWithUserReadableError(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "author")
 	require.Empty(t, f.hardcover.recordedMutations())
+
+	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"   ","author_ids":[101]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
+	require.Contains(t, decodeEnvelope(t, recorder).Error, "title is required")
+	require.Empty(t, f.hardcover.recordedMutations())
 }
 
 func TestEditionDryRunProfilesIssueNoHardcoverMutation(t *testing.T) {

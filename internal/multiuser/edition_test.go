@@ -361,6 +361,7 @@ func TestCreateEditionFromRunBook_RejectsInvalidEdits(t *testing.T) {
 	}{
 		{"no author", func(e *EditionEdits) { e.AuthorIDs = nil }},
 		{"no title", func(e *EditionEdits) { e.Title = "" }},
+		{"blank title", func(e *EditionEdits) { e.Title = " \t\n " }},
 		{"malformed release date", func(e *EditionEdits) { e.ReleaseDate = "03/02/2021" }},
 		{"non-positive author ID", func(e *EditionEdits) { e.AuthorIDs = []int{0} }},
 		{"non-positive narrator ID", func(e *EditionEdits) { e.NarratorIDs = []int{-1} }},

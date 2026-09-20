@@ -303,9 +303,11 @@ func (s *MultiUserService) claimEdition(profileID, bookID string) (release func(
 	}, true
 }
 
-// validateEditionInput applies the creator's own rules plus bounds on the
-// caller-supplied ID lists.
+// validateEditionInput trims the title, then applies the creator's own rules
+// plus bounds on the caller-supplied ID lists.
 func validateEditionInput(input *edition.EditionInput) error {
+	// A blank title is as missing as an empty one, and the stored title is trimmed.
+	input.Title = strings.TrimSpace(input.Title)
 	if err := input.Validate(); err != nil {
 		return err
 	}
