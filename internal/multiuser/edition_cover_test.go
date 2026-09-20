@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition/editiontest"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
@@ -127,7 +128,7 @@ func TestCreateEditionFromRunBook_CoverTransfersKeepTheAudiobookshelfTokenScoped
 
 			require.NoError(t, err, "a cover failure must not fail the request")
 			require.Equal(t, &EditionCreated{EditionID: 777, DryRun: false, Warnings: tt.wantWarnings}, created)
-			require.Len(t, f.hardcover.recordedMutations(), 1)
+			require.Len(t, f.hardcover.RecordedMutations(), 1)
 
 			require.True(t, rt.reached(rt.absHost), "the cover must be downloaded from Audiobookshelf")
 			require.True(t, rt.reached(hardcoverUploadHost), "the upload must be attempted")
@@ -163,10 +164,10 @@ func TestCreateEditionFromRunBook_DryRunIsEnforcedAtTheHardcoverClient(t *testin
 			_, _ = f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 
 			if tt.wantWrites {
-				require.NotEmpty(t, f.hardcover.recordedWrites())
+				require.NotEmpty(t, f.hardcover.RecordedWrites())
 				return
 			}
-			require.Empty(t, f.hardcover.recordedWrites(), "no Hardcover mutation may be sent")
+			require.Empty(t, f.hardcover.RecordedWrites(), "no Hardcover mutation may be sent")
 			require.False(t, rt.reached(hardcoverUploadHost), "no upload may be started")
 			require.False(t, rt.reached(coverStorageHost), "no upload may be started")
 		})
@@ -181,19 +182,19 @@ func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *test
 	tests := []struct {
 		name        string
 		dryRun      bool
-		existing    *existingEdition
+		existing    *editiontest.ExistingEdition
 		wantCreated *EditionCreated
 		wantErr     error
 		wantWrites  bool
 	}{
 		{
 			name:        "same book returns the existing edition",
-			existing:    &existingEdition{editionID: 555, bookID: 4242},
+			existing:    &editiontest.ExistingEdition{EditionID: 555, BookID: 4242},
 			wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}},
 		},
 		{
 			name:     "another book's edition is rejected",
-			existing: &existingEdition{editionID: 555, bookID: 9999},
+			existing: &editiontest.ExistingEdition{EditionID: 555, BookID: 9999},
 			wantErr:  ErrEditionConflict,
 		},
 		{
@@ -204,13 +205,13 @@ func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *test
 		{
 			name:        "dry run does not consult existing editions",
 			dryRun:      true,
-			existing:    &existingEdition{editionID: 555, bookID: 4242},
+			existing:    &editiontest.ExistingEdition{EditionID: 555, BookID: 4242},
 			wantCreated: &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}},
 		},
 		{
 			name:        "dry run ignores a colliding ASIN on another book",
 			dryRun:      true,
-			existing:    &existingEdition{editionID: 555, bookID: 9999},
+			existing:    &editiontest.ExistingEdition{EditionID: 555, BookID: 9999},
 			wantCreated: &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}},
 		},
 	}
@@ -219,7 +220,7 @@ func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *test
 			f, rt := newCoverFixture(t, tt.dryRun)
 			useCoverTransport(f, rt, false)
 			if tt.existing != nil {
-				f.hardcover.asins[asin] = *tt.existing
+				f.hardcover.ASINs[asin] = *tt.existing
 			}
 			edits := validEdits()
 			edits.ASIN = asin
@@ -234,10 +235,10 @@ func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *test
 				require.Equal(t, tt.wantCreated, created)
 			}
 			if tt.wantWrites {
-				require.NotEmpty(t, f.hardcover.recordedWrites())
+				require.NotEmpty(t, f.hardcover.RecordedWrites())
 				return
 			}
-			require.Empty(t, f.hardcover.recordedWrites(), "no Hardcover mutation may be sent")
+			require.Empty(t, f.hardcover.RecordedWrites(), "no Hardcover mutation may be sent")
 			require.Empty(t, rt.recorded(), "no cover may be downloaded or uploaded")
 		})
 	}
@@ -254,20 +255,20 @@ func TestCreateEditionFromRunBook_ISBNMatchNeverTouchesAnotherBooksEdition(t *te
 	tests := []struct {
 		name        string
 		isbn        string // the identifier the fake Hardcover knows the edition by
-		existing    existingEdition
+		existing    editiontest.ExistingEdition
 		wantErr     error
 		wantCreated *EditionCreated
 	}{
-		{name: "another book's ISBN-13 edition is rejected", isbn: isbn13, existing: existingEdition{editionID: 555, bookID: 9999}, wantErr: ErrEditionConflict},
-		{name: "another book's ISBN-10 edition is rejected", isbn: isbn10, existing: existingEdition{editionID: 555, bookID: 9999}, wantErr: ErrEditionConflict},
-		{name: "the target book's ISBN-13 edition is returned untouched", isbn: isbn13, existing: existingEdition{editionID: 555, bookID: 4242}, wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}}},
-		{name: "the target book's ISBN-10 edition is returned untouched", isbn: isbn10, existing: existingEdition{editionID: 555, bookID: 4242}, wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}}},
+		{name: "another book's ISBN-13 edition is rejected", isbn: isbn13, existing: editiontest.ExistingEdition{EditionID: 555, BookID: 9999}, wantErr: ErrEditionConflict},
+		{name: "another book's ISBN-10 edition is rejected", isbn: isbn10, existing: editiontest.ExistingEdition{EditionID: 555, BookID: 9999}, wantErr: ErrEditionConflict},
+		{name: "the target book's ISBN-13 edition is returned untouched", isbn: isbn13, existing: editiontest.ExistingEdition{EditionID: 555, BookID: 4242}, wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}}},
+		{name: "the target book's ISBN-10 edition is returned untouched", isbn: isbn10, existing: editiontest.ExistingEdition{EditionID: 555, BookID: 4242}, wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f, rt := newCoverFixture(t, false)
 			useCoverTransport(f, rt, false)
-			f.hardcover.isbns[tt.isbn] = tt.existing
+			f.hardcover.ISBNs[tt.isbn] = tt.existing
 			edits := validEdits()
 			edits.ISBN13 = isbn13
 
@@ -279,7 +280,7 @@ func TestCreateEditionFromRunBook_ISBNMatchNeverTouchesAnotherBooksEdition(t *te
 				require.NoError(t, err)
 				require.Equal(t, tt.wantCreated, created)
 			}
-			require.Empty(t, f.hardcover.recordedWrites(), "no insert, image, or update mutation may be sent")
+			require.Empty(t, f.hardcover.RecordedWrites(), "no insert, image, or update mutation may be sent")
 			require.Empty(t, rt.recorded(), "no cover may be downloaded or uploaded")
 		})
 	}
@@ -294,15 +295,15 @@ func TestCreateEditionFromRunBook_OnlyAnAudiobookEditionCountsAsAMatch(t *testin
 	const isbn13 = "9781234567897"
 	tests := []struct {
 		name     string
-		existing existingEdition
+		existing editiontest.ExistingEdition
 		wantID   int
 		wantMade bool
 	}{
-		{name: "an audiobook edition is a match", existing: existingEdition{editionID: 555, bookID: 4242}, wantID: 555},
-		{name: "an ebook edition is not a match", existing: existingEdition{editionID: 555, bookID: 4242, readingFormat: 4}, wantID: 777, wantMade: true},
-		{name: "a physical edition is not a match", existing: existingEdition{editionID: 555, bookID: 4242, readingFormat: 1}, wantID: 777, wantMade: true},
-		{name: "an edition with no reading format is not a match", existing: existingEdition{editionID: 555, bookID: 4242, readingFormat: -1}, wantID: 777, wantMade: true},
-		{name: "another book's ebook edition does not block creation", existing: existingEdition{editionID: 555, bookID: 9999, readingFormat: 4}, wantID: 777, wantMade: true},
+		{name: "an audiobook edition is a match", existing: editiontest.ExistingEdition{EditionID: 555, BookID: 4242}, wantID: 555},
+		{name: "an ebook edition is not a match", existing: editiontest.ExistingEdition{EditionID: 555, BookID: 4242, ReadingFormat: 4}, wantID: 777, wantMade: true},
+		{name: "a physical edition is not a match", existing: editiontest.ExistingEdition{EditionID: 555, BookID: 4242, ReadingFormat: 1}, wantID: 777, wantMade: true},
+		{name: "an edition with no reading format is not a match", existing: editiontest.ExistingEdition{EditionID: 555, BookID: 4242, ReadingFormat: -1}, wantID: 777, wantMade: true},
+		{name: "another book's ebook edition does not block creation", existing: editiontest.ExistingEdition{EditionID: 555, BookID: 9999, ReadingFormat: 4}, wantID: 777, wantMade: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -310,8 +311,8 @@ func TestCreateEditionFromRunBook_OnlyAnAudiobookEditionCountsAsAMatch(t *testin
 				[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
 				map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
 			)
-			f.hardcover.asins[asin] = tt.existing
-			f.hardcover.isbns[isbn13] = tt.existing
+			f.hardcover.ASINs[asin] = tt.existing
+			f.hardcover.ISBNs[isbn13] = tt.existing
 			edits := validEdits()
 			edits.ASIN = asin
 			edits.ISBN13 = isbn13
@@ -320,7 +321,7 @@ func TestCreateEditionFromRunBook_OnlyAnAudiobookEditionCountsAsAMatch(t *testin
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantID, created.EditionID)
-			require.Equal(t, tt.wantMade, len(f.hardcover.recordedMutations()) == 1, "the insert happens only when no audiobook edition matched")
+			require.Equal(t, tt.wantMade, len(f.hardcover.RecordedMutations()) == 1, "the insert happens only when no audiobook edition matched")
 		})
 	}
 }

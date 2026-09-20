@@ -14,62 +14,35 @@ import (
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/auth"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition/editiontest"
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
 
 const deadlineTestWriteTimeout = 300 * time.Millisecond
 
 // slowEditionServers holds the Audiobookshelf and Hardcover fakes for the
-// write-deadline tests. Hardcover delays every response by delayAll and the
-// insert_edition mutation by an additional delayInsert.
+// write-deadline tests. Tests slow Hardcover down with hardcover.SetDelays.
 type slowEditionServers struct {
-	abs, hardcover *httptest.Server
-	delayAll       time.Duration
-	delayInsert    time.Duration
+	abs       *editiontest.AudiobookshelfFake
+	hardcover *editiontest.HardcoverFake
 }
 
 func newSlowEditionServers(t *testing.T) *slowEditionServers {
 	t.Helper()
-	servers := &slowEditionServers{}
-	servers.abs = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/items/item-1" {
-			http.NotFound(w, r)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":        "item-1",
-			"libraryId": "library",
-			"mediaType": "book",
-			"media": map[string]interface{}{
-				"metadata": map[string]interface{}{"title": "A Title", "authorName": "An Author", "isbn": "9780306406157"},
-				"duration": 3600.0,
+	return &slowEditionServers{
+		abs: editiontest.NewAudiobookshelfFake(t, map[string]map[string]interface{}{
+			"item-1": {
+				"id":        "item-1",
+				"libraryId": "library",
+				"mediaType": "book",
+				"media": map[string]interface{}{
+					"metadata": map[string]interface{}{"title": "A Title", "authorName": "An Author", "isbn": "9780306406157"},
+					"duration": 3600.0,
+				},
 			},
-		})
-	}))
-	t.Cleanup(servers.abs.Close)
-	servers.hardcover = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Query string `json:"query"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&request)
-		time.Sleep(servers.delayAll)
-		if strings.Contains(request.Query, "insert_edition") {
-			time.Sleep(servers.delayInsert)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"data": map[string]interface{}{"insert_edition": map[string]interface{}{"id": 777, "errors": []string{}}},
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{
-			"search":     map[string]interface{}{"error": "", "results": map[string]interface{}{"hits": []interface{}{}}},
-			"authors":    []interface{}{},
-			"publishers": []interface{}{},
-			"editions":   []interface{}{},
-			"books":      []interface{}{},
-		}})
-	}))
-	t.Cleanup(servers.hardcover.Close)
-	return servers
+		}),
+		hardcover: editiontest.NewHardcoverFake(t),
+	}
 }
 
 // startEditionHTTPServer serves the real handler chain, with authentication,
@@ -130,7 +103,7 @@ func doEditionRequest(t *testing.T, method, url, body string, cookie *http.Cooki
 
 func TestCreateEditionResponseSurvivesTheServerWriteTimeout(t *testing.T) {
 	servers := newSlowEditionServers(t)
-	servers.delayInsert = 3 * deadlineTestWriteTimeout
+	servers.hardcover.SetDelays(0, 3*deadlineTestWriteTimeout)
 	baseURL, cookie := startEditionHTTPServer(t, servers)
 
 	status, payload, elapsed := doEditionRequest(t, http.MethodPost,
@@ -151,7 +124,7 @@ func TestCreateEditionResponseSurvivesTheServerWriteTimeout(t *testing.T) {
 
 func TestEditionDraftResponseSurvivesTheServerWriteTimeout(t *testing.T) {
 	servers := newSlowEditionServers(t)
-	servers.delayAll = deadlineTestWriteTimeout / 2
+	servers.hardcover.SetDelays(deadlineTestWriteTimeout/2, 0)
 	baseURL, cookie := startEditionHTTPServer(t, servers)
 
 	status, payload, elapsed := doEditionRequest(t, http.MethodGet,

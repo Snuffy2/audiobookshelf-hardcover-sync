@@ -17,9 +17,7 @@ import (
 func holdCreatesOpen(t *testing.T, f *editionFixture) (release func()) {
 	t.Helper()
 	gate := make(chan struct{})
-	f.hardcover.mu.Lock()
-	f.hardcover.release = gate
-	f.hardcover.mu.Unlock()
+	f.hardcover.HoldInsert(gate)
 	var once atomic.Bool
 	release = func() {
 		if once.CompareAndSwap(false, true) {
@@ -41,7 +39,7 @@ func startHeldCreate(t *testing.T, f *editionFixture) <-chan error {
 		done <- err
 	}()
 	select {
-	case <-f.hardcover.entered:
+	case <-f.hardcover.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the create never reached Hardcover")
 	}
@@ -127,17 +125,8 @@ func TestDeleteProfileWaitsForAnInFlightEditionCreate(t *testing.T) {
 func TestInFlightEditionDraftDoesNotDelayShutdown(t *testing.T) {
 	f := newHeldCreateFixture(t)
 	holdReads := make(chan struct{})
-	f.hardcover.mu.Lock()
-	f.hardcover.holdReads = holdReads
-	f.hardcover.mu.Unlock()
-	t.Cleanup(func() {
-		f.hardcover.mu.Lock()
-		defer f.hardcover.mu.Unlock()
-		if f.hardcover.holdReads != nil {
-			close(f.hardcover.holdReads)
-			f.hardcover.holdReads = nil
-		}
-	})
+	f.hardcover.HoldReads(holdReads)
+	t.Cleanup(f.hardcover.ReleaseHolds)
 
 	draftDone := make(chan error, 1)
 	go func() {
@@ -145,7 +134,7 @@ func TestInFlightEditionDraftDoesNotDelayShutdown(t *testing.T) {
 		draftDone <- err
 	}()
 	select {
-	case <-f.hardcover.readEntered:
+	case <-f.hardcover.ReadEntered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the draft never reached Hardcover")
 	}
@@ -161,10 +150,8 @@ func TestInFlightEditionDraftDoesNotDelayShutdown(t *testing.T) {
 	_, err = f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 	require.ErrorIs(t, err, ErrServiceShuttingDown)
 
-	f.hardcover.mu.Lock()
-	close(f.hardcover.holdReads)
-	f.hardcover.holdReads = nil
-	f.hardcover.mu.Unlock()
+	close(holdReads)
+	f.hardcover.HoldReads(nil)
 	select {
 	case <-draftDone:
 	case <-time.After(10 * time.Second):

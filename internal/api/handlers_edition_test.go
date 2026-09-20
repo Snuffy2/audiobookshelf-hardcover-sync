@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition/editiontest"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
@@ -24,181 +24,6 @@ const (
 	editionRunID     = "seeded-run"
 	editionBasePath  = "/api/profiles/" + editionProfileID + "/runs/" + editionRunID + "/books/"
 )
-
-// editionHardcoverServer stands in for Hardcover: it resolves authors from a
-// name table, records insert_edition variables, and can hold either the
-// mutation or the full sync's title lookups open.
-type editionHardcoverServer struct {
-	*httptest.Server
-
-	mu      sync.Mutex
-	authors map[string]int
-	asins   map[string]existingEdition // editions that already carry an ASIN
-	isbns   map[string]existingEdition // editions that already carry an ISBN-13
-	// insertErrors, when set, is returned as insert_edition's errors list, the way
-	// Hardcover reports a duplicate.
-	insertErrors []string
-	mutations    []map[string]interface{}
-
-	mutationEntered chan struct{}
-	holdMutation    chan struct{} // when set, insert_edition waits for it to close
-	holdSearch      chan struct{} // when set, title/author searches wait for it to close
-	searchEntered   chan struct{}
-}
-
-// existingEdition is an edition already on Hardcover, found by its ASIN.
-type existingEdition struct {
-	editionID int
-	bookID    int
-}
-
-func newEditionHardcoverServer(t *testing.T) *editionHardcoverServer {
-	t.Helper()
-	fake := &editionHardcoverServer{
-		authors:         map[string]int{},
-		asins:           map[string]existingEdition{},
-		isbns:           map[string]existingEdition{},
-		mutationEntered: make(chan struct{}, 8),
-		searchEntered:   make(chan struct{}, 8),
-	}
-	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Query     string                 `json:"query"`
-			Variables map[string]interface{} `json:"variables"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		respond := func(data map[string]interface{}) {
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
-		}
-		fake.mu.Lock()
-		holdMutation, holdSearch := fake.holdMutation, fake.holdSearch
-		fake.mu.Unlock()
-
-		switch {
-		case strings.Contains(request.Query, "insert_edition"):
-			fake.mu.Lock()
-			fake.mutations = append(fake.mutations, request.Variables)
-			insertErrors := fake.insertErrors
-			fake.mu.Unlock()
-			fake.mutationEntered <- struct{}{}
-			if holdMutation != nil {
-				<-holdMutation
-			}
-			if len(insertErrors) > 0 {
-				respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": nil, "errors": insertErrors}})
-				return
-			}
-			respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
-		case strings.Contains(request.Query, "BookByISBN"):
-			isbn, _ := request.Variables["isbn"].(string)
-			books := []interface{}{}
-			fake.mu.Lock()
-			found, ok := fake.isbns[isbn]
-			fake.mu.Unlock()
-			if ok {
-				books = append(books, map[string]interface{}{
-					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "isbn_13": isbn}},
-				})
-			}
-			respond(map[string]interface{}{"books": books})
-		case strings.Contains(request.Query, "BookByASIN"):
-			asin, _ := request.Variables["asin"].(string)
-			books := []interface{}{}
-			fake.mu.Lock()
-			found, ok := fake.asins[asin]
-			fake.mu.Unlock()
-			if ok {
-				books = append(books, map[string]interface{}{
-					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "asin": asin}},
-				})
-			}
-			respond(map[string]interface{}{"books": books})
-		case strings.Contains(request.Query, "query GetEdition("):
-			editionID, _ := request.Variables["editionId"].(float64)
-			editions := []interface{}{}
-			fake.mu.Lock()
-			for asin, found := range fake.asins {
-				if float64(found.editionID) == editionID {
-					editions = append(editions, map[string]interface{}{"id": found.editionID, "book_id": found.bookID, "asin": asin})
-				}
-			}
-			fake.mu.Unlock()
-			respond(map[string]interface{}{"editions": editions})
-		case strings.Contains(request.Query, "SearchPeopleDirect") || strings.Contains(request.Query, "SearchNarrators"):
-			name, _ := request.Variables["name"].(string)
-			people := []map[string]interface{}{}
-			fake.mu.Lock()
-			if id, ok := fake.authors[name]; ok {
-				people = append(people, map[string]interface{}{"id": id, "name": name, "books_count": 3})
-			}
-			fake.mu.Unlock()
-			respond(map[string]interface{}{"authors": people})
-		default:
-			if holdSearch != nil {
-				fake.searchEntered <- struct{}{}
-				select {
-				case <-holdSearch:
-				case <-r.Context().Done():
-					return
-				}
-			}
-			respond(map[string]interface{}{
-				"search":     map[string]interface{}{"error": "", "results": map[string]interface{}{"hits": []interface{}{}}},
-				"publishers": []interface{}{},
-				"editions":   []interface{}{},
-				"books":      []interface{}{},
-			})
-		}
-	}))
-	t.Cleanup(fake.Close)
-	return fake
-}
-
-func (f *editionHardcoverServer) recordedMutations() []map[string]interface{} {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]map[string]interface{}(nil), f.mutations...)
-}
-
-// editionAudiobookshelfServer serves single items and a one-book library for a
-// full sync.
-type editionAudiobookshelfServer struct {
-	*httptest.Server
-	status int // non-zero forces item requests to fail with this status
-}
-
-func newEditionAudiobookshelfServer(t *testing.T, items map[string]map[string]interface{}) *editionAudiobookshelfServer {
-	t.Helper()
-	fake := &editionAudiobookshelfServer{}
-	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/me":
-			_, _ = w.Write([]byte(`{"mediaProgress":[],"listeningSessions":[]}`))
-		case r.URL.Path == "/api/libraries":
-			_, _ = w.Write([]byte(`{"libraries":[{"id":"library","name":"Library"}]}`))
-		case r.URL.Path == "/api/libraries/library/items":
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": []map[string]interface{}{items["sync-book"]}})
-		case strings.HasPrefix(r.URL.Path, "/api/items/"):
-			if fake.status != 0 {
-				http.Error(w, "forced failure with abs-token detail", fake.status)
-				return
-			}
-			item, ok := items[strings.TrimPrefix(r.URL.Path, "/api/items/")]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(item)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(fake.Close)
-	return fake
-}
 
 func editionAPIItem(id, title, author, coverPath string) map[string]interface{} {
 	return map[string]interface{}{
@@ -216,28 +41,17 @@ func editionAPIItem(id, title, author, coverPath string) map[string]interface{} 
 type editionAPIFixture struct {
 	*statusServiceFixture
 	routes    http.Handler
-	hardcover *editionHardcoverServer
-	abs       *editionAudiobookshelfServer
+	hardcover *editiontest.HardcoverFake
+	abs       *editiontest.AudiobookshelfFake
 }
 
 func newEditionAPIFixture(t *testing.T, dryRun bool, records []syncsvc.BookOutcomeRecord, items map[string]map[string]interface{}) *editionAPIFixture {
 	t.Helper()
-	hardcover := newEditionHardcoverServer(t)
-	abs := newEditionAudiobookshelfServer(t, items)
+	hardcover := editiontest.NewHardcoverFake(t)
+	abs := editiontest.NewAudiobookshelfFake(t, items)
 	fixture := newStatusServiceFixture(t, hardcover.URL)
 	// Runs before the service shuts down, so a held sync can unwind.
-	t.Cleanup(func() {
-		hardcover.mu.Lock()
-		defer hardcover.mu.Unlock()
-		if hardcover.holdSearch != nil {
-			close(hardcover.holdSearch)
-			hardcover.holdSearch = nil
-		}
-		if hardcover.holdMutation != nil {
-			close(hardcover.holdMutation)
-			hardcover.holdMutation = nil
-		}
-	})
+	t.Cleanup(hardcover.ReleaseHolds)
 
 	require.NoError(t, fixture.repo.CreateProfile(
 		editionProfileID, "Edition profile", abs.URL, "abs-secret-token", "hc-secret-token",
@@ -317,7 +131,7 @@ func singleItemFixture(t *testing.T, dryRun bool, item map[string]interface{}) *
 func TestGetEditionDraftReturnsTheDraftContract(t *testing.T) {
 	item := editionAPIItem("item-1", "Contract Title", "Contract Author", "/covers/item-1.jpg")
 	f := singleItemFixture(t, false, item)
-	f.hardcover.authors["Contract Author"] = 55
+	f.hardcover.Authors["Contract Author"] = 55
 
 	recorder := f.do(http.MethodGet, editionBasePath+"item-1/edition-draft", "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
@@ -345,7 +159,7 @@ func TestGetEditionDraftReturnsTheDraftContract(t *testing.T) {
 	require.Equal(t, false, envelope.Data["dry_run"])
 	require.IsType(t, []interface{}{}, envelope.Data["warnings"])
 	require.NotContains(t, recorder.Body.String(), "abs-secret-token")
-	require.Empty(t, f.hardcover.recordedMutations(), "previewing must not create anything")
+	require.Empty(t, f.hardcover.RecordedMutations(), "previewing must not create anything")
 }
 
 func TestEditionEndpointsRejectIneligibleTargets(t *testing.T) {
@@ -384,7 +198,7 @@ func TestEditionEndpointsRejectIneligibleTargets(t *testing.T) {
 			require.False(t, decodeEnvelope(t, create).Success)
 		})
 	}
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestEditionEndpointsRequireAllPathIdentifiers(t *testing.T) {
@@ -407,7 +221,7 @@ func TestCreateEditionTargetsTheRunRecordAndReturnsTheEdition(t *testing.T) {
 	require.True(t, envelope.Success)
 	require.Equal(t, map[string]interface{}{"edition_id": float64(777), "dry_run": false, "warnings": []interface{}{}}, envelope.Data)
 
-	mutations := f.hardcover.recordedMutations()
+	mutations := f.hardcover.RecordedMutations()
 	require.Len(t, mutations, 1)
 	require.EqualValues(t, 4242, mutations[0]["bookId"])
 	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
@@ -420,29 +234,29 @@ func TestCreateEditionWithAnExistingASIN(t *testing.T) {
 
 	t.Run("an edition of the same book is returned untouched", func(t *testing.T) {
 		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
-		f.hardcover.asins["B0EXISTING1"] = existingEdition{editionID: 555, bookID: 4242}
+		f.hardcover.ASINs["B0EXISTING1"] = editiontest.ExistingEdition{EditionID: 555, BookID: 4242}
 
 		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 		require.Equal(t, map[string]interface{}{"edition_id": float64(555), "dry_run": false, "warnings": []interface{}{}}, decodeEnvelope(t, recorder).Data)
-		require.Empty(t, f.hardcover.recordedMutations())
+		require.Empty(t, f.hardcover.RecordedMutations())
 	})
 
 	t.Run("an edition of another book is a conflict that names no other book", func(t *testing.T) {
 		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
-		f.hardcover.asins["B0EXISTING1"] = existingEdition{editionID: 555, bookID: 9999}
+		f.hardcover.ASINs["B0EXISTING1"] = editiontest.ExistingEdition{EditionID: 555, BookID: 9999}
 
 		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 		require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
 		require.Equal(t, "An edition with this ASIN or ISBN already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
 		require.NotContains(t, recorder.Body.String(), "9999")
-		require.Empty(t, f.hardcover.recordedMutations())
+		require.Empty(t, f.hardcover.RecordedMutations())
 	})
 }
 
 func TestCreateEditionWithAnISBNOnAnotherBooksEditionIsAConflict(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
-	f.hardcover.isbns["9781234567897"] = existingEdition{editionID: 555, bookID: 9999}
+	f.hardcover.ISBNs["9781234567897"] = editiontest.ExistingEdition{EditionID: 555, BookID: 9999}
 
 	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
 		`{"title":"A Title","isbn_13":"9781234567897","language_id":1,"country_id":1,"author_ids":[101]}`)
@@ -450,7 +264,7 @@ func TestCreateEditionWithAnISBNOnAnotherBooksEditionIsAConflict(t *testing.T) {
 	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
 	require.Equal(t, "An edition with this ASIN or ISBN already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
 	require.NotContains(t, recorder.Body.String(), "9999")
-	require.Empty(t, f.hardcover.recordedMutations(), "the match is found before any insert is attempted")
+	require.Empty(t, f.hardcover.RecordedMutations(), "the match is found before any insert is attempted")
 }
 
 func TestEditionEndpointsRejectABookWithoutAnASINOrISBN(t *testing.T) {
@@ -466,7 +280,7 @@ func TestEditionEndpointsRejectABookWithoutAnASINOrISBN(t *testing.T) {
 	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusConflict, create.Code, create.Body.String())
 	require.Equal(t, want, decodeEnvelope(t, create).Error)
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func ebookAPIItem() map[string]interface{} {
@@ -479,7 +293,7 @@ func ebookAPIItem() map[string]interface{} {
 
 func TestEbookEditionEndpointsCreateAnEbookEdition(t *testing.T) {
 	f := singleItemFixture(t, false, ebookAPIItem())
-	f.hardcover.authors["Ebook Author"] = 55
+	f.hardcover.Authors["Ebook Author"] = 55
 
 	draft := f.do(http.MethodGet, editionBasePath+"item-1/edition-draft", "")
 	require.Equal(t, http.StatusOK, draft.Code, draft.Body.String())
@@ -492,7 +306,7 @@ func TestEbookEditionEndpointsCreateAnEbookEdition(t *testing.T) {
 	// The request still carries audiobook-only fields; the server sends none of them.
 	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusOK, create.Code, create.Body.String())
-	mutations := f.hardcover.recordedMutations()
+	mutations := f.hardcover.RecordedMutations()
 	require.Len(t, mutations, 1)
 	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
 	require.EqualValues(t, 4, dto["reading_format_id"])
@@ -510,7 +324,7 @@ func TestEditionRequestCannotChooseTheReadingFormat(t *testing.T) {
 		strings.TrimSuffix(validEditionBody, "}")+`,"reading_format":"ebook"}`)
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestCreateEditionRequiresAnIdentifierInTheRequest(t *testing.T) {
@@ -523,7 +337,7 @@ func TestCreateEditionRequiresAnIdentifierInTheRequest(t *testing.T) {
 	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","isbn_13":"12345","author_ids":[101]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "isbn_13")
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestCreateEditionAcceptsAHyphenatedISBNAndSendsItNormalized(t *testing.T) {
@@ -533,7 +347,7 @@ func TestCreateEditionAcceptsAHyphenatedISBNAndSendsItNormalized(t *testing.T) {
 		`{"title":"A Title","isbn_13":"978-0-306-40615-7","language_id":1,"country_id":1,"author_ids":[101]}`)
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-	mutations := f.hardcover.recordedMutations()
+	mutations := f.hardcover.RecordedMutations()
 	require.Len(t, mutations, 1)
 	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
 	require.Equal(t, "9780306406157", dto["isbn_13"])
@@ -544,22 +358,22 @@ func TestCreateEditionByISBN10MatchesAnExistingEdition(t *testing.T) {
 
 	t.Run("an edition of the same book is returned untouched", func(t *testing.T) {
 		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
-		f.hardcover.isbns["0306406152"] = existingEdition{editionID: 555, bookID: 4242}
+		f.hardcover.ISBNs["0306406152"] = editiontest.ExistingEdition{EditionID: 555, BookID: 4242}
 
 		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 		require.Equal(t, map[string]interface{}{"edition_id": float64(555), "dry_run": false, "warnings": []interface{}{}}, decodeEnvelope(t, recorder).Data)
-		require.Empty(t, f.hardcover.recordedMutations())
+		require.Empty(t, f.hardcover.RecordedMutations())
 	})
 
 	t.Run("an edition of another book is a conflict", func(t *testing.T) {
 		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
-		f.hardcover.isbns["0306406152"] = existingEdition{editionID: 555, bookID: 9999}
+		f.hardcover.ISBNs["0306406152"] = editiontest.ExistingEdition{EditionID: 555, BookID: 9999}
 
 		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 		require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
 		require.NotContains(t, recorder.Body.String(), "9999")
-		require.Empty(t, f.hardcover.recordedMutations())
+		require.Empty(t, f.hardcover.RecordedMutations())
 	})
 }
 
@@ -580,7 +394,7 @@ func TestCreateEditionSendsTheRequestedEditionFormat(t *testing.T) {
 			recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", tt.body)
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 
-			mutations := f.hardcover.recordedMutations()
+			mutations := f.hardcover.RecordedMutations()
 			require.Len(t, mutations, 1)
 			dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
 			require.Equal(t, tt.wantFormat, dto["edition_format"])
@@ -596,7 +410,7 @@ func TestCreateEditionRejectsAnOverlongEditionFormat(t *testing.T) {
 	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "edition format")
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestCreateEditionRejectsClientControlledTargetsAndBadBodies(t *testing.T) {
@@ -624,7 +438,7 @@ func TestCreateEditionRejectsClientControlledTargetsAndBadBodies(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
 		})
 	}
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestCreateEditionRejectsInvalidEditsWithUserReadableError(t *testing.T) {
@@ -633,12 +447,12 @@ func TestCreateEditionRejectsInvalidEditsWithUserReadableError(t *testing.T) {
 	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","author_ids":[]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "author")
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 
 	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"   ","author_ids":[101]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "title is required")
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestEditionDryRunProfilesIssueNoHardcoverMutation(t *testing.T) {
@@ -652,7 +466,7 @@ func TestEditionDryRunProfilesIssueNoHardcoverMutation(t *testing.T) {
 	require.Equal(t, http.StatusOK, draft.Code, draft.Body.String())
 	require.Equal(t, true, decodeEnvelope(t, draft).Data["dry_run"])
 
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestEditionEndpointsReportMissingAndFailingAudiobookshelfItems(t *testing.T) {
@@ -667,25 +481,23 @@ func TestEditionEndpointsReportMissingAndFailingAudiobookshelfItems(t *testing.T
 		require.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
 	}
 
-	f.abs.status = http.StatusInternalServerError
+	f.abs.Status = http.StatusInternalServerError
 	recorder := f.do(http.MethodGet, editionBasePath+"gone-item/edition-draft", "")
 	require.Equal(t, http.StatusBadGateway, recorder.Code, recorder.Body.String())
 	require.NotContains(t, recorder.Body.String(), "abs-secret-token")
 	require.NotContains(t, recorder.Body.String(), "forced failure")
-	require.Empty(t, f.hardcover.recordedMutations())
+	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestCreateEditionRejectsOverlappingSubmitForTheSameBook(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
 	release := make(chan struct{})
-	f.hardcover.mu.Lock()
-	f.hardcover.holdMutation = release
-	f.hardcover.mu.Unlock()
+	f.hardcover.HoldInsert(release)
 
 	first := make(chan *httptest.ResponseRecorder, 1)
 	go func() { first <- f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody) }()
 	select {
-	case <-f.hardcover.mutationEntered:
+	case <-f.hardcover.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("first submit never reached Hardcover")
 	}
@@ -693,13 +505,11 @@ func TestCreateEditionRejectsOverlappingSubmitForTheSameBook(t *testing.T) {
 	second := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusConflict, second.Code, second.Body.String())
 
-	f.hardcover.mu.Lock()
-	f.hardcover.holdMutation = nil
-	f.hardcover.mu.Unlock()
+	f.hardcover.HoldInsert(nil)
 	close(release)
 	firstResponse := <-first
 	require.Equal(t, http.StatusOK, firstResponse.Code, firstResponse.Body.String())
-	require.Len(t, f.hardcover.recordedMutations(), 1, "the rejected submit must not reach Hardcover")
+	require.Len(t, f.hardcover.RecordedMutations(), 1, "the rejected submit must not reach Hardcover")
 }
 
 func TestCreateEditionWorksDuringAFullSyncWithoutChangingSyncControl(t *testing.T) {
@@ -712,14 +522,12 @@ func TestCreateEditionWorksDuringAFullSyncWithoutChangingSyncControl(t *testing.
 		},
 	)
 	held := make(chan struct{})
-	f.hardcover.mu.Lock()
-	f.hardcover.holdSearch = held
-	f.hardcover.mu.Unlock()
+	f.hardcover.HoldSearches(held)
 
 	start := f.do(http.MethodPost, "/api/profiles/"+editionProfileID+"/sync", "")
 	require.Equal(t, http.StatusAccepted, start.Code, start.Body.String())
 	select {
-	case <-f.hardcover.searchEntered:
+	case <-f.hardcover.SearchEntered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the full sync never reached its Hardcover lookup")
 	}
@@ -727,7 +535,7 @@ func TestCreateEditionWorksDuringAFullSyncWithoutChangingSyncControl(t *testing.
 	// The full sync is now active for this profile.
 	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusOK, create.Code, create.Body.String())
-	require.Len(t, f.hardcover.recordedMutations(), 1)
+	require.Len(t, f.hardcover.RecordedMutations(), 1)
 
 	// Starting another sync is still rejected, and cancelling still works.
 	again := f.do(http.MethodPost, "/api/profiles/"+editionProfileID+"/sync", "")
