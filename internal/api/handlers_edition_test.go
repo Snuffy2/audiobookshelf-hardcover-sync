@@ -31,10 +31,14 @@ const (
 type editionHardcoverServer struct {
 	*httptest.Server
 
-	mu        sync.Mutex
-	authors   map[string]int
-	asins     map[string]existingEdition // editions that already carry an ASIN
-	mutations []map[string]interface{}
+	mu      sync.Mutex
+	authors map[string]int
+	asins   map[string]existingEdition // editions that already carry an ASIN
+	isbns   map[string]existingEdition // editions that already carry an ISBN-13
+	// insertErrors, when set, is returned as insert_edition's errors list, the way
+	// Hardcover reports a duplicate.
+	insertErrors []string
+	mutations    []map[string]interface{}
 
 	mutationEntered chan struct{}
 	holdMutation    chan struct{} // when set, insert_edition waits for it to close
@@ -53,6 +57,7 @@ func newEditionHardcoverServer(t *testing.T) *editionHardcoverServer {
 	fake := &editionHardcoverServer{
 		authors:         map[string]int{},
 		asins:           map[string]existingEdition{},
+		isbns:           map[string]existingEdition{},
 		mutationEntered: make(chan struct{}, 8),
 		searchEntered:   make(chan struct{}, 8),
 	}
@@ -76,12 +81,29 @@ func newEditionHardcoverServer(t *testing.T) *editionHardcoverServer {
 		case strings.Contains(request.Query, "insert_edition"):
 			fake.mu.Lock()
 			fake.mutations = append(fake.mutations, request.Variables)
+			insertErrors := fake.insertErrors
 			fake.mu.Unlock()
 			fake.mutationEntered <- struct{}{}
 			if holdMutation != nil {
 				<-holdMutation
 			}
+			if len(insertErrors) > 0 {
+				respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": nil, "errors": insertErrors}})
+				return
+			}
 			respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
+		case strings.Contains(request.Query, "BookByISBN"):
+			isbn, _ := request.Variables["isbn"].(string)
+			books := []interface{}{}
+			fake.mu.Lock()
+			found, ok := fake.isbns[isbn]
+			fake.mu.Unlock()
+			if ok {
+				books = append(books, map[string]interface{}{
+					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "isbn_13": isbn}},
+				})
+			}
+			respond(map[string]interface{}{"books": books})
 		case strings.Contains(request.Query, "BookByASIN"):
 			asin, _ := request.Variables["asin"].(string)
 			books := []interface{}{}
@@ -412,10 +434,24 @@ func TestCreateEditionWithAnExistingASIN(t *testing.T) {
 
 		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 		require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
-		require.Equal(t, "An edition with this ASIN already exists on a different Hardcover book.", decodeEnvelope(t, recorder).Error)
+		require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on a different Hardcover book.", decodeEnvelope(t, recorder).Error)
 		require.NotContains(t, recorder.Body.String(), "9999")
 		require.Empty(t, f.hardcover.recordedMutations())
 	})
+}
+
+func TestCreateEditionWithADuplicateISBN13OnAnotherBookIsAConflict(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
+	f.hardcover.insertErrors = []string{"Edition with this ISBN13 already exists"}
+	f.hardcover.isbns["9781234567897"] = existingEdition{editionID: 555, bookID: 9999}
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
+		`{"title":"A Title","isbn_13":"9781234567897","language_id":1,"country_id":1,"author_ids":[101]}`)
+
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on a different Hardcover book.", decodeEnvelope(t, recorder).Error)
+	require.NotContains(t, recorder.Body.String(), "9999")
+	require.Len(t, f.hardcover.recordedMutations(), 1, "only the rejected insert may reach Hardcover")
 }
 
 func TestCreateEditionSendsTheRequestedEditionFormat(t *testing.T) {

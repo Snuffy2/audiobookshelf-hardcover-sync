@@ -22,12 +22,16 @@ import (
 type editionHardcoverFake struct {
 	*httptest.Server
 
-	mu        stdSync.Mutex
-	authors   map[string]int
-	asins     map[string]existingEdition // editions that already carry an ASIN
-	mutations []map[string]interface{}
-	writes    []string // every GraphQL mutation document received, of any kind
-	failWith  string   // GraphQL error message returned for insert_edition
+	mu      stdSync.Mutex
+	authors map[string]int
+	asins   map[string]existingEdition // editions that already carry an ASIN
+	isbns   map[string]existingEdition // editions that already carry an ISBN-13
+	// insertErrors, when set, is returned as insert_edition's errors list, the way
+	// Hardcover reports a duplicate.
+	insertErrors []string
+	mutations    []map[string]interface{}
+	writes       []string // every GraphQL mutation document received, of any kind
+	failWith     string   // GraphQL error message returned for insert_edition
 
 	entered chan struct{} // receives once per insert_edition that has started
 	release chan struct{} // when non-nil, insert_edition waits for it to close
@@ -47,6 +51,7 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 	fake := &editionHardcoverFake{
 		authors: map[string]int{},
 		asins:   map[string]existingEdition{},
+		isbns:   map[string]existingEdition{},
 		entered: make(chan struct{}, 8),
 
 		readEntered: make(chan struct{}, 64),
@@ -86,7 +91,7 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 		case strings.Contains(request.Query, "insert_edition"):
 			fake.mu.Lock()
 			fake.mutations = append(fake.mutations, request.Variables)
-			release, failWith := fake.release, fake.failWith
+			release, failWith, insertErrors := fake.release, fake.failWith, fake.insertErrors
 			fake.mu.Unlock()
 			fake.entered <- struct{}{}
 			if release != nil {
@@ -96,11 +101,27 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"errors": []map[string]string{{"message": failWith}}})
 				return
 			}
+			if len(insertErrors) > 0 {
+				respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": nil, "errors": insertErrors}})
+				return
+			}
 			respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
 		case strings.Contains(request.Query, "insert_image"):
 			respond(map[string]interface{}{"insert_image": map[string]interface{}{"id": 55}})
 		case strings.Contains(request.Query, "update_edition"):
 			respond(map[string]interface{}{"update_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
+		case strings.Contains(request.Query, "BookByISBN"):
+			isbn, _ := request.Variables["isbn"].(string)
+			books := []interface{}{}
+			fake.mu.Lock()
+			found, ok := fake.isbns[isbn]
+			fake.mu.Unlock()
+			if ok {
+				books = append(books, map[string]interface{}{
+					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "isbn_13": isbn}},
+				})
+			}
+			respond(map[string]interface{}{"books": books})
 		case strings.Contains(request.Query, "BookByASIN"):
 			asin, _ := request.Variables["asin"].(string)
 			books := []interface{}{}

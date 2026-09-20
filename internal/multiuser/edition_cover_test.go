@@ -194,7 +194,7 @@ func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *test
 		{
 			name:     "another book's edition is rejected",
 			existing: &existingEdition{editionID: 555, bookID: 9999},
-			wantErr:  ErrEditionASINConflict,
+			wantErr:  ErrEditionConflict,
 		},
 		{
 			name:        "unknown ASIN creates the edition",
@@ -238,6 +238,44 @@ func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *test
 				return
 			}
 			require.Empty(t, f.hardcover.recordedWrites(), "no Hardcover mutation may be sent")
+			require.Empty(t, rt.recorded(), "no cover may be downloaded or uploaded")
+		})
+	}
+}
+
+// TestCreateEditionFromRunBook_DuplicateISBN13NeverTouchesAnotherBooksEdition
+// covers Hardcover rejecting an insert as a duplicate ISBN-13. The caller-chosen
+// ISBN-13 must not let a request adopt, or attach a cover to, another book's
+// edition; an edition of the target book is returned untouched.
+func TestCreateEditionFromRunBook_DuplicateISBN13NeverTouchesAnotherBooksEdition(t *testing.T) {
+	const isbn13 = "9781234567897"
+	tests := []struct {
+		name        string
+		existing    existingEdition
+		wantErr     error
+		wantCreated *EditionCreated
+	}{
+		{name: "another book's edition is rejected", existing: existingEdition{editionID: 555, bookID: 9999}, wantErr: ErrEditionConflict},
+		{name: "the target book's edition is returned untouched", existing: existingEdition{editionID: 555, bookID: 4242}, wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, rt := newCoverFixture(t, false)
+			useCoverTransport(f, rt, false)
+			f.hardcover.insertErrors = []string{"Edition with this ISBN13 already exists"}
+			f.hardcover.isbns[isbn13] = tt.existing
+			edits := validEdits()
+			edits.ISBN13 = isbn13
+
+			created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.wantCreated, created)
+			}
+			require.Len(t, f.hardcover.recordedWrites(), 1, "only the rejected insert_edition may be sent, never image or update_edition")
 			require.Empty(t, rt.recorded(), "no cover may be downloaded or uploaded")
 		})
 	}

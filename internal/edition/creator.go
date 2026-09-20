@@ -50,7 +50,16 @@ type EditionResult struct {
 	// The edition itself was still created. It names the failed step only and
 	// never carries remote error text, URLs, or credentials.
 	ImageError string `json:"image_error,omitempty"`
+	// Existing is true when the edition was already on Hardcover for the same
+	// book and was reused. A reused edition is returned untouched: no cover or
+	// metadata is sent for it.
+	Existing bool `json:"existing,omitempty"`
 }
+
+// ErrEditionBelongsToOtherBook reports that an existing edition found by ASIN
+// or ISBN-13 belongs to a different Hardcover book than the requested one, or
+// that its book could not be determined. The edition is never adopted.
+var ErrEditionBelongsToOtherBook = errors.New("existing edition belongs to a different book")
 
 // GoogleUploadInfo contains the signed upload credentials for Google Cloud Storage
 type GoogleUploadInfo struct {
@@ -199,9 +208,13 @@ func (c *Creator) CreateEdition(ctx context.Context, input *EditionInput) (*Edit
 	}
 
 	// Step 1: Create the edition first (without image)
-	editionID, err := c.createEdition(ctx, input, 0) // Pass 0 as imageID initially
+	editionID, existing, err := c.createEdition(ctx, input, 0) // Pass 0 as imageID initially
 	if err != nil {
 		return nil, fmt.Errorf("failed to create edition: %w", err)
+	}
+	if existing {
+		// An edition of this book was already on Hardcover. Leave it as it is.
+		return &EditionResult{Success: true, EditionID: editionID, Existing: true}, nil
 	}
 
 	// Step 2: If we have an image URL, upload it and update the edition. A cover
@@ -658,18 +671,38 @@ type CreateEditionInput struct {
 	Errors          []string `json:"errors,omitempty"`
 }
 
-// createEdition creates a new edition with the given metadata
-func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageID int) (int, error) {
+// adoptExistingEdition returns the ID of an edition found on Hardcover by ASIN
+// or ISBN-13 so it can be reused instead of duplicated. The lookups are global,
+// so the edition is adopted only when it belongs to the requested book; any
+// other or unknown book fails closed with ErrEditionBelongsToOtherBook.
+func adoptExistingEdition(found *models.Edition, input *EditionInput) (int, error) {
+	if found.BookID != strconv.Itoa(input.BookID) {
+		return 0, ErrEditionBelongsToOtherBook
+	}
+	editionID, err := strconv.Atoi(found.ID)
+	if err != nil || editionID <= 0 {
+		return 0, fmt.Errorf("existing edition has an invalid ID %q", found.ID)
+	}
+	return editionID, nil
+}
+
+// createEdition creates a new edition with the given metadata. When an edition
+// with the same ASIN or ISBN-13 already exists for the same book, its ID is
+// returned with true; an edition of another book is an error.
+func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageID int) (int, bool, error) {
 	// First, check if an edition already exists for this book with the same ASIN/ISBN
 	if input.ASIN != "" {
-		edition, err := c.client.GetEditionByASIN(ctx, input.ASIN)
-		if err == nil && edition != nil && edition.ID != "" {
-			editionID, _ := strconv.Atoi(edition.ID)
+		found, lookupErr := c.client.GetEditionByASIN(ctx, input.ASIN)
+		if lookupErr == nil && found != nil && found.ID != "" {
+			editionID, adoptErr := adoptExistingEdition(found, input)
+			if adoptErr != nil {
+				return 0, false, adoptErr
+			}
 			c.log.Debug("Edition already exists with this ASIN", map[string]interface{}{
 				"edition_id": editionID,
 				"asin":       input.ASIN,
 			})
-			return editionID, nil
+			return editionID, true, nil
 		}
 	}
 
@@ -798,7 +831,7 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 
 	// Execute the GraphQL mutation
 	if err := c.client.GraphQLMutation(ctx, mutation, variables, &response); err != nil {
-		return 0, fmt.Errorf("GraphQL mutation failed: %w", err)
+		return 0, false, fmt.Errorf("GraphQL mutation failed: %w", err)
 	}
 
 	// Check for errors in the response
@@ -814,7 +847,7 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 			dtoMap, ok := editionData["dto"].(map[string]interface{})
 			if !ok {
 				// This shouldn't happen but just in case
-				return 0, fmt.Errorf("edition already exists but could not find dto data: %s", errMsg)
+				return 0, false, fmt.Errorf("edition already exists but could not find dto data: %s", errMsg)
 			}
 
 			// Check if we already have an edition with this ISBN-13
@@ -829,8 +862,11 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 						"edition_id": edition.ID,
 						"isbn13":     isbn13,
 					})
-					editionID, _ := strconv.Atoi(edition.ID)
-					return editionID, nil
+					editionID, adoptErr := adoptExistingEdition(edition, input)
+					if adoptErr != nil {
+						return 0, false, adoptErr
+					}
+					return editionID, true, nil
 				}
 			}
 
@@ -846,17 +882,20 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 						"edition_id": edition.ID,
 						"asin":       asin,
 					})
-					editionID, _ := strconv.Atoi(edition.ID)
-					return editionID, nil
+					editionID, adoptErr := adoptExistingEdition(edition, input)
+					if adoptErr != nil {
+						return 0, false, adoptErr
+					}
+					return editionID, true, nil
 				}
 			}
 
 			// If we still can't find it, return a more specific error
-			return 0, fmt.Errorf("edition already exists but could not find existing edition: %s", errMsg)
+			return 0, false, fmt.Errorf("edition already exists but could not find existing edition: %s", errMsg)
 		}
 
 		// For other errors, return the error message
-		return 0, fmt.Errorf("edition creation failed: %s", errMsg)
+		return 0, false, fmt.Errorf("edition creation failed: %s", errMsg)
 	}
 
 	// Handle different ID types (int, float64, or string)
@@ -874,20 +913,20 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 				"id":    id,
 				"error": err.Error(),
 			})
-			return 0, fmt.Errorf("invalid edition ID format: %v", id)
+			return 0, false, fmt.Errorf("invalid edition ID format: %v", id)
 		}
 		editionID = parsedID
 	case nil:
 		c.log.Error("Missing edition ID in response", map[string]interface{}{
 			"response": response,
 		})
-		return 0, fmt.Errorf("missing edition ID in response")
+		return 0, false, fmt.Errorf("missing edition ID in response")
 	default:
 		c.log.Error("Unexpected ID type in response", map[string]interface{}{
 			"id":   response.InsertEdition.ID,
 			"type": fmt.Sprintf("%T", response.InsertEdition.ID),
 		})
-		return 0, fmt.Errorf("unexpected ID type in response: %T", response.InsertEdition.ID)
+		return 0, false, fmt.Errorf("unexpected ID type in response: %T", response.InsertEdition.ID)
 	}
 
 	if editionID <= 0 {
@@ -895,7 +934,7 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 			"edition_id": editionID,
 			"response":   response,
 		})
-		return 0, fmt.Errorf("invalid edition ID in response: %d", editionID)
+		return 0, false, fmt.Errorf("invalid edition ID in response: %d", editionID)
 	}
 
 	// Success! Return the new edition ID
@@ -903,7 +942,7 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 		"edition_id": editionID,
 	})
 
-	return editionID, nil
+	return editionID, false, nil
 }
 func (c *Creator) PrepopulateFromBook(ctx context.Context, bookID int) (*EditionInput, error) {
 	c.log.Debug("Prepopulating edition data from book", map[string]interface{}{

@@ -1685,8 +1685,9 @@ func TestEditionCreator_createEdition(t *testing.T) {
 			setupMock: func(t *testing.T, m *MockHardcoverClient) {
 				// Return an existing edition for the ASIN
 				existingEdition := &models.Edition{
-					ID:    "555",
-					Title: "Existing Edition",
+					ID:     "555",
+					BookID: "123",
+					Title:  "Existing Edition",
 				}
 				m.On("GetEditionByASIN", mock.Anything, "B123456789").Return(existingEdition, nil)
 			},
@@ -1760,8 +1761,9 @@ func TestEditionCreator_createEdition(t *testing.T) {
 				// This is the critical part: Set up the second expectation for GetEditionByISBN13
 				// It will be called after the GraphQL mutation returns the "already exists" error
 				existingEdition := &models.Edition{
-					ID:    "666",
-					Title: "Existing Edition by ISBN13",
+					ID:     "666",
+					BookID: "123",
+					Title:  "Existing Edition by ISBN13",
 				}
 				m.On("GetEditionByISBN13", mock.Anything, "9781234567890").Return(existingEdition, nil).Once()
 			},
@@ -1809,8 +1811,9 @@ func TestEditionCreator_createEdition(t *testing.T) {
 
 				// Second lookup for GetEditionByASIN after duplicate error returns existing edition
 				existingEdition := &models.Edition{
-					ID:    "777",
-					Title: "Existing Edition by ASIN",
+					ID:     "777",
+					BookID: "123",
+					Title:  "Existing Edition by ASIN",
 				}
 				// The critical fix: Set up the right expectation for the second call after error
 				m.On("GetEditionByASIN", mock.Anything, "B123456789").Return(existingEdition, nil).Once()
