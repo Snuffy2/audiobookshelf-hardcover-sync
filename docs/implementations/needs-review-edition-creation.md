@@ -2,7 +2,8 @@
 
 **Status: 🚧 IN PROGRESS** (2026-09-20)
 
-Slices 1 and 2 are implemented and validated; Slices 3 and 4 are not started.
+Slices 1 and 2 are implemented and validated; Slices 3 and 4 are not started. Slice 1 also creates ebook editions for
+ebook-only items (see "Ebook items"). Slice 2 needs a rebase onto the current Slice 1 tip.
 
 ## Slice Tracker
 
@@ -10,8 +11,8 @@ Update this table as each slice lands. Each slice must leave `develop` working a
 
 | Slice | Branch | PR | Status |
 |-------|--------|----|--------|
-| 1 — Create-edition API | `feature/edition-from-needs-review-api` | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | Implemented and validated; the PR body is stale relative to the branch and must be rewritten |
-| 2 — Sync identifier matching | `feature/sync-identifier-matching` | — | Implemented and validated; branch on `origin`, no PR yet |
+| 1 — Create-edition API | `feature/edition-from-needs-review-api` | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | Implemented and validated, including ebook editions; rebased onto `develop` eb50565 (#190); the PR body is stale relative to the branch and must be rewritten |
+| 2 — Sync identifier matching | `feature/sync-identifier-matching` | — | Implemented and validated; branch on `origin`, no PR yet; based on an old Slice 1 tip, so it needs a rebase onto the current one and will likely conflict with #190 (see the Slice 2 notes) |
 | 3 — Immediate read-status resync (backend) | `feature/needs-review-edition-resync` | — | Not started |
 | 4 — UI | `feature/needs-review-edition-ui` | — | Not started |
 
@@ -96,7 +97,11 @@ permission.
 ## Slice 1 implementation notes
 
 Recorded after Slice 1 was implemented and validated, then extended. It first described branch tip 374b7b2
-(13 commits over `develop` a2ad4b4); the branch is now at 8248c1a (32 commits over a2ad4b4) and is the head of PR #20.
+(13 commits over `develop` a2ad4b4); the branch is now at ad2750b (34 commits over `develop` eb50565, which includes #190)
+and is the head of PR #20. The last commit squashes three changes (a rejection of ebook items, its revert, and ebook
+edition support) into the net ebook support; its subject line still reads "reject ebook-only items" and is misleading.
+The sections below were written against earlier tips (8248c1a and before); the commit hashes they cite predate the
+rebases onto `develop`, so match them by subject rather than by hash.
 Where this differs from the plan above, this section is what shipped.
 
 - **Draft sub-package.** The draft builder is `internal/edition/draft/draft.go` (`draft.New`, `draft.Draft`,
@@ -140,7 +145,7 @@ Where this differs from the plan above, this section is what shipped.
 
 ### Added after the first validation
 
-Grounded in the code on the branch (8248c1a).
+Grounded in the code on the branch at that time (8248c1a); the ebook support that followed is in "Ebook items".
 
 - **Cross-book guard.** `edition.Creator` refuses to adopt an existing edition that belongs to another book or whose
   book cannot be confirmed (`ErrEditionBelongsToOtherBook`); the API answers 409 with a fixed message ("An edition with
@@ -185,8 +190,13 @@ The review threads were not yet replied to or resolved when this was written.
 
 ## Slice 2 implementation notes
 
-Branch `feature/sync-identifier-matching` (4 commits over 8248c1a: 5190293, 378bbc7, 08492ac, e03754a; on `origin` at
-e03754a, no PR yet). Six files change: `internal/sync/service.go`, `internal/api/hardcover/client.go`, their tests
+Branch `feature/sync-identifier-matching` (4 commits over the old Slice 1 tip 8248c1a: 5190293, 378bbc7, 08492ac, e03754a;
+on `origin` at e03754a, no PR yet). **It has not been rebased onto the current Slice 1 tip (ad2750b) or `develop`
+eb50565.** #190 (ebook detection and matching) changed the same two files, `internal/sync/service.go` and
+`internal/api/hardcover/client.go` (it added the reading-format context and format-aware ASIN/ISBN filters), so expect
+conflicts there and re-check the "unchanged by decision" claim below (the reading-format filters) against the new
+code. Also, #190 moved the reading-format context helper; Slice 1 now keeps it in `internal/models`
+(`WithReadingFormat`) and `hardcover.WithReadingFormat` delegates to it. Six files change: `internal/sync/service.go`, `internal/api/hardcover/client.go`, their tests
 (`internal/sync/isbn_matching_test.go`, `internal/api/hardcover/search_identifier_test.go`, `outcomes_test.go`) and
 `CHANGELOG.md`.
 
@@ -235,39 +245,53 @@ Decisions made by the owner and where they ended up.
    ebook edition); a different or unset format is not a match. Slices 1 and 2.
 9. **Sync-matching changes go in a separate follow-up PR** built on Slice 1. That became Slice 2.
 10. **The unverified `order_by` is not used.** Slice 2.
+11. **Ebook-only items get ebook editions** (the "support" option), not a rejection. Slice 1. The format is decided
+    by the Audiobookshelf item on the server, never by the request.
 
-## Ebook items: audiobook-only assumptions (open question)
+## Ebook items: ebook editions (resolved, Slice 1)
 
-Added while working on ebook detection and matching (branch `fix/ebook-detection-and-matching`, not part of
-this feature). Audiobookshelf reports `mediaType: "book"` for ebooks too, and that branch is the first to
-recognize ebook-only items from their media content, honor `include_ebooks`, and match them to Hardcover
-**ebook** editions (reading format id 4). Once it lands, an ebook-only item with `include_ebooks: true` can end
-a run as `needs_review`, so it becomes eligible for the **Add edition to Hardcover** button. The edition
-creation path is audiobook-only and would create the wrong kind of edition for it:
+**Decision (owner): an ebook-only `needs_review` item gets an ebook edition through the same routes.** This
+replaces the earlier open question, which offered rejecting ebooks or supporting them. A rejection was implemented
+briefly and then reverted in favor of support.
 
-- `Creator.createEdition` (`internal/edition/creator.go`) always sends `reading_format_id: 2` (Audiobook). Slice 1
-  (240d2fa) made `edition_format` follow `EditionInput.EditionFormat`, but that is a free-text label; it does not
-  change the reading format, which stays 2 either way.
-- `BookMismatch.ToEditionExport` (`internal/mismatch/types.go`) maps an empty or "Audiobook" format to
-  `Audible Audio` when an ASIN exists (else `libro.fm` or empty), so the draft's `edition_format` is an
-  audiobook label.
-- The draft and `EditionInput` are audiobook-shaped: narrators, `audio_length`, an Audible-style ASIN.
-- The `edition` CLI and `cmd/image-tool` call the same creator, so they have the same limitation. The sync
-  service never creates editions, so ordinary syncs are unaffected.
+Background: Audiobookshelf reports `mediaType: "book"` for ebooks too. #190 (on `develop`) recognizes an
+ebook-only item from its media content with `AudiobookshelfBook.IsEbook()` (an ebook file or format and no audio),
+honors `include_ebooks`, and matches ebook items to Hardcover **ebook** editions (reading format id 4). An ebook-only
+item can therefore end a run as `needs_review` and is eligible for the button.
 
-Nothing here changes Slice 1 as implemented. The open decision is which of these to do, and in which slice:
+What Slice 1 does now:
 
-1. **Restrict:** make an ebook-only run record ineligible (`ErrEditionNotEligible`) so the button never appears
-   for it. Smallest and safest; needs the item's format on the run record, which Sync Status already shows as
-   `format` (`Audiobook`/`Ebook`).
-2. **Support:** add a reading format to `EditionInput` and the mismatch export (default audiobook, so existing
-   behavior is unchanged), set from the item's format, send `reading_format_id: 4` and skip the audio-only fields
-   for ebooks.
+- **Format comes from the item.** `draft.ReadingFormat(item)` (`ebook` or `audiobook`, the same `IsEbook()` rule as the
+  sync) is set by the server on `EditionInput.ReadingFormat`. A create request cannot choose it: `reading_format` is
+  not an editable field, so it is rejected as an unknown field (400). The draft reports it as `reading_format`. An
+  audiobook that also has an ebook file is still an audiobook.
+- **`EditionInput.ReadingFormat`** (`reading_format`, optional: `audiobook` by default, or `ebook`; anything else fails
+  validation). For an ebook the creator sends `reading_format_id: 4`, defaults `edition_format` to `Ebook`, and sends
+  no narrators and no `audio_seconds`. An audiobook is unchanged (`reading_format_id: 2`, `Audiobook`). The `edition`
+  CLI reads the same JSON field, so it can create ebook editions too.
+- **Duplicate detection is per format.** The creator puts the input's reading format on the context, so its ASIN and
+  ISBN lookups only consider editions of that format (an ebook item never adopts an audiobook edition, and the
+  reverse). This is the "same format only" rule (decision 8) applied to creation.
+- **Shared context helper.** The reading-format context key moved to `internal/models/reading_format.go`
+  (`WithReadingFormat`, `ReadingFormatFromContext`, and the `ReadingFormatAudiobook`/`ReadingFormatEbook` constants);
+  `hardcover.WithReadingFormat` delegates to it, so nothing else changes. The creator cannot import the Hardcover
+  package (it would be a cycle), and this way it sets the format itself instead of relying on every caller.
+- **Mismatch export.** `BookMismatch` and `EditionExport` carry an optional `reading_format`. For an ebook,
+  `AddWithMetadata` records `Ebook`/`ebook`, and `ToEditionExport` uses the `Ebook` format, skips the audiobook
+  platform hints and the `Unabridged` default, and exports no audio length. An audiobook exports exactly as before.
+  This changes exports of ebook items only (they were audiobook-shaped before), and is in the CHANGELOG.
+- **Draft.** An ebook draft has no narrators, no narrator warning, no audio length, and no `Unabridged` default.
+- **Docs and tests.** README, OpenAPI, the CHANGELOG and `cmd/edition/README.md` describe it. Tests cover the creator
+  (ebook and audiobook fields, format-scoped lookups, invalid format), the mismatch export, the draft, and the API
+  (ebook draft and create, a request that tries to set `reading_format`).
 
-Recommendation: ship Slice 1 as is, add option 1 to whichever slice touches eligibility (Slice 1 if it has not
-merged, otherwise Slice 3), and treat option 2 as a follow-up. Either way the Slice 4 UI should not offer the
-button for a record it cannot create correctly. Not verified against live Hardcover: which reading format id
-and `edition_format` values Hardcover expects for an ebook edition created through `insert_edition`.
+Still not verified against live Hardcover: that `insert_edition` accepts `reading_format_id: 4` with the `Ebook`
+edition format label, and that its ISBN/ASIN duplicate behavior for ebooks matches the audiobook case. The format
+filters on the lookups are covered only through fakes. Kindle ASINs for ebooks are not checked against Audible-only
+lookups.
+
+For the Slice 4 UI: show the draft's `reading_format` in the preview so the user can see whether an audiobook or an
+ebook edition will be created, and hide the narrator and duration fields for an ebook.
 
 ## Reuse (already in the repo)
 
@@ -455,6 +479,10 @@ the same format only, so a repeat submit normally returns the existing edition. 
   another book's edition is refused. `internal/multiuser/edition_cover_test.go`: an ISBN match never touches another
   book's edition.
 - **Slice 1** — `internal/isbn/isbn_test.go`: `Normalize`, `Parse` and the derived forms.
+- **Slice 1** — ebook editions: `internal/edition/creator_reuse_test.go` (ebook and audiobook dto fields, lookups scoped
+  to the input's format, invalid `reading_format`), `internal/mismatch/reading_format_test.go` (ebook export),
+  `internal/edition/draft/draft_test.go` (ebook draft) and `internal/api/handlers_edition_test.go` (ebook draft and
+  create, a request cannot set `reading_format`).
 - **Slice 2** — `internal/api/hardcover/search_identifier_test.go` and `internal/sync/isbn_matching_test.go`: the given ISBN
   form is searched first and then the counterpart, each in its own field; ISBN normalization (lowercase `x`,
   separators); the ASIN is trimmed and blank identifiers are ignored; a 979 or bad-checksum ISBN has no counterpart
@@ -481,7 +509,8 @@ the same format only, so a repeat submit normally returns the existing edition. 
 - **Slice 1:** `README.md` two endpoint rows (draft + create, no resync) and a short API note (identifier requirement,
   ISBN matching, hyphen handling); `docs/openapi.yaml` for both operations; `CHANGELOG.md` `[Unreleased]` -> `### Added`,
   plus `### Changed`/`### Fixed` lines for the publisher export default, the honored `edition_format`, the hyphenated
-  ISBN fix and the cross-book guard.
+  ISBN fix and the cross-book guard, plus the ebook support (`reading_format`, the mismatch export change, and the
+  `edition` CLI field).
 - **Slice 2:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
 - **Slice 3:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
 - **Slice 4:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
