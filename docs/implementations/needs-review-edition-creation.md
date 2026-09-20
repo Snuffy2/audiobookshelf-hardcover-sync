@@ -7,10 +7,12 @@ that leaves `develop` working and shippable. All the code for steps 1-5 exists a
 sit together on one combined branch that was judged too large to review, so it is to be split (see "How the combined
 branch is split"). Steps 6 and 7 are not started. No upstream PR exists yet, and nothing has been split.
 
-**Two kinds of PR, do not mix them up.** The seven steps are *upstream* PRs: `Snuffy2:step_N_needs_review_add_edition` ->
-`drallgood:develop`. Fork PR #20 (`Snuffy2:feature/edition-from-needs-review-api` -> `Snuffy2:develop`, inside the fork,
-where CodeRabbit reviewed it) is a fork-internal staging PR for the combined branch. It is not one of the seven steps
-and not an upstream PR.
+**Two stages per step.** `origin` (the fork, `Snuffy2/audiobookshelf-hardcover-sync`) is where each step is developed, tested and
+reviewed by AI (CodeRabbit) through a **fork PR** (`Snuffy2:step_N_needs_review_add_edition` -> a fork branch). Only when a
+step is ready for the maintainers to consider and merge is an **upstream PR** created
+(`Snuffy2:step_N_needs_review_add_edition` -> `drallgood:develop`), and only on the owner's explicit command; nothing
+here is ever opened upstream on its own. Fork PR #20 (`feature/edition-from-needs-review-api` -> `Snuffy2:develop`) is
+the fork stage for the combined steps 1-4 as they stand today.
 
 ## Step Tracker
 
@@ -18,34 +20,35 @@ Update this table as each step lands. Each step must leave `develop` working and
 added lines (tests included); "measured" comes from a diff, "estimated" is a guess from the plan and the code the
 step touches.
 
-| Step | Scope | Branch | Upstream PR | Depends on | Size | Status |
-|------|-------|--------|-------------|-----------|------|--------|
-| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
-| 3 | Read-only draft endpoint | `step_3_needs_review_add_edition` | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
-| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (not created yet; today the code sits in the combined branch `feature/edition-from-needs-review-api`) | — | 3 | ~2,000, estimated | **The combined branch is not step 4 by itself**: it holds the code of steps 1-4, so it has to be split. Step 4 is rebuilt on top of step 3 as a new branch (see "How the combined branch is split"). Fork PR #20 (not upstream) still points at the combined branch and its body is stale |
-| 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching`, locally and on origin, on 2026-09-20), no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
-| 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
-| 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | 6 | ~500-800, estimated | Not started |
+| Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
+|------|-------|--------|--------|-------------|-----------|------|--------|
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | — | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
+| 3 | Read-only draft endpoint | `step_3_needs_review_add_edition` | — | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
+| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (not created yet; today the code sits in the combined branch `feature/edition-from-needs-review-api`) | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, base `develop`; covers steps 1-4 together today, body stale) | — | 3 | ~2,000, estimated | **The combined branch is not step 4 by itself**: it holds the code of steps 1-4, so it has to be split. Step 4 is rebuilt on top of step 3 as a new branch (see "How the combined branch is split"). Fork PR #20 still points at the combined branch (see "How the combined branch is split") |
+| 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching`, locally and on origin, on 2026-09-20), no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
+| 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
+| 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | — | 6 | ~500-800, estimated | Not started |
 
 **Branch names** are `step_N_needs_review_add_edition` for step N (1-7). The combined branch that holds steps 1-4 today,
 `feature/edition-from-needs-review-api`, is not any single step: the step branches are new branches built from it (see
 "How the combined branch is split"), and it is deleted only once they are all built, with the owner's go-ahead.
 
-Stacking and merge order: 1, 2, 3, 4 merge upstream in that order. On the fork the step branches are *stacked* (step N is
-built on step N-1), but **an upstream PR cannot use a fork-only branch as its base**, so an upstream PR for step N is
-opened only after step N-1 has merged into `drallgood:develop`, with the branch first rebased onto that `develop` so its
-diff is just that step. (Optionally a step can get a fork-internal PR, base = the previous step's branch, for early review.)
-Step 5 needs only step 1's `internal/isbn`, so its upstream PR can open as soon as step 1 has merged, in parallel with
-steps 2-4. Step 6 needs the create endpoint (4) and the sync matching (5) merged, and step 7 needs step 6. Step 6 also
-needs `develop` at or after a2ad4b4 (#188 changed `internal/sync/service.go`, which `SyncBook` will call into). After step
-4 the feature is usable with curl; step 7 is the first thing a user sees. Steps 6 and 7 build on the create response shape
-from step 4, so a change requested in step 4's review carries into them. Each step's CHANGELOG lines carry its own upstream
-PR number as `(#NNN)`, added once that PR is opened; fork PR #20 is not that number.
+Stacking and merge order: 1, 2, 3, 4 merge upstream in that order. On the fork, step branches are *stacked* (step N is built
+on step N-1) and each step's fork PR uses the previous step's branch as its base, so the AI review sees only that step's
+diff. **An upstream PR cannot use a fork-only branch as its base**, so an upstream PR for step N is created (on the owner's
+command) only after step N-1 has merged into `drallgood:develop`, with the branch first rebased onto that `develop` so its
+diff is just that step. Step 5 needs only step 1's `internal/isbn`, so its fork PR can be based on step 1 and its upstream PR
+can follow as soon as step 1 has merged, in parallel with steps 2-4. Step 6 needs the create endpoint (4) and the sync
+matching (5) merged, and step 7 needs step 6. Step 6 also needs `develop` at or after a2ad4b4 (#188 changed
+`internal/sync/service.go`, which `SyncBook` will call into). After step 4 the feature is usable with curl; step 7 is the
+first thing a user sees. Steps 6 and 7 build on the create response shape from step 4, so a change requested in step 4's
+review carries into them. Each step's CHANGELOG lines carry its own upstream PR number as `(#NNN)`, added when that
+upstream PR is created; fork PR numbers such as #20 are not that number.
 
 ## Step summary for PR descriptions
 
-Every step's upstream PR description carries the same "Multi-Step Project" section, in the style of upstream PR #186. It sits
+Every step's fork PR and upstream PR description carries the same "Multi-Step Project" section, in the style of upstream PR #186. It sits
 after the "Summary of Changes" and before "Testing Instructions", and ends with a link to this document. Rules:
 
 - Completed steps (already merged) are struck through with `~~...~~` and their text is not edited afterwards.
@@ -177,15 +180,18 @@ Order of operations:
    step 3 branch, as a few clean commits, and gate it. Its final tree equals the combined branch's tree, so nothing is
    lost; only the history differs, and against step 3 its diff is just the create endpoint. Step 5's branch is
    rebased onto step 1 and #190 separately.
-3. Open upstream PRs one at a time, as described under "Stacking and merge order": step 1 first; then steps 2, 3, 4 each
-   after the previous has merged, and step 5 after step 1. Each is rebased onto the current upstream `develop` before it
-   opens and gets the "Multi-Step Project" block.
-4. Fork PR #20 belongs to the combined branch. What to do with it (close it once the upstream PRs exist, or keep it as
-   a fork-side record) is the owner's choice; nothing in the plan depends on it, and the combined branch is deleted only
-   after all seven step branches exist.
+3. Open the fork PRs (on the owner's request), each based on the previous step's branch, and let CodeRabbit review them.
+4. Fork PR #20 belongs to the combined branch. To keep its conversation, it can be moved onto step 4: the combined branch
+   is force-pushed (with a pinned lease) to the rebuilt step 4 history, the PR's base is changed to step 3's branch, and
+   the branch is renamed to `step_4_needs_review_add_edition` with GitHub's rename API (which keeps the PR); inline
+   comments on moved lines show as outdated. The alternative is a fresh fork PR for step 4 and closing #20. Either way
+   needs the owner's go-ahead, and the combined branch is deleted only after all seven step branches exist.
+5. Upstream PRs are created only on the owner's command, one at a time as described under "Stacking and merge order":
+   step 1 first; then 2, 3, 4 each after the previous has merged, and step 5 after step 1. Each is rebased onto the
+   current upstream `develop` first and carries the "Multi-Step Project" block.
 
 The two CodeRabbit threads on #20 are about code that lands in specific steps, so they are looked at again in whichever
-step's upstream PR contains that code. Deleting or force-pushing any published branch needs the owner's explicit go-ahead.
+step's fork PR contains that code. Deleting or force-pushing any published branch needs the owner's explicit go-ahead.
 
 Where the files go:
 
@@ -209,7 +215,7 @@ CHANGELOG) are the fiddly part: each has a draft half and a create half that mus
 existing branch is separately rebased onto step 1 and #190.
 
 **Current state (2026-09-20):** steps 1-5 are implemented and validated. No upstream PR exists. Fork PR #20 is open with
-steps 1-4 together; the step 5 branch is on `origin` (the fork) with no PR; steps 6 and 7 do not exist. Each remaining step is started only on the
+steps 1-4 together; the step 5 branch is on `origin` (the fork) with no fork PR yet; steps 6 and 7 do not exist. Each remaining step is started only on the
 owner's go-ahead. Each branch tracks `origin/<same-name>` via `git config branch.<name>.remote/merge`; nothing is
 pushed without permission.
 
@@ -378,9 +384,10 @@ Decisions made by the owner and where they ended up.
 12. **Split the combined branch into seven steps** (owner: "steps" over "slices"). The first slice had grown to about
     5,000 added lines, so it becomes steps 1-4 by layer (export foundations, creator, draft endpoint, create endpoint) and
     the sync matching, resync and UI become steps 5-7. Step 5 depends only on step 1. The split itself is not done yet.
-13. **The steps are upstream PRs; fork PR #20 is not.** An upstream PR cannot be based on a fork-only branch, so step branches
-    stack on the fork but each upstream PR opens only after the previous step merged, rebased onto upstream `develop`.
-    The CHANGELOG `(#NNN)` is the upstream PR number.
+13. **Two stages per step.** `origin` is for development, testing and AI review (fork PRs, CodeRabbit); an upstream PR is
+    created only on the owner's explicit command, once the step is ready for the maintainers. An upstream PR cannot be
+    based on a fork-only branch, so fork PRs stack on the previous step's branch but upstream PRs open one at a time after
+    the previous step merged, rebased onto upstream `develop`. The CHANGELOG `(#NNN)` is the upstream PR number.
 
 ## Ebook items: ebook editions (resolved, steps 1-4)
 
