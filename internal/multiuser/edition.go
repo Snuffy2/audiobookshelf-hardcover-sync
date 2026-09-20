@@ -23,8 +23,9 @@ const (
 	maxEditionPeople = 50
 	// maxEditionFormatLength bounds the free-text edition format label.
 	maxEditionFormatLength = 100
-	// editionCreateTimeout bounds one edition creation, including the cover upload.
-	editionCreateTimeout = 2 * time.Minute
+	// EditionCreateTimeout bounds one edition creation, including the cover
+	// upload. The HTTP layer sizes its response write deadline from it.
+	EditionCreateTimeout = 2 * time.Minute
 	// editionImageClientTimeout bounds a single cover download or upload request.
 	editionImageClientTimeout = 60 * time.Second
 )
@@ -192,7 +193,7 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 
 	// Finish the creation even if the caller disconnects, so an edition is not
 	// left without its cover; the timeout still bounds the work.
-	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), editionCreateTimeout)
+	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EditionCreateTimeout)
 	defer cancel()
 	result, err := creator.CreateEdition(createCtx, input)
 	if err != nil {

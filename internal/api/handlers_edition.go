@@ -6,12 +6,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/multiuser"
 )
 
 // maxEditionRequestBytes caps the create-edition request body.
 const maxEditionRequestBytes = 64 << 10
+
+// editionWriteDeadline is how long the response of an edition request may take
+// to be written, measured from when the handler starts. The server's default
+// write timeout is far shorter than an edition create, which may run for
+// multiuser.EditionCreateTimeout, so without this a slow request would finish
+// its work but the client would see a closed connection and retry into a
+// duplicate. The margin covers the requests around the create itself. Drafts
+// make many sequential paced Hardcover lookups and share the bound.
+const editionWriteDeadline = multiuser.EditionCreateTimeout + 15*time.Second
 
 // GetEditionDraft handles
 // GET /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft.
@@ -25,6 +35,7 @@ func (h *Handler) GetEditionDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.extendEditionWriteDeadline(w)
 	draft, err := h.multiUserService.PrepareEditionDraft(r.Context(), profileID, runID, bookID)
 	if err != nil {
 		h.writeEditionError(w, "prepare edition draft", profileID, err)
@@ -63,12 +74,23 @@ func (h *Handler) CreateEdition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.extendEditionWriteDeadline(w)
 	created, err := h.multiUserService.CreateEditionFromRunBook(r.Context(), profileID, runID, bookID, edits)
 	if err != nil {
 		h.writeEditionError(w, "create edition", profileID, err)
 		return
 	}
 	h.writeSuccessResponse(w, created)
+}
+
+// extendEditionWriteDeadline lifts the server's write timeout for this response
+// to editionWriteDeadline. It is best effort: a ResponseWriter that cannot set a
+// deadline keeps the server default, which only matters for requests that run
+// longer than that default.
+func (h *Handler) extendEditionWriteDeadline(w http.ResponseWriter) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(editionWriteDeadline)); err != nil {
+		h.log.Debug(fmt.Sprintf("Could not extend the write deadline for an edition request: %s", err.Error()))
+	}
 }
 
 // editionRequestIDs validates the path identifiers and authorizes the caller
