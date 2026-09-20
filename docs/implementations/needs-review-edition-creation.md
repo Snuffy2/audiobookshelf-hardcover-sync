@@ -18,15 +18,14 @@ step touches.
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
 | 3 | Read-only draft endpoint | `step_3_needs_review_add_edition` | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
-| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (today `feature/edition-from-needs-review-api`) | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | 3 | ~2,000, estimated | PR #20 currently holds steps 1-4 together; it is to be reduced to this step once 1-3 are split out. The PR body is stale |
+| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (not created yet; PR #20's branch today is `feature/edition-from-needs-review-api`, which holds steps 1-4 combined) | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | 3 | ~2,000, estimated | **The existing branch is not step 4 by itself**: it holds the code of steps 1-4 together, so it has to be split, not just renamed. Step 4 is rebuilt on top of step 3, and PR #20 is then moved onto it (see "How the combined branch is split"). The PR body is stale |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching`, locally and on origin, on 2026-09-20), no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
 | 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | 6 | ~500-800, estimated | Not started |
 
-**Branch names** are `step_N_needs_review_add_edition` for step N (1-7). The combined branch that holds steps 1-4 today
-keeps its old name, `feature/edition-from-needs-review-api`, until the split is done, because PR #20 is opened from it;
-then it is renamed to `step_4_needs_review_add_edition` with GitHub's branch rename (which keeps the PR) rather than
-being deleted and re-pushed.
+**Branch names** are `step_N_needs_review_add_edition` for step N (1-7). The combined branch that holds steps 1-4 today,
+`feature/edition-from-needs-review-api`, is not any single step: the step branches are new branches built from it (see
+"How the combined branch is split"), and it becomes step 4 only at the end.
 
 Stacking and merge order: 1, 2, 3, 4 merge in that order, each PR based on the previous branch until that one
 merges (GitHub retargets it to `develop` afterwards). Step 5 needs only step 1's `internal/isbn`, so it can merge
@@ -79,7 +78,7 @@ now seven steps. Nothing is user-visible until step 7, so no half-finished butto
   ebook or audiobook, identifier requirement), the `newHardcoverClient` extraction, admission checks, the handler
   and route, the shared `internal/edition/editiontest` fakes, README and OpenAPI for the draft, and CHANGELOG.
   A read-only endpoint that works on its own and is exercisable with curl.
-- **Step 4 - Create endpoint** (`step_4_needs_review_add_edition`, stacked on 3; this is PR #20, whose branch is renamed from `feature/edition-from-needs-review-api` once the split is done).
+- **Step 4 - Create endpoint** (`step_4_needs_review_add_edition`, stacked on 3; PR #20 is moved onto it, see "How the combined branch is split").
   `POST .../edition`: `CreateEditionFromRunBook`, request validation and normalization, the in-flight guard, the
   dedicated edition wait group so `Shutdown` cancels syncs before draining creates, the detached 2-minute create
   context, the response write deadline (with `Unwrap()` on the logger's response wrapper), the create handler and
@@ -127,9 +126,25 @@ Nothing below has been done; it needs the owner's go-ahead. The combined branch 
 (tip edf4893, 40 commits over `develop` eb50565, pushed) holds steps 1-4. Its 40 commits
 are interleaved fixes and cleanups, so cherry-picking by commit would not separate the layers. Instead each step's
 branch is built from `develop` (stacked on the previous step) by taking that step's files from the combined branch,
-committed as a few clean commits, then run through the full gates. Step 4 reuses the existing branch and PR #20 so
-its review history stays: once steps 1-3 exist it is rebuilt to contain only the create endpoint and retargeted to
-step 3's branch. The two CodeRabbit threads on #20 move to whichever step they belong to.
+committed as a few clean commits, then run through the full gates.
+
+Order of operations, keeping PR #20 and its review history:
+
+1. Build the step 1, 2 and 3 branches (`step_1_...`, `step_2_...`, `step_3_...`), each stacked on the previous one and
+   gated. They are new branches; the combined branch is not touched yet.
+2. Rebuild step 4 on top of step 3: take the create-endpoint half of the combined branch's files on top of the step 3
+   branch, as a few clean commits, and gate it. Its final tree equals the combined branch's tree, so nothing is lost;
+   only the history differs, and against step 3 its diff is just the create endpoint.
+3. Move PR #20 onto that history. The PR's head ref is `feature/edition-from-needs-review-api`, so that branch is
+   force-pushed (with a pinned lease) to the rebuilt step 4 history, and the PR's base is changed from `develop` to
+   step 3's branch. GitHub keeps the PR and its conversation, though inline comments on lines that moved show as
+   outdated. Then the branch is renamed to `step_4_needs_review_add_edition` with GitHub's branch rename API, which
+   keeps the PR (nothing is deleted and re-pushed).
+4. Merge in order 1, 2, 3, 4. As each merges, the next PR's base is retargeted to `develop` (GitHub does this when the
+   base branch is deleted after merge).
+
+The two CodeRabbit threads on #20 move to whichever step they belong to. The force-push in step 3 and the rename
+change published branches, so each needs the owner's explicit go-ahead.
 
 Where the files go:
 
