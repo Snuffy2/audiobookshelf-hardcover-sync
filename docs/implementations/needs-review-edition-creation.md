@@ -116,6 +116,39 @@ all local, nothing pushed). Where this differs from the plan above, this section
   golangci-lint.
 - **Not exercised:** the real Hardcover image upload and live Audnex lookups.
 
+## Ebook items: audiobook-only assumptions (open question)
+
+Added while working on ebook detection and matching (branch `fix/ebook-detection-and-matching`, not part of
+this feature). Audiobookshelf reports `mediaType: "book"` for ebooks too, and that branch is the first to
+recognize ebook-only items from their media content, honor `include_ebooks`, and match them to Hardcover
+**ebook** editions (reading format id 4). Once it lands, an ebook-only item with `include_ebooks: true` can end
+a run as `needs_review`, so it becomes eligible for the **Add edition to Hardcover** button. The edition
+creation path is audiobook-only and would create the wrong kind of edition for it:
+
+- `Creator.createEdition` (`internal/edition/creator.go`) always sends `reading_format_id: 2` (Audiobook). Slice 1
+  (240d2fa) made `edition_format` follow `EditionInput.EditionFormat`, but that is a free-text label; it does not
+  change the reading format, which stays 2 either way.
+- `BookMismatch.ToEditionExport` (`internal/mismatch/types.go`) maps an empty or "Audiobook" format to
+  `Audible Audio` when an ASIN exists (else `libro.fm` or empty), so the draft's `edition_format` is an
+  audiobook label.
+- The draft and `EditionInput` are audiobook-shaped: narrators, `audio_length`, an Audible-style ASIN.
+- The `edition` CLI and `cmd/image-tool` call the same creator, so they have the same limitation. The sync
+  service never creates editions, so ordinary syncs are unaffected.
+
+Nothing here changes Slice 1 as implemented. The open decision is which of these to do, and in which slice:
+
+1. **Restrict:** make an ebook-only run record ineligible (`ErrEditionNotEligible`) so the button never appears
+   for it. Smallest and safest; needs the item's format on the run record, which Sync Status already shows as
+   `format` (`Audiobook`/`Ebook`).
+2. **Support:** add a reading format to `EditionInput` and the mismatch export (default audiobook, so existing
+   behavior is unchanged), set from the item's format, send `reading_format_id: 4` and skip the audio-only fields
+   for ebooks.
+
+Recommendation: ship Slice 1 as is, add option 1 to whichever slice touches eligibility (Slice 1 if it has not
+merged, otherwise Slice 2), and treat option 2 as a follow-up. Either way the Slice 3 UI should not offer the
+button for a record it cannot create correctly. Not verified against live Hardcover: which reading format id
+and `edition_format` values Hardcover expects for an ebook edition created through `insert_edition`.
+
 ## Reuse (already in the repo)
 
 - `internal/edition/creator.go`: `EditionInput`, `Creator.CreateEdition` (validates, dry-run
