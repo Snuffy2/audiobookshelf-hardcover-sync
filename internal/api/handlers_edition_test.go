@@ -434,7 +434,7 @@ func TestCreateEditionWithAnExistingASIN(t *testing.T) {
 
 		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
 		require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
-		require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on a different Hardcover book.", decodeEnvelope(t, recorder).Error)
+		require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
 		require.NotContains(t, recorder.Body.String(), "9999")
 		require.Empty(t, f.hardcover.recordedMutations())
 	})
@@ -449,7 +449,7 @@ func TestCreateEditionWithADuplicateISBN13OnAnotherBookIsAConflict(t *testing.T)
 		`{"title":"A Title","isbn_13":"9781234567897","language_id":1,"country_id":1,"author_ids":[101]}`)
 
 	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
-	require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on a different Hardcover book.", decodeEnvelope(t, recorder).Error)
+	require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
 	require.NotContains(t, recorder.Body.String(), "9999")
 	require.Len(t, f.hardcover.recordedMutations(), 1, "only the rejected insert may reach Hardcover")
 }

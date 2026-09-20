@@ -42,7 +42,9 @@ var (
 	ErrEditionItemNotFound = errors.New("audiobookshelf item not found")
 
 	// ErrEditionConflict indicates that the submitted ASIN or ISBN-13 already
-	// belongs to an edition of a different Hardcover book than the run record's.
+	// belongs to an edition that is not confirmed to be of the run record's
+	// Hardcover book: another book's, or one whose book ID is unknown or differs
+	// for another reason, such as a merged or canonical book.
 	ErrEditionConflict = errors.New("asin or isbn-13 belongs to an edition of a different hardcover book")
 
 	// ErrEditionInProgress indicates that an edition submit for the same book is already running.
