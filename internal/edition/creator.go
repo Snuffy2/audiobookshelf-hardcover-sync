@@ -760,7 +760,7 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 		if adoptErr != nil {
 			return 0, false, adoptErr
 		}
-		c.log.Info("Edition already exists", map[string]interface{}{
+		c.log.Debug("Edition already exists", map[string]interface{}{
 			"edition_id": editionID,
 			"matched_by": by.kind,
 			"identifier": by.value,
