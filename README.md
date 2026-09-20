@@ -181,7 +181,9 @@ envelope.
 - **Dry run**: if the profile is in dry-run mode, the request is still
   validated, but nothing is created on Hardcover and `edition_id` is `0`.
 - **Timeout**: creation continues even if the caller disconnects, and is
-  limited to 2 minutes, including the cover upload.
+  limited to 2 minutes, including the cover upload. On shutdown, running syncs
+  are cancelled first and in-flight creates are allowed to finish, bounded by
+  the shutdown timeout; requests that start after shutdown begins get `503`.
 - **Audiobookshelf token**: the profile's Audiobookshelf token is used only on
   the server, to fetch the item and its cover, and is never returned.
 
