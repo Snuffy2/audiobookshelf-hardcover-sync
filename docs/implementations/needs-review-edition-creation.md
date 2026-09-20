@@ -1,6 +1,8 @@
 # Implementation Plan: Add an Edition to Hardcover from a `needs_review` Book
 
-**Status: 🚧 PLANNED** (2026-09-19)
+**Status: 🚧 IN PROGRESS** (2026-09-19)
+
+Slice 1 is implemented; Slices 2 and 3 are not started.
 
 ## Slice Tracker
 
@@ -8,9 +10,11 @@ Update this table as each slice lands. Each slice must leave `develop` working a
 
 | Slice | Branch | PR | Status |
 |-------|--------|----|--------|
-| 1 — Create-edition API | `feature/edition-from-needs-review-api` | — | Not started |
+| 1 — Create-edition API | `feature/edition-from-needs-review-api` | — | Implemented and validated locally on the branch; PR not yet opened |
 | 2 — Immediate read-status resync (backend) | `feature/needs-review-edition-resync` | — | Not started |
 | 3 — UI | `feature/needs-review-edition-ui` | — | Not started |
+
+Slice 2 builds on the Slice 1 branch and on `develop` at or after a2ad4b4 (#188 changed `internal/sync/service.go`, which `SyncBook` will call into).
 
 
 ## Context
@@ -72,6 +76,46 @@ slices become stacked branches. Each branch is created from `develop` (stack on 
 has not merged yet) and tracks `origin/<same-name>` via `git config branch.<name>.remote/merge` — no push
 without permission.
 
+## Slice 1 implementation notes
+
+Recorded after Slice 1 was implemented and validated locally (branch tip 374b7b2, 13 commits over `develop` a2ad4b4,
+all local, nothing pushed). Where this differs from the plan above, this section is what shipped.
+
+- **Draft sub-package.** The draft builder is `internal/edition/draft/draft.go` (`draft.New`, `draft.Draft`,
+  `draft.CoverURL`), not `internal/edition/draft.go` / `edition.NewDraft`. It is a sub-package because `edition` ->
+  `mismatch` -> `api/hardcover` -> `edition` would be an import cycle.
+- **Extra request validation** (`validateEditionInput` in `internal/multiuser/edition.go`, failures return 422):
+  author and narrator ID lists are at most 50 entries each and every ID must be positive; publisher, language,
+  country and audio length must not be negative; `edition_format` is limited to 100 runes after trimming
+  ("edition format must be at most 100 characters").
+- **Extra statuses** beyond the plan: 503 when the service is shutting down, 409 when the profile is being deleted,
+  400 for an oversize body or a body that is not exactly one JSON object, and 401/500 from the handler path
+  (authentication and unexpected failures).
+- **Detached create context.** Creation runs on a context detached from the request (`context.WithoutCancel`) with
+  a 2-minute timeout, so a client disconnect cannot leave an edition without its cover.
+- **Cover URL hardening (9d3b3e6).** `draft.CoverURL` strips credentials, query and fragment from the profile's
+  Audiobookshelf base URL before building the cover URL.
+- **`newHardcoverClient` refactor (91d6d29).** The extracted helper's debug log no longer carries `profile_id`.
+- **Edition format fix (240d2fa).** `Creator.createEdition` previously hardcoded `edition_format: "Audiobook"` and
+  ignored `EditionInput.EditionFormat`. It now sends the trimmed requested format and falls back to "Audiobook" when
+  empty; `reading_format_id` stays 2. This also changes the behavior of the `edition` CLI. The Hardcover schema shows
+  `BookDtoInput.edition_format` is a free-text String.
+- **Cover failure signal (319955d).** Cover upload failures were previously swallowed. `EditionResult` now has an
+  additive `ImageError` (`image_error,omitempty`, a fixed step label only), and the POST response carries a
+  `warnings` array (see Backend 6). The status is still 200 when only the cover failed.
+- **Test seam (12b2c47).** An unexported `newEditionCreator` seam on `MultiUserService` allows service-level tests
+  proving the ABS token goes only to the ABS cover host, and that removing the service's `hcClient.SetDryRun` makes
+  the dry-run test fail.
+- **Docs commits.** 85e610d and 374b7b2 hold the README, OpenAPI and CHANGELOG changes. The CHANGELOG entries still
+  lack the `(#NNN)` PR number, to be added when the PR exists.
+- **Known limitation (left for the owner to decide).** The in-flight guard only stops concurrent submits. A repeat
+  sequential submit for a book without an ASIN creates a duplicate edition, because the run record stays
+  `needs_review`. Only ASIN de-duplication exists.
+- **Validation.** `make test`, `make test-all`, `-race` and the JS tests pass. `make lint` passes only with the
+  CI-matching Go 1.26.7 toolchain first on `PATH`; the default Go 1.27.1 cannot typecheck the repo with the pinned
+  golangci-lint.
+- **Not exercised:** the real Hardcover image upload and live Audnex lookups.
+
 ## Reuse (already in the repo)
 
 - `internal/edition/creator.go`: `EditionInput`, `Creator.CreateEdition` (validates, dry-run
@@ -113,14 +157,14 @@ written onto a public edition — is fixed in place (see Backend 2).
    (same auth/timeout style as `GetLibraryItems`; 404 -> typed not-found error). Not added to
    `AudiobookshelfClientInterface` (avoids breaking existing mocks); callers use the concrete client.
 
-2. **[Slice 1] Draft = existing pipeline, one small fix** (`internal/mismatch/mismatch.go`, new `internal/edition/draft.go`):
+2. **[Slice 1] Draft = existing pipeline, one small fix** (`internal/mismatch/mismatch.go`, new `internal/edition/draft/draft.go`, package `draft`; see Slice 1 implementation notes):
    - **Fix in place:** in `AddWithMetadata`, stop defaulting `publisherID := 1`; leave `0` (unresolved).
      `ToEditionExport` and `Creator.createEdition` already treat `0` as "no publisher" (`if input.PublisherID > 0`).
      This changes the mismatch JSON export too: an unresolved publisher now exports `publisher_id: 0` instead of
      `1`, so the `edition` CLI would stop stamping publisher 1 on imports. I can't verify offline what Hardcover
      publisher ID 1 is, so this is called out for review. Update the assertion at `mismatch_test.go:488` and add a
      case for "publisher name resolves -> its ID" / "unresolved -> 0". No other change to `AddWithMetadata`.
-   - **Draft:** `edition.NewDraft(ctx, absBook, hardcoverBookID, absBaseURL, hc, region)`:
+   - **Draft:** `draft.New(ctx, absBook, hardcoverBookID, absBaseURL, hc, region)`:
      1. `mismatch.NewCollector().AddWithMetadata(MediaMetadata{...from the ABS item...}, book.ID, "", reason,
         duration, book.ID, hc, region)` — the same call the sync service makes (`service.go` ~2327);
      2. set `m.HardcoverBookID` to the run record's Hardcover book ID (overriding whatever enrichment guessed);
@@ -193,6 +237,9 @@ written onto a public edition — is fixed in place (see Backend 2).
      409 (Slice 1); full sync active while `resync` is requested 409 (Slice 2); validation failure (e.g. no author
      resolved) 422 with a readable message; upstream ABS/Hardcover failure 502.
      POST success: `{edition_id, dry_run}` in Slice 1; Slice 2 adds `resync: {attempted, outcome, reason, error}`.
+     Added after validation: the Slice 1 POST success `data` is `{edition_id, dry_run, warnings}`, where `warnings` is a
+     `[]string` that is always present (an empty array when nothing went wrong). It holds one fixed message when the
+     edition was created but its cover could not be uploaded; the status stays 200.
 
 ## [Slice 3] Frontend (`web/static/app.js`, `index.html`, `styles.css`)
 
@@ -228,7 +275,7 @@ possible follow-up.
 - **Slice 1** — `internal/api/audiobookshelf/client_test.go`: `GetLibraryItem` success, 404, auth header/path.
 - **Slice 1** — `internal/mismatch/mismatch_test.go`: other `AddWithMetadata` tests (incl. Audnex region fallback) pass unchanged;
   the publisher assertion is updated and a resolved-publisher case added.
-- **Slice 1** — `internal/edition/draft_test.go` (fake Hardcover client): people/publisher IDs carried through, Hardcover book ID
+- **Slice 1** — `internal/edition/draft/draft_test.go` (fake Hardcover client): people/publisher IDs carried through, Hardcover book ID
   taken from the run record, unresolved author/publisher/date -> warnings, cover URL forced to the ABS base URL,
   `ToInput()` mapping.
 - **Slice 1** — `internal/edition/creator_test.go`: ABS token attached only under the configured base URL.
