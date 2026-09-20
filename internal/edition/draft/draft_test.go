@@ -246,9 +246,6 @@ func TestNew_CoverURL(t *testing.T) {
 			if d.CoverURL != tt.want {
 				t.Errorf("CoverURL = %q, want %q", d.CoverURL, tt.want)
 			}
-			if got := d.ToInput().ImageURL; got != tt.want {
-				t.Errorf("ToInput().ImageURL = %q, want %q", got, tt.want)
-			}
 		})
 	}
 }
@@ -271,40 +268,6 @@ func TestNew_RejectsInvalidArguments(t *testing.T) {
 				t.Fatal("New() error = nil, want an error")
 			}
 		})
-	}
-}
-
-func TestDraft_ToInput(t *testing.T) {
-	d := &draft.Draft{
-		HardcoverBookID:    42,
-		Title:              "T",
-		Subtitle:           "S",
-		ASIN:               "B000000000",
-		ISBN10:             "1234567890",
-		ISBN13:             "9781234567897",
-		ReleaseDate:        "2020-05-06",
-		EditionInformation: "Unabridged",
-		EditionFormat:      "Audible Audio",
-		AudioSeconds:       3600,
-		LanguageID:         2,
-		CountryID:          3,
-		AuthorIDs:          []int{1, 2},
-		NarratorIDs:        []int{4},
-		PublisherID:        5,
-		CoverURL:           "https://abs.example.com/api/items/x/cover",
-	}
-	in := d.ToInput()
-
-	if in.BookID != 42 || in.Title != "T" || in.Subtitle != "S" || in.ASIN != "B000000000" ||
-		in.ISBN10 != "1234567890" || in.ISBN13 != "9781234567897" || in.ReleaseDate != "2020-05-06" ||
-		in.EditionInfo != "Unabridged" || in.EditionFormat != "Audible Audio" || in.AudioLength != 3600 ||
-		in.LanguageID != 2 || in.CountryID != 3 || in.PublisherID != 5 ||
-		in.ImageURL != "https://abs.example.com/api/items/x/cover" ||
-		!reflect.DeepEqual(in.AuthorIDs, []int{1, 2}) || !reflect.DeepEqual(in.NarratorIDs, []int{4}) {
-		t.Errorf("ToInput() = %+v", in)
-	}
-	if err := in.Validate(); err != nil {
-		t.Errorf("ToInput().Validate() = %v, want nil for a complete draft", err)
 	}
 }
 

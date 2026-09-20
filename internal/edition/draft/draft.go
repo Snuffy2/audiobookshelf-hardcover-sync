@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
-	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/mismatch"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
@@ -143,29 +142,6 @@ func New(ctx context.Context, absBook models.AudiobookshelfBook, hardcoverBookID
 	}
 	d.Warnings = d.buildWarnings()
 	return d, nil
-}
-
-// ToInput maps the draft to the edition creator's input. The image URL is the
-// draft's server-forced cover URL.
-func (d *Draft) ToInput() *edition.EditionInput {
-	return &edition.EditionInput{
-		BookID:        d.HardcoverBookID,
-		Title:         d.Title,
-		Subtitle:      d.Subtitle,
-		ImageURL:      d.CoverURL,
-		ISBN10:        d.ISBN10,
-		ISBN13:        d.ISBN13,
-		ASIN:          d.ASIN,
-		PublisherID:   d.PublisherID,
-		LanguageID:    d.LanguageID,
-		CountryID:     d.CountryID,
-		AuthorIDs:     d.AuthorIDs,
-		NarratorIDs:   d.NarratorIDs,
-		AudioLength:   d.AudioSeconds,
-		ReleaseDate:   d.ReleaseDate,
-		EditionInfo:   d.EditionInformation,
-		EditionFormat: d.EditionFormat,
-	}
 }
 
 // buildWarnings lists conditions the user should know about before creating
