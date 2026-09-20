@@ -207,7 +207,7 @@ func editionAPIItem(id, title, author, coverPath string) map[string]interface{} 
 		"mediaType": "book",
 		"media": map[string]interface{}{
 			"coverPath": coverPath,
-			"metadata":  map[string]interface{}{"title": title, "authorName": author},
+			"metadata":  map[string]interface{}{"title": title, "authorName": author, "isbn": "978-0-306-40615-7"},
 			"duration":  3600.0,
 		},
 	}
@@ -303,7 +303,7 @@ func reviewRecord(bookID, hardcoverBookID string) syncsvc.BookOutcomeRecord {
 	return syncsvc.BookOutcomeRecord{BookID: bookID, Outcome: syncsvc.OutcomeNeedsReview, HardcoverBookID: hardcoverBookID}
 }
 
-const validEditionBody = `{"title":"A Title","release_date":"2021-02-03","edition_information":"Unabridged",` +
+const validEditionBody = `{"title":"A Title","isbn_13":"9780306406157","release_date":"2021-02-03","edition_information":"Unabridged",` +
 	`"audio_seconds":3600,"language_id":1,"country_id":1,"author_ids":[101],"narrator_ids":[202]}`
 
 func singleItemFixture(t *testing.T, dryRun bool, item map[string]interface{}) *editionAPIFixture {
@@ -451,6 +451,72 @@ func TestCreateEditionWithAnISBNOnAnotherBooksEditionIsAConflict(t *testing.T) {
 	require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
 	require.NotContains(t, recorder.Body.String(), "9999")
 	require.Empty(t, f.hardcover.recordedMutations(), "the match is found before any insert is attempted")
+}
+
+func TestEditionEndpointsRejectABookWithoutAnASINOrISBN(t *testing.T) {
+	item := editionAPIItem("item-1", "Title", "Author", "/cover.jpg")
+	delete(item["media"].(map[string]interface{})["metadata"].(map[string]interface{}), "isbn")
+	f := singleItemFixture(t, false, item)
+	const want = "This book has no ASIN or ISBN in Audiobookshelf, so an edition created for it could not be matched by a sync. Add an ASIN or ISBN in Audiobookshelf first."
+
+	draft := f.do(http.MethodGet, editionBasePath+"item-1/edition-draft", "")
+	require.Equal(t, http.StatusConflict, draft.Code, draft.Body.String())
+	require.Equal(t, want, decodeEnvelope(t, draft).Error)
+
+	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
+	require.Equal(t, http.StatusConflict, create.Code, create.Body.String())
+	require.Equal(t, want, decodeEnvelope(t, create).Error)
+	require.Empty(t, f.hardcover.recordedMutations())
+}
+
+func TestCreateEditionRequiresAnIdentifierInTheRequest(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","author_ids":[101]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
+	require.Equal(t, "an ASIN or ISBN is required", decodeEnvelope(t, recorder).Error)
+
+	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","isbn_13":"12345","author_ids":[101]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
+	require.Contains(t, decodeEnvelope(t, recorder).Error, "isbn_13")
+	require.Empty(t, f.hardcover.recordedMutations())
+}
+
+func TestCreateEditionAcceptsAHyphenatedISBNAndSendsItNormalized(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
+		`{"title":"A Title","isbn_13":"978-0-306-40615-7","language_id":1,"country_id":1,"author_ids":[101]}`)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	mutations := f.hardcover.recordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.Equal(t, "9780306406157", dto["isbn_13"])
+}
+
+func TestCreateEditionByISBN10MatchesAnExistingEdition(t *testing.T) {
+	const body = `{"title":"A Title","isbn_10":"0-306-40615-2","language_id":1,"country_id":1,"author_ids":[101]}`
+
+	t.Run("an edition of the same book is returned untouched", func(t *testing.T) {
+		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
+		f.hardcover.isbns["0306406152"] = existingEdition{editionID: 555, bookID: 4242}
+
+		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		require.Equal(t, map[string]interface{}{"edition_id": float64(555), "dry_run": false, "warnings": []interface{}{}}, decodeEnvelope(t, recorder).Data)
+		require.Empty(t, f.hardcover.recordedMutations())
+	})
+
+	t.Run("an edition of another book is a conflict", func(t *testing.T) {
+		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
+		f.hardcover.isbns["0306406152"] = existingEdition{editionID: 555, bookID: 9999}
+
+		recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
+		require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+		require.NotContains(t, recorder.Body.String(), "9999")
+		require.Empty(t, f.hardcover.recordedMutations())
+	})
 }
 
 func TestCreateEditionSendsTheRequestedEditionFormat(t *testing.T) {

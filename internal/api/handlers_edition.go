@@ -130,6 +130,8 @@ func (h *Handler) writeEditionError(w http.ResponseWriter, action, profileID str
 		h.writeErrorResponse(w, http.StatusConflict, "Only needs-review books that matched a Hardcover book can get a new edition")
 	case errors.Is(err, multiuser.ErrEditionConflict):
 		h.writeErrorResponse(w, http.StatusConflict, "An edition with this ASIN or ISBN-13 already exists on Hardcover and could not be confirmed to belong to this book.")
+	case errors.Is(err, multiuser.ErrEditionNoIdentifier):
+		h.writeErrorResponse(w, http.StatusConflict, "This book has no ASIN or ISBN in Audiobookshelf, so an edition created for it could not be matched by a sync. Add an ASIN or ISBN in Audiobookshelf first.")
 	case errors.Is(err, multiuser.ErrEditionInProgress):
 		h.writeErrorResponse(w, http.StatusConflict, "An edition is already being created for this book")
 	case errors.Is(err, multiuser.ErrProfileDeleting):

@@ -14,6 +14,7 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition/draft"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/isbn"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 )
@@ -46,6 +47,11 @@ var (
 	// Hardcover book: another book's, or one whose book ID is unknown or differs
 	// for another reason, such as a merged or canonical book.
 	ErrEditionConflict = errors.New("asin or isbn-13 belongs to an edition of a different hardcover book")
+
+	// ErrEditionNoIdentifier indicates that the Audiobookshelf item has neither
+	// an ASIN nor a valid ISBN, so an edition created for it could never be
+	// matched by a later sync.
+	ErrEditionNoIdentifier = errors.New("audiobookshelf item has no asin or isbn")
 
 	// ErrEditionInProgress indicates that an edition submit for the same book is already running.
 	ErrEditionInProgress = errors.New("an edition is already being created for this book")
@@ -132,6 +138,9 @@ func (s *MultiUserService) PrepareEditionDraft(ctx context.Context, profileID, r
 	if err != nil {
 		return nil, err
 	}
+	if !hasEditionIdentifier(item) {
+		return nil, ErrEditionNoIdentifier
+	}
 
 	hcClient := s.newHardcoverClient(target.profile.HardcoverToken)
 	built, err := draft.New(ctx, *item, target.hardcoverBookID, target.profile.AudiobookshelfURL, hcClient, target.profile.SyncConfig.AudnexusRegion)
@@ -169,6 +178,9 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	item, err := s.fetchEditionItem(ctx, target.profile, bookID)
 	if err != nil {
 		return nil, err
+	}
+	if !hasEditionIdentifier(item) {
+		return nil, ErrEditionNoIdentifier
 	}
 
 	input := &edition.EditionInput{
@@ -272,6 +284,18 @@ func (s *MultiUserService) resolveEditionTarget(profileID, runID, bookID string)
 	return nil, ErrEditionNotFound
 }
 
+// hasEditionIdentifier reports whether the Audiobookshelf item carries an ASIN
+// or a well-formed ISBN. Without one a sync can never match an edition created
+// for the book, so no edition is drafted or created.
+func hasEditionIdentifier(item *models.AudiobookshelfBook) bool {
+	meta := item.Media.Metadata
+	if strings.TrimSpace(meta.ASIN) != "" {
+		return true
+	}
+	_, ok := isbn.Parse(meta.ISBN)
+	return ok
+}
+
 // fetchEditionItem reads the current Audiobookshelf item for bookID.
 func (s *MultiUserService) fetchEditionItem(ctx context.Context, profile *database.ProfileWithTokens, bookID string) (*models.AudiobookshelfBook, error) {
 	absClient := audiobookshelf.NewClient(profile.AudiobookshelfURL, profile.AudiobookshelfToken)
@@ -313,6 +337,9 @@ func validateEditionInput(input *edition.EditionInput) error {
 	if err := input.Validate(); err != nil {
 		return err
 	}
+	if err := normalizeEditionIdentifiers(input); err != nil {
+		return err
+	}
 	if len(input.AuthorIDs) > maxEditionPeople || len(input.NarratorIDs) > maxEditionPeople {
 		return fmt.Errorf("at most %d authors and %d narrators are allowed", maxEditionPeople, maxEditionPeople)
 	}
@@ -326,6 +353,36 @@ func validateEditionInput(input *edition.EditionInput) error {
 	}
 	if input.PublisherID < 0 || input.LanguageID < 0 || input.CountryID < 0 || input.AudioLength < 0 {
 		return errors.New("publisher, language, country, and audio length must not be negative")
+	}
+	return nil
+}
+
+// normalizeEditionIdentifiers trims the ASIN and rewrites the ISBNs without
+// hyphens or spaces, so a caller may send them either way. A value that is not
+// the right shape for its field is an error, and at least one identifier is
+// required: an edition without one could never be matched by a sync.
+func normalizeEditionIdentifiers(input *edition.EditionInput) error {
+	input.ASIN = strings.TrimSpace(input.ASIN)
+	if strings.TrimSpace(input.ISBN10) != "" {
+		parsed, ok := isbn.Parse(input.ISBN10)
+		if !ok || parsed.Is13 {
+			return errors.New("isbn_10 must be a valid 10-character ISBN")
+		}
+		input.ISBN10 = parsed.Given
+	} else {
+		input.ISBN10 = ""
+	}
+	if strings.TrimSpace(input.ISBN13) != "" {
+		parsed, ok := isbn.Parse(input.ISBN13)
+		if !ok || !parsed.Is13 {
+			return errors.New("isbn_13 must be a valid 13-digit ISBN")
+		}
+		input.ISBN13 = parsed.Given
+	} else {
+		input.ISBN13 = ""
+	}
+	if input.ASIN == "" && input.ISBN10 == "" && input.ISBN13 == "" {
+		return errors.New("an ASIN or ISBN is required")
 	}
 	return nil
 }

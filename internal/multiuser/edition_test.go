@@ -33,6 +33,8 @@ type editionHardcoverFake struct {
 	writes       []string // every GraphQL mutation document received, of any kind
 	failWith     string   // GraphQL error message returned for insert_edition
 
+	requests int // every request received, of any kind
+
 	entered chan struct{} // receives once per insert_edition that has started
 	release chan struct{} // when non-nil, insert_edition waits for it to close
 
@@ -83,6 +85,9 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 		respond := func(data map[string]interface{}) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
 		}
+		fake.mu.Lock()
+		fake.requests++
+		fake.mu.Unlock()
 
 		if strings.HasPrefix(strings.TrimSpace(request.Query), "mutation") {
 			fake.mu.Lock()
@@ -189,6 +194,12 @@ func (f *editionHardcoverFake) recordedMutations() []map[string]interface{} {
 	return append([]map[string]interface{}(nil), f.mutations...)
 }
 
+func (f *editionHardcoverFake) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
+}
+
 func (f *editionHardcoverFake) recordedWrites() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -221,15 +232,15 @@ func newEditionAudiobookshelfFake(t *testing.T, items map[string]map[string]inte
 	return fake
 }
 
-// editionItem builds an Audiobookshelf item without a cover or ASIN, so no
-// image upload or Audnex lookup is attempted.
+// editionItem builds an Audiobookshelf item with a hyphenated ISBN but no cover
+// or ASIN, so no image upload or Audnex lookup is attempted.
 func editionItem(id, title, author string) map[string]interface{} {
 	return map[string]interface{}{
 		"id":        id,
 		"libraryId": "library",
 		"mediaType": "book",
 		"media": map[string]interface{}{
-			"metadata": map[string]interface{}{"title": title, "authorName": author},
+			"metadata": map[string]interface{}{"title": title, "authorName": author, "isbn": "978-0-306-40615-7"},
 			"duration": 3600.0,
 		},
 	}
@@ -283,6 +294,7 @@ func needsReview(bookID, hardcoverBookID string) syncsvc.BookOutcomeRecord {
 func validEdits() EditionEdits {
 	return EditionEdits{
 		Title:              "A Title",
+		ISBN13:             "9780306406157",
 		ReleaseDate:        "2021-02-03",
 		EditionInformation: "Unabridged",
 		AudioSeconds:       3600,
@@ -375,6 +387,12 @@ func TestCreateEditionFromRunBook_RejectsInvalidEdits(t *testing.T) {
 		mutate func(*EditionEdits)
 	}{
 		{"no author", func(e *EditionEdits) { e.AuthorIDs = nil }},
+		{"no ASIN or ISBN", func(e *EditionEdits) { e.ISBN13 = "" }},
+		{"blank ASIN and ISBNs", func(e *EditionEdits) { e.ASIN, e.ISBN10, e.ISBN13 = "  ", " ", "\t" }},
+		{"malformed ISBN-13", func(e *EditionEdits) { e.ISBN13 = "978030640615" }},
+		{"ISBN-10 sent as the ISBN-13", func(e *EditionEdits) { e.ISBN13 = "0306406152" }},
+		{"malformed ISBN-10", func(e *EditionEdits) { e.ISBN10 = "03064061" }},
+		{"ISBN-13 sent as the ISBN-10", func(e *EditionEdits) { e.ISBN10 = "9780306406157" }},
 		{"no title", func(e *EditionEdits) { e.Title = "" }},
 		{"blank title", func(e *EditionEdits) { e.Title = " \t\n " }},
 		{"malformed release date", func(e *EditionEdits) { e.ReleaseDate = "03/02/2021" }},
@@ -511,4 +529,63 @@ func TestPrepareEditionDraft_ResolvesFromTheRunRecord(t *testing.T) {
 		require.Empty(t, built.CoverURL, "an item without a cover has no cover URL")
 		require.Empty(t, f.hardcover.recordedMutations(), "previewing must never mutate Hardcover")
 	}
+}
+
+func TestEditionRequestsRequireAnIdentifierOnTheAudiobookshelfItem(t *testing.T) {
+	item := func(mutate func(meta map[string]interface{})) map[string]map[string]interface{} {
+		it := editionItem("item-1", "A Title", "An Author")
+		mutate(it["media"].(map[string]interface{})["metadata"].(map[string]interface{}))
+		return map[string]map[string]interface{}{"item-1": it}
+	}
+	tests := []struct {
+		name    string
+		items   map[string]map[string]interface{}
+		allowed bool
+		noDraft bool // a draft of an item with an ASIN would query the public Audnex API
+	}{
+		{name: "neither ASIN nor ISBN", items: item(func(m map[string]interface{}) { delete(m, "isbn") })},
+		{name: "blank ASIN and ISBN", items: item(func(m map[string]interface{}) { m["isbn"], m["asin"] = " ", "  " })},
+		{name: "an ISBN that is not an ISBN", items: item(func(m map[string]interface{}) { m["isbn"] = "not-an-isbn" })},
+		{name: "an ISBN only", items: item(func(m map[string]interface{}) {}), allowed: true},
+		{name: "an ASIN only", items: item(func(m map[string]interface{}) { delete(m, "isbn"); m["asin"] = "B0EXISTING1" }), allowed: true, noDraft: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newEditionFixture(t, false, []syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")}, tt.items)
+
+			var draftErr error
+			if !tt.noDraft {
+				_, draftErr = f.service.PrepareEditionDraft(context.Background(), "profile-1", "run-1", "item-1")
+			}
+			_, createErr := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+
+			if tt.allowed {
+				require.NotErrorIs(t, draftErr, ErrEditionNoIdentifier)
+				require.NotErrorIs(t, createErr, ErrEditionNoIdentifier)
+				return
+			}
+			require.ErrorIs(t, draftErr, ErrEditionNoIdentifier)
+			require.ErrorIs(t, createErr, ErrEditionNoIdentifier)
+			require.Zero(t, f.hardcover.requestCount(), "no Hardcover request may be made for a book without an identifier")
+		})
+	}
+}
+
+func TestCreateEditionFromRunBook_NormalizesSubmittedISBNs(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+	edits := validEdits()
+	edits.ISBN13 = "978-0-306-40615-7"
+	edits.ISBN10 = " 0-306-40615-2 "
+
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+	require.NoError(t, err)
+
+	mutations := f.hardcover.recordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.Equal(t, "9780306406157", dto["isbn_13"])
+	require.Equal(t, "0306406152", dto["isbn_10"])
 }
