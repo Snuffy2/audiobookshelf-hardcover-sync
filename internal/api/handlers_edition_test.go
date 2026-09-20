@@ -440,9 +440,8 @@ func TestCreateEditionWithAnExistingASIN(t *testing.T) {
 	})
 }
 
-func TestCreateEditionWithADuplicateISBN13OnAnotherBookIsAConflict(t *testing.T) {
+func TestCreateEditionWithAnISBNOnAnotherBooksEditionIsAConflict(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
-	f.hardcover.insertErrors = []string{"Edition with this ISBN13 already exists"}
 	f.hardcover.isbns["9781234567897"] = existingEdition{editionID: 555, bookID: 9999}
 
 	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
@@ -451,7 +450,7 @@ func TestCreateEditionWithADuplicateISBN13OnAnotherBookIsAConflict(t *testing.T)
 	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
 	require.Equal(t, "An edition with this ASIN or ISBN-13 already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
 	require.NotContains(t, recorder.Body.String(), "9999")
-	require.Len(t, f.hardcover.recordedMutations(), 1, "only the rejected insert may reach Hardcover")
+	require.Empty(t, f.hardcover.recordedMutations(), "the match is found before any insert is attempted")
 }
 
 func TestCreateEditionSendsTheRequestedEditionFormat(t *testing.T) {

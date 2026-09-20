@@ -50,6 +50,15 @@ func (m *MockHardcoverClient) GetEdition(ctx context.Context, id string) (*model
 	return args.Get(0).(*models.Edition), args.Error(1)
 }
 
+// GetEditionByISBN10 mocks the GetEditionByISBN10 method
+func (m *MockHardcoverClient) GetEditionByISBN10(ctx context.Context, isbn10 string) (*models.Edition, error) {
+	args := m.Called(ctx, isbn10)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Edition), args.Error(1)
+}
+
 // GetEditionByISBN13 mocks the GetEditionByISBN13 method
 func (m *MockHardcoverClient) GetEditionByISBN13(ctx context.Context, isbn13 string) (*models.Edition, error) {
 	args := m.Called(ctx, isbn13)
@@ -1765,6 +1774,9 @@ func TestEditionCreator_createEdition(t *testing.T) {
 					BookID: "123",
 					Title:  "Existing Edition by ISBN13",
 				}
+				// The lookup before the insert finds nothing; only the one after the
+				// duplicate error finds the edition.
+				m.On("GetEditionByISBN13", mock.Anything, "9781234567890").Return(nil, fmt.Errorf("not found")).Once()
 				m.On("GetEditionByISBN13", mock.Anything, "9781234567890").Return(existingEdition, nil).Once()
 			},
 			expectedID:  666, // Should return the existing edition's ID found by ISBN13
@@ -1929,6 +1941,9 @@ func TestEditionCreator_createEdition(t *testing.T) {
 			if tt.setupMock != nil {
 				tt.setupMock(t, mockClient)
 			}
+			// ISBN lookups that a case does not script find nothing.
+			mockClient.On("GetEditionByISBN13", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("not found")).Maybe()
+			mockClient.On("GetEditionByISBN10", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("not found")).Maybe()
 
 			// Call the method under test via the helper
 			editionID, err := helper.CreateEdition(context.Background(), tt.input, tt.imageID)

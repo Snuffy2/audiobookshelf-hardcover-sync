@@ -44,6 +44,21 @@ type editionHardcoverFake struct {
 type existingEdition struct {
 	editionID int
 	bookID    int
+	// readingFormat is the edition's Hardcover reading format ID: 0 means an
+	// audiobook (2), and -1 an edition with no reading format set. The fake only
+	// finds an edition for the format the request filters on, as Hardcover does.
+	readingFormat int
+}
+
+// inFormat reports whether the edition matches the audiobook format filter the
+// Hardcover client sends with an ASIN or ISBN search.
+func (e existingEdition) inFormat(variables map[string]interface{}) bool {
+	format := e.readingFormat
+	if format == 0 {
+		format = 2
+	}
+	requested, _ := variables["format_id"].(float64)
+	return format == int(requested)
 }
 
 func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
@@ -116,7 +131,7 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 			fake.mu.Lock()
 			found, ok := fake.isbns[isbn]
 			fake.mu.Unlock()
-			if ok {
+			if ok && found.inFormat(request.Variables) {
 				books = append(books, map[string]interface{}{
 					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "isbn_13": isbn}},
 				})
@@ -128,7 +143,7 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 			fake.mu.Lock()
 			found, ok := fake.asins[asin]
 			fake.mu.Unlock()
-			if ok {
+			if ok && found.inFormat(request.Variables) {
 				books = append(books, map[string]interface{}{
 					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "asin": asin}},
 				})

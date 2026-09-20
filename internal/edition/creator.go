@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/isbn"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
 )
@@ -56,8 +57,8 @@ type EditionResult struct {
 	Existing bool `json:"existing,omitempty"`
 }
 
-// ErrEditionBelongsToOtherBook reports that an existing edition found by ASIN
-// or ISBN-13 belongs to a different Hardcover book than the requested one, or
+// ErrEditionBelongsToOtherBook reports that an existing edition found by ASIN,
+// ISBN-13 or ISBN-10 belongs to a different Hardcover book than the requested one, or
 // that its book could not be determined. The edition is never adopted.
 var ErrEditionBelongsToOtherBook = errors.New("existing edition belongs to a different book")
 
@@ -79,6 +80,8 @@ type HardcoverClient interface {
 	GetEditionByASIN(ctx context.Context, asin string) (*models.Edition, error)
 	// GetEditionByISBN13 gets an edition by ISBN-13
 	GetEditionByISBN13(ctx context.Context, isbn13 string) (*models.Edition, error)
+	// GetEditionByISBN10 gets an edition by ISBN-10
+	GetEditionByISBN10(ctx context.Context, isbn10 string) (*models.Edition, error)
 	// GraphQLQuery executes a GraphQL query
 	GraphQLQuery(ctx context.Context, query string, variables map[string]interface{}, result interface{}) error
 	// GraphQLMutation executes a GraphQL mutation
@@ -686,24 +689,83 @@ func adoptExistingEdition(found *models.Edition, input *EditionInput) (int, erro
 	return editionID, nil
 }
 
-// createEdition creates a new edition with the given metadata. When an edition
-// with the same ASIN or ISBN-13 already exists for the same book, its ID is
-// returned with true; an edition of another book is an error.
-func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageID int) (int, bool, error) {
-	// First, check if an edition already exists for this book with the same ASIN/ISBN
-	if input.ASIN != "" {
-		found, lookupErr := c.client.GetEditionByASIN(ctx, input.ASIN)
-		if lookupErr == nil && found != nil && found.ID != "" {
-			editionID, adoptErr := adoptExistingEdition(found, input)
-			if adoptErr != nil {
-				return 0, false, adoptErr
-			}
-			c.log.Debug("Edition already exists with this ASIN", map[string]interface{}{
-				"edition_id": editionID,
-				"asin":       input.ASIN,
-			})
-			return editionID, true, nil
+// editionLookup is one identifier to look an existing edition up by.
+type editionLookup struct{ kind, value string }
+
+// existingEditionLookups lists, in order, the identifiers that may already
+// identify an edition: the ASIN, the given ISBN-13 and ISBN-10, then the forms
+// derived from them (an ISBN-10's ISBN-13 and the reverse), without duplicates.
+func existingEditionLookups(input *EditionInput) []editionLookup {
+	var lookups []editionLookup
+	seen := map[editionLookup]struct{}{}
+	add := func(kind, value string) {
+		l := editionLookup{kind: kind, value: value}
+		if value == "" {
+			return
 		}
+		if _, dup := seen[l]; !dup {
+			seen[l] = struct{}{}
+			lookups = append(lookups, l)
+		}
+	}
+	add("ASIN", strings.TrimSpace(input.ASIN))
+	given13, ok13 := isbn.Parse(input.ISBN13)
+	given10, ok10 := isbn.Parse(input.ISBN10)
+	if ok13 {
+		add("ISBN-13", given13.ISBN13())
+	}
+	if ok10 {
+		add("ISBN-10", given10.ISBN10())
+	}
+	if ok10 {
+		add("ISBN-13", given10.ISBN13())
+	}
+	if ok13 {
+		add("ISBN-10", given13.ISBN10())
+	}
+	return lookups
+}
+
+// findExistingEdition looks up each identifier of the input on Hardcover and
+// returns the first edition found. A failed lookup counts as not found, so a
+// transient error never blocks creation on its own.
+func (c *Creator) findExistingEdition(ctx context.Context, input *EditionInput) (*models.Edition, editionLookup) {
+	for _, l := range existingEditionLookups(input) {
+		var (
+			found *models.Edition
+			err   error
+		)
+		switch l.kind {
+		case "ASIN":
+			found, err = c.client.GetEditionByASIN(ctx, l.value)
+		case "ISBN-13":
+			found, err = c.client.GetEditionByISBN13(ctx, l.value)
+		default:
+			found, err = c.client.GetEditionByISBN10(ctx, l.value)
+		}
+		if err == nil && found != nil && found.ID != "" {
+			return found, l
+		}
+	}
+	return nil, editionLookup{}
+}
+
+// createEdition creates a new edition with the given metadata. Before inserting
+// it looks for an existing edition with the same ASIN, ISBN-13 or ISBN-10 (or a
+// converted ISBN form). One that belongs to the same book is returned with true
+// and left untouched; one of another book is an error.
+func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageID int) (int, bool, error) {
+	if found, by := c.findExistingEdition(ctx, input); found != nil {
+		editionID, adoptErr := adoptExistingEdition(found, input)
+		if adoptErr != nil {
+			return 0, false, adoptErr
+		}
+		c.log.Info("Edition already exists", map[string]interface{}{
+			"edition_id": editionID,
+			"matched_by": by.kind,
+			"identifier": by.value,
+		})
+		return editionID, true, nil
 	}
 
 	// Prepare the GraphQL mutation with errors field
