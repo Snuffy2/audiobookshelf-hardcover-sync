@@ -345,3 +345,28 @@ func TestEditionInputValidate_RejectsAnUnknownReadingFormat(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateEdition_DuplicateErrorFallbackFindsAnEditionByISBN10 covers the race
+// where the edition only appears after insert_edition reports a duplicate: the
+// fallback searches every identifier, including the ISBN-10.
+func TestCreateEdition_DuplicateErrorFallbackFindsAnEditionByISBN10(t *testing.T) {
+	client := &reuseClient{
+		insertErrors: []string{"already exists"},
+		byISBN10:     &models.Edition{ID: "555", BookID: "123"},
+		afterInsert:  true,
+	}
+	input := &edition.EditionInput{BookID: 123, Title: "A Title", ISBN10: "0306406152", AuthorIDs: []int{1}}
+	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
+
+	result, err := creator.CreateEdition(context.Background(), input)
+
+	if err != nil {
+		t.Fatalf("CreateEdition() error = %v", err)
+	}
+	if result.EditionID != 555 || !result.Existing {
+		t.Errorf("CreateEdition() = %+v, want the existing edition 555", result)
+	}
+	if len(client.mutations) != 1 {
+		t.Errorf("mutations sent = %d, want a single insert_edition attempt", len(client.mutations))
+	}
+}

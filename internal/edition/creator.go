@@ -705,7 +705,7 @@ type CreateEditionInput struct {
 }
 
 // adoptExistingEdition returns the ID of an edition found on Hardcover by ASIN
-// or ISBN-13 so it can be reused instead of duplicated. The lookups are global,
+// or ISBN so it can be reused instead of duplicated. The lookups are global,
 // so the edition is adopted only when it belongs to the requested book; any
 // other or unknown book fails closed with ErrEditionBelongsToOtherBook.
 func adoptExistingEdition(found *models.Edition, input *EditionInput) (int, error) {
@@ -936,56 +936,16 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 			"errors": response.InsertEdition.Errors,
 		})
 
-		// Check if this is a duplicate error and try to extract the existing edition ID
+		// A duplicate error means an edition with these identifiers appeared after
+		// the proactive lookup (a race); look it up again to reuse it.
 		if strings.Contains(errMsg, "already exists") {
-			// Extract dto map from editionInput
-			dtoMap, ok := editionData["dto"].(map[string]interface{})
-			if !ok {
-				// This shouldn't happen but just in case
-				return 0, false, fmt.Errorf("edition already exists but could not find dto data: %s", errMsg)
-			}
-
-			// Check if we already have an edition with this ISBN-13
-			if isbn13, ok := dtoMap["isbn_13"].(string); ok && isbn13 != "" {
-				c.log.Debug("Looking up existing edition by ISBN-13", map[string]interface{}{
-					"isbn13": isbn13,
-				})
-				edition, err := c.client.GetEditionByISBN13(ctx, isbn13)
-				if err == nil && edition != nil && edition.ID != "" {
-					// Found an existing edition with this ISBN-13
-					c.log.Debug("Found existing edition with ISBN-13", map[string]interface{}{
-						"edition_id": edition.ID,
-						"isbn13":     isbn13,
-					})
-					editionID, adoptErr := adoptExistingEdition(edition, input)
-					if adoptErr != nil {
-						return 0, false, adoptErr
-					}
-					return editionID, true, nil
+			if found, _ := c.findExistingEdition(ctx, input); found != nil {
+				editionID, adoptErr := adoptExistingEdition(found, input)
+				if adoptErr != nil {
+					return 0, false, adoptErr
 				}
+				return editionID, true, nil
 			}
-
-			// Check if we already have an edition with this ASIN
-			if asin, ok := dtoMap["asin"].(string); ok && asin != "" {
-				c.log.Debug("Looking up existing edition by ASIN", map[string]interface{}{
-					"asin": asin,
-				})
-				edition, err := c.client.GetEditionByASIN(ctx, asin)
-				if err == nil && edition != nil && edition.ID != "" {
-					// Found an existing edition with this ASIN
-					c.log.Debug("Found existing edition with ASIN", map[string]interface{}{
-						"edition_id": edition.ID,
-						"asin":       asin,
-					})
-					editionID, adoptErr := adoptExistingEdition(edition, input)
-					if adoptErr != nil {
-						return 0, false, adoptErr
-					}
-					return editionID, true, nil
-				}
-			}
-
-			// If we still can't find it, return a more specific error
 			return 0, false, fmt.Errorf("edition already exists but could not find existing edition: %s", errMsg)
 		}
 
