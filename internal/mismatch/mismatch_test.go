@@ -987,3 +987,35 @@ func TestAddWithMetadata_PublisherID(t *testing.T) {
 		})
 	}
 }
+
+func TestToEditionExport_PublisherResolvedDuringExport(t *testing.T) {
+	tests := []struct {
+		name       string
+		publisher  string
+		publishers []models.Publisher
+		want       int
+	}{
+		{
+			name:       "publisher resolved during export is exported",
+			publisher:  "Export Resolved Test House",
+			publishers: []models.Publisher{{ID: "42", Name: "Export Resolved Test House"}},
+			want:       42,
+		},
+		{
+			name:      "publisher not found during export is exported as unset",
+			publisher: "Export Missing Test House",
+			want:      0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hc := &publisherLookupMock{MockHardcoverClient: &MockHardcoverClient{}, publishers: tt.publishers}
+			record := BookMismatch{Title: "Export Publisher Book", Publisher: tt.publisher}
+
+			export := record.ToEditionExport(logger.WithLogger(context.Background(), logger.Get()), hc)
+
+			assert.Equal(t, tt.want, export.PublisherID)
+		})
+	}
+}
