@@ -31,6 +31,9 @@ type editionHardcoverFake struct {
 
 	entered chan struct{} // receives once per insert_edition that has started
 	release chan struct{} // when non-nil, insert_edition waits for it to close
+
+	holdReads   chan struct{} // when non-nil, every read (non-mutation) waits for it to close
+	readEntered chan struct{} // receives once per read that started while holdReads was set
 }
 
 // existingEdition is an edition already on Hardcover, found by its ASIN.
@@ -45,6 +48,8 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 		authors: map[string]int{},
 		asins:   map[string]existingEdition{},
 		entered: make(chan struct{}, 8),
+
+		readEntered: make(chan struct{}, 64),
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -63,6 +68,18 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 			fake.mu.Lock()
 			fake.writes = append(fake.writes, request.Query)
 			fake.mu.Unlock()
+		} else {
+			fake.mu.Lock()
+			holdReads := fake.holdReads
+			fake.mu.Unlock()
+			if holdReads != nil {
+				fake.readEntered <- struct{}{}
+				select {
+				case <-holdReads:
+				case <-r.Context().Done():
+					return
+				}
+			}
 		}
 
 		switch {

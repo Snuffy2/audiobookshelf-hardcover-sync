@@ -117,6 +117,10 @@ type MultiUserService struct {
 	shutdownMutex         stdSync.Mutex
 	cancellationWaitGroup stdSync.WaitGroup
 	shuttingDown          bool
+	// editionWaitGroup tracks in-flight edition creates. It is separate from
+	// startWaitGroup so a create, which may run for minutes, never delays
+	// Shutdown's cancellation of running syncs; Shutdown drains it last.
+	editionWaitGroup stdSync.WaitGroup
 
 	// editionsInFlight guards against overlapping edition submits for one
 	// profile/book pair. It is independent of the full-sync lifecycle state.
@@ -165,14 +169,8 @@ var ErrServiceShuttingDown = errors.New("multi-user service is shutting down")
 func (s *MultiUserService) beginSyncStart(profileID string) (*profileRunGate, error) {
 	s.admissionMutex.Lock()
 	defer s.admissionMutex.Unlock()
-	if s.shuttingDown {
-		return nil, ErrServiceShuttingDown
-	}
-	if _, deleting := s.deletingProfiles[profileID]; deleting {
-		return nil, ErrProfileDeleting
-	}
-	if _, deleted := s.deletedProfiles[profileID]; deleted {
-		return nil, ErrProfileNotFound
+	if err := s.admissionErrorLocked(profileID); err != nil {
+		return nil, err
 	}
 	gate := s.profileGate(profileID)
 	s.startWaitGroup.Add(1)
@@ -183,6 +181,51 @@ func (s *MultiUserService) beginSyncStart(profileID string) (*profileRunGate, er
 func (s *MultiUserService) endSyncStart(gate *profileRunGate) {
 	gate.startWaitGroup.Done()
 	s.startWaitGroup.Done()
+}
+
+// admissionErrorLocked reports why new work for profileID must be rejected, or
+// nil when it may proceed. The caller must hold admissionMutex.
+func (s *MultiUserService) admissionErrorLocked(profileID string) error {
+	if s.shuttingDown {
+		return ErrServiceShuttingDown
+	}
+	if _, deleting := s.deletingProfiles[profileID]; deleting {
+		return ErrProfileDeleting
+	}
+	if _, deleted := s.deletedProfiles[profileID]; deleted {
+		return ErrProfileNotFound
+	}
+	return nil
+}
+
+// beginEditionWork admits one edition create. Like a sync start it is tracked on
+// the profile gate, so DeleteProfile waits for it, but it is tracked service-wide
+// on editionWaitGroup instead of startWaitGroup: Shutdown must cancel running
+// syncs without waiting behind a create. Pair it with endEditionWork.
+func (s *MultiUserService) beginEditionWork(profileID string) (*profileRunGate, error) {
+	s.admissionMutex.Lock()
+	defer s.admissionMutex.Unlock()
+	if err := s.admissionErrorLocked(profileID); err != nil {
+		return nil, err
+	}
+	gate := s.profileGate(profileID)
+	s.editionWaitGroup.Add(1)
+	gate.startWaitGroup.Add(1)
+	return gate, nil
+}
+
+func (s *MultiUserService) endEditionWork(gate *profileRunGate) {
+	gate.startWaitGroup.Done()
+	s.editionWaitGroup.Done()
+}
+
+// checkEditionAdmission rejects read-only edition work for a service that is
+// shutting down or a profile that is being or has been deleted. It admits
+// nothing and holds nothing afterwards.
+func (s *MultiUserService) checkEditionAdmission(profileID string) error {
+	s.admissionMutex.Lock()
+	defer s.admissionMutex.Unlock()
+	return s.admissionErrorLocked(profileID)
 }
 
 // ListProfiles returns all active sync profiles
@@ -915,7 +958,8 @@ func (s *MultiUserService) StartSyncWithAcceptedRun(profileID string) (AcceptedS
 }
 
 // Shutdown closes admission to new starts, cancels every active profile run,
-// and waits for accepted workers to exit until ctx is done. It is safe to call
+// and waits for accepted workers and in-flight edition creates to exit until ctx
+// is done. Running syncs are cancelled without waiting for edition creates. It is safe to call
 // more than once; a later call can continue draining after an earlier timeout.
 // Repository operations performed while canceling runs are profile-scoped and
 // never hold the service-wide lifecycle lock.
@@ -943,6 +987,12 @@ func (s *MultiUserService) Shutdown(ctx context.Context) error {
 
 	if err := waitForSyncGroup(ctx, &s.syncWaitGroup); err != nil {
 		return fmt.Errorf("wait for sync workers to finish: %w", err)
+	}
+
+	// Creates are drained last: syncs are already cancelled, and a create that
+	// outlives ctx must not be abandoned silently.
+	if err := waitForSyncGroup(ctx, &s.editionWaitGroup); err != nil {
+		return fmt.Errorf("wait for in-flight edition creates to finish: %w", err)
 	}
 	return nil
 }

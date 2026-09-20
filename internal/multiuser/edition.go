@@ -116,11 +116,11 @@ type editionTarget struct {
 // PrepareEditionDraft builds a previewable edition for a needs-review book from
 // a retained or live sync run. It only reads from Audiobookshelf and Hardcover.
 func (s *MultiUserService) PrepareEditionDraft(ctx context.Context, profileID, runID, bookID string) (*draft.Draft, error) {
-	gate, err := s.beginSyncStart(profileID)
-	if err != nil {
+	// A draft is read-only and bound to ctx, so it needs no drain on shutdown or
+	// profile deletion; it only refuses to start once either has begun.
+	if err := s.checkEditionAdmission(profileID); err != nil {
 		return nil, err
 	}
-	defer s.endSyncStart(gate)
 
 	target, err := s.resolveEditionTarget(profileID, runID, bookID)
 	if err != nil {
@@ -144,13 +144,14 @@ func (s *MultiUserService) PrepareEditionDraft(ctx context.Context, profileID, r
 // The target Hardcover book always comes from the run record and the cover URL
 // from the profile's Audiobookshelf server; edits supplies only editable fields.
 // It does not touch sync state and may run alongside a full sync. A profile in
-// dry-run mode validates the request but issues no Hardcover mutation.
+// dry-run mode validates the request but issues no Hardcover mutation. Shutdown
+// cancels running syncs first and then waits for in-flight creates to finish.
 func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profileID, runID, bookID string, edits EditionEdits) (*EditionCreated, error) {
-	gate, err := s.beginSyncStart(profileID)
+	gate, err := s.beginEditionWork(profileID)
 	if err != nil {
 		return nil, err
 	}
-	defer s.endSyncStart(gate)
+	defer s.endEditionWork(gate)
 
 	target, err := s.resolveEditionTarget(profileID, runID, bookID)
 	if err != nil {
