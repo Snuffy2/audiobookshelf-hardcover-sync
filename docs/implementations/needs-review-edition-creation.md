@@ -35,6 +35,39 @@ any time after step 1 and does not wait for the API. Step 6 needs the create end
 is the first thing a user sees. Steps 6 and 7 build on the create response shape from step 4, so a change requested
 in step 4's review carries into them.
 
+## Step summary for PR descriptions
+
+Every step's PR description carries the same "Multi-Step Project" section, in the style of upstream PR #186. It sits
+after the "Summary of Changes" and before "Testing Instructions", and ends with a link to this document. Rules:
+
+- Completed steps (already merged) are struck through with `~~...~~` and their text is not edited afterwards.
+- The step the PR delivers is marked `(this PR)`; later steps stay plain.
+- The current and future steps may be reworded as the build progresses. When one changes, update the block here first,
+  then paste it into the open PRs.
+- Each step stays to one or two sentences.
+
+The block to paste (with `(this PR)` moved to the PR's own step and merged steps struck through):
+
+```markdown
+## Multi-Step Project
+
+1. ISBN and export foundations: Add shared ISBN normalization and reading-format helpers, and fix the mismatch export (hyphenated ISBNs are kept, no default publisher, ebook items export as ebook editions).
+
+2. Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, report cover failures, and create ebook editions.
+
+3. Edition draft endpoint: Add a read-only endpoint that drafts a new Hardcover edition from a needs-review book's Audiobookshelf item, with author, narrator, and publisher resolved.
+
+4. Edition create endpoint: Add the endpoint that creates the drafted edition on Hardcover, with request validation, a per-book in-flight guard, shutdown draining, and dry-run support.
+
+5. Sync identifier matching: Match an existing edition by ASIN, ISBN-13, or ISBN-10 (either form) during sync so the book no longer lands in Needs review.
+
+6. Immediate read-status resync: After an edition is created, re-sync that one book's read status right away, without overlapping a full sync and without waiting for the next one.
+
+7. Sync Status UI: Add an "Add edition to Hardcover" action on needs-review records, with a preview, confirmation, and a resync option.
+
+[Full Plan Document](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
+```
+
 ## Context
 
 When a sync run marks a book `needs_review` (matched by title/author only, or the Hardcover
