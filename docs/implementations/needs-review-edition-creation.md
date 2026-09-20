@@ -15,13 +15,18 @@ step touches.
 
 | Step | Scope | Branch | PR | Depends on | Size | Status |
 |------|-------|--------|----|-----------|------|--------|
-| 1 | ISBN package, reading-format helpers, mismatch export fixes | `feature/edition-export-fixes` | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `feature/edition-creator-hardening` | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
-| 3 | Read-only draft endpoint | `feature/edition-draft-api` | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
-| 4 | Create endpoint, its guards, and docs | `feature/edition-from-needs-review-api` | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | 3 | ~2,000, estimated | PR #20 currently holds steps 1-4 together; it is to be reduced to this step once 1-3 are split out. The PR body is stale |
-| 5 | Sync identifier matching | `feature/sync-identifier-matching` | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin`, no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
-| 6 | Immediate read-status resync (backend) | `feature/needs-review-edition-resync` | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
-| 7 | UI: button, preview modal, resync checkbox | `feature/needs-review-edition-ui` | — | 6 | ~500-800, estimated | Not started |
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
+| 3 | Read-only draft endpoint | `step_3_needs_review_add_edition` | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
+| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (today `feature/edition-from-needs-review-api`) | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | 3 | ~2,000, estimated | PR #20 currently holds steps 1-4 together; it is to be reduced to this step once 1-3 are split out. The PR body is stale |
+| 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching`, locally and on origin, on 2026-09-20), no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
+| 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
+| 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | 6 | ~500-800, estimated | Not started |
+
+**Branch names** are `step_N_needs_review_add_edition` for step N (1-7). The combined branch that holds steps 1-4 today
+keeps its old name, `feature/edition-from-needs-review-api`, until the split is done, because PR #20 is opened from it;
+then it is renamed to `step_4_needs_review_add_edition` with GitHub's branch rename (which keeps the PR) rather than
+being deleted and re-pushed.
 
 Stacking and merge order: 1, 2, 3, 4 merge in that order, each PR based on the previous branch until that one
 merges (GitHub retargets it to `develop` afterwards). Step 5 needs only step 1's `internal/isbn`, so it can merge
@@ -55,42 +60,42 @@ matching slice, and the first slice then grew to about 5,000 added lines (2,050 
 because it mixed changes to existing behavior with a new API. Splitting it by layer gives four PRs, so the plan is
 now seven steps. Nothing is user-visible until step 7, so no half-finished button ships.
 
-- **Step 1 - ISBN and export foundations** (`feature/edition-export-fixes`, from `develop`). The `internal/isbn`
+- **Step 1 - ISBN and export foundations** (`step_1_needs_review_add_edition`, from `develop`). The `internal/isbn`
   package, `models.ReadingFormat`/`ReadingFormatID` and the reading-format context helper (with
   `hardcover.WithReadingFormat` delegating to it), and the mismatch export fixes: the unresolved-publisher default
   (1 -> 0), the hyphenated-ISBN split, publisher ID capture, ebook `reading_format` in `BookMismatch`/`EditionExport`
   (ebook label, no `Unabridged`, no audio length), and removal of the unused `ToEditionInput`. It also swaps the
   sync service's local reading-format helper for `AudiobookshelfBook.ReadingFormat()`. It changes existing export
   output, so its behavior changes each get their own commit and a PR-description note.
-- **Step 2 - Edition creator hardening** (`feature/edition-creator-hardening`, stacked on 1). `edition.Creator`:
+- **Step 2 - Edition creator hardening** (`step_2_needs_review_add_edition`, stacked on 1). `edition.Creator`:
   Audiobookshelf token scoping, the honored `edition_format`, proactive duplicate detection by ASIN, ISBN-13, ISBN-10
   and converted forms with the cross-book guard (`ErrEditionBelongsToOtherBook`, `EditionResult.Existing`), the
   duplicate-error fallback via the same lookup, the cover `ImageError`, `EditionInput.ReadingFormat` (ebook: reading
   format 4, `Ebook` label, no narrators or audio length, format-scoped lookups), `GetEditionByISBN10`, and the
   `edition` CLI's optional `reading_format`. It changes what the `edition` CLI does, so this is its own PR.
-- **Step 3 - Draft endpoint** (`feature/edition-draft-api`, stacked on 2). `GET .../edition-draft`:
+- **Step 3 - Draft endpoint** (`step_3_needs_review_add_edition`, stacked on 2). `GET .../edition-draft`:
   `audiobookshelf.Client.GetLibraryItem`, the `internal/edition/draft` package (reusing `AddWithMetadata` ->
   `ToEditionExport`), `MultiUserService.PrepareEditionDraft` with eligibility (needs_review, numeric Hardcover book,
   ebook or audiobook, identifier requirement), the `newHardcoverClient` extraction, admission checks, the handler
   and route, the shared `internal/edition/editiontest` fakes, README and OpenAPI for the draft, and CHANGELOG.
   A read-only endpoint that works on its own and is exercisable with curl.
-- **Step 4 - Create endpoint** (`feature/edition-from-needs-review-api`, stacked on 3; this is PR #20).
+- **Step 4 - Create endpoint** (`step_4_needs_review_add_edition`, stacked on 3; this is PR #20, whose branch is renamed from `feature/edition-from-needs-review-api` once the split is done).
   `POST .../edition`: `CreateEditionFromRunBook`, request validation and normalization, the in-flight guard, the
   dedicated edition wait group so `Shutdown` cancels syncs before draining creates, the detached 2-minute create
   context, the response write deadline (with `Unwrap()` on the logger's response wrapper), the create handler and
   route, and the write-deadline, shutdown and cover tests, README, OpenAPI and CHANGELOG. It has neither resync nor
   the full-sync lock: creating an edition touches neither the profile state file nor the sync caches.
-- **Step 5 - Sync identifier matching** (`feature/sync-identifier-matching`, stacked on step 1 only). An existing
+- **Step 5 - Sync identifier matching** (`step_5_needs_review_add_edition`, stacked on step 1 only). An existing
   edition with the same ASIN, ISBN-13 or ISBN-10 must be matched by the sync instead of ending up under Needs
   review, which is also what makes an edition created by step 4 useful. It uses step 1's `internal/isbn` and
   deliberately changes existing sync matching (see the Step 5 notes).
-- **Step 6 - Immediate read-status resync (backend)** (`feature/needs-review-edition-resync`). Backend 3
+- **Step 6 - Immediate read-status resync (backend)** (`step_6_needs_review_add_edition`). Backend 3
   (`Service.SyncBook`), the `bookOps` exclusivity with `StartSyncWithAcceptedRun`, the `resync` request field and
   response block, and the dry-run skip. This is the concurrency-sensitive part and gets reviewed on its own. It
   depends on steps 4 and 5: its own `findBookInHardcover` call must find the created edition, including through the
   ISBN-10/13 forms. Because step 3 and 4 refuse an edition for a book with neither an ASIN nor an ISBN, the resync
   only ever applies to books that have an identifier.
-- **Step 7 - UI** (`feature/needs-review-edition-ui`). The Frontend section, JS tests, README user-facing note and
+- **Step 7 - UI** (`step_7_needs_review_add_edition`). The Frontend section, JS tests, README user-facing note and
   the Known limitation. All APIs are already reviewed by then. The button is shown only for `needs_review` records
   that have a Hardcover candidate and an ASIN or ISBN (the outcome record carries `asin` and `isbn`), and the UI must
   render the 409 messages (no identifier; an existing edition that could not be confirmed to belong to the book) and
@@ -255,7 +260,7 @@ The review threads were not yet replied to or resolved when this was written.
 
 ## Step 5 implementation notes
 
-Branch `feature/sync-identifier-matching` (4 commits over the old combined-branch tip 8248c1a: 5190293, 378bbc7, 08492ac,
+Branch `step_5_needs_review_add_edition`, formerly `feature/sync-identifier-matching` (4 commits over the old combined-branch tip 8248c1a: 5190293, 378bbc7, 08492ac,
 e03754a; on `origin` at e03754a, no PR yet). It is about 500 added lines, of which about 335 are tests. **It has not been
 rebased onto the current combined branch, and the plan now stacks it on step 1 only** (it needs `internal/isbn`), so
 its rebase target is step 1's branch (and `develop` eb50565 with #190). #190 (ebook detection and matching) changed
