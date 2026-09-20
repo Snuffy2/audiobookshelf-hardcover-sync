@@ -327,8 +327,8 @@ func (c *Collector) AddWithMetadata(metadata MediaMetadata, bookID, editionID, r
 	// An ebook item is exported as an ebook edition; an audiobook keeps the
 	// original export shape, with no reading format.
 	editionFormat, readingFormat := "Audiobook", ""
-	if strings.EqualFold(metadata.ReadingFormat, "ebook") {
-		editionFormat, readingFormat = "Ebook", "ebook"
+	if strings.EqualFold(metadata.ReadingFormat, models.ReadingFormatEbook) {
+		editionFormat, readingFormat = "Ebook", models.ReadingFormatEbook
 	}
 
 	// Create the mismatch with all available metadata

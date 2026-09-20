@@ -51,20 +51,6 @@ func (e *EditionInput) isEbook() bool {
 	return strings.EqualFold(strings.TrimSpace(e.ReadingFormat), models.ReadingFormatEbook)
 }
 
-// Hardcover reading_format ids.
-const (
-	readingFormatIDAudiobook = 2
-	readingFormatIDEbook     = 4
-)
-
-// readingFormatID returns Hardcover's reading_format id for the input.
-func (e *EditionInput) readingFormatID() int {
-	if e.isEbook() {
-		return readingFormatIDEbook
-	}
-	return readingFormatIDAudiobook
-}
-
 // readingFormat returns the normalized reading format of the input.
 func (e *EditionInput) readingFormat() string {
 	if e.isEbook() {
@@ -832,7 +818,7 @@ func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageI
 		"dto": map[string]interface{}{
 			"title":             input.Title,
 			"edition_format":    editionFormat,
-			"reading_format_id": input.readingFormatID(),
+			"reading_format_id": models.ReadingFormatID(input.ReadingFormat),
 		},
 	}
 

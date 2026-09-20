@@ -50,16 +50,6 @@ type Draft struct {
 	Warnings           []string `json:"warnings"`
 }
 
-// ReadingFormat returns the reading format ("ebook" or "audiobook") of the
-// Audiobookshelf item, the same way the sync decides which Hardcover editions
-// can match it.
-func ReadingFormat(absBook models.AudiobookshelfBook) string {
-	if absBook.IsEbook() {
-		return models.ReadingFormatEbook
-	}
-	return models.ReadingFormatAudiobook
-}
-
 // CoverURL returns the server-controlled Audiobookshelf cover URL for an item,
 // or "" when the item has no cover or no usable base URL. It is the only image
 // URL a draft may carry, because the edition creator can attach the
@@ -96,7 +86,7 @@ func New(ctx context.Context, absBook models.AudiobookshelfBook, hardcoverBookID
 
 	coverURL := CoverURL(absBaseURL, absBook)
 	meta := absBook.Media.Metadata
-	readingFormat := ReadingFormat(absBook)
+	readingFormat := absBook.ReadingFormat()
 	ebook := readingFormat == models.ReadingFormatEbook
 	narrator := meta.NarratorName
 	if ebook {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
 )
 
 // EditionCreatorInput represents the input format expected by the edition import tool
@@ -69,7 +70,7 @@ func (b *BookMismatch) ToEditionExport(ctx context.Context, hc hardcover.Hardcov
 	})
 
 	// Set edition format based on purchase source (ASIN indicates Audible/Amazon) and publisher
-	ebook := strings.EqualFold(b.ReadingFormat, "ebook")
+	ebook := strings.EqualFold(b.ReadingFormat, models.ReadingFormatEbook)
 	editionFormat := b.EditionFormat
 	if ebook {
 		// The audiobook platform hints below do not apply to an ebook.

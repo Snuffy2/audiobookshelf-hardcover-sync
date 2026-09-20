@@ -53,19 +53,11 @@ func getReadingFormatFromCtx(ctx context.Context) (string, bool) {
 	return models.ReadingFormatFromContext(ctx)
 }
 
-// Hardcover reading_format ids for the formats Audiobookshelf items can have.
-const (
-	readingFormatIDAudiobook = 2
-	readingFormatIDEbook     = 4
-)
-
 // readingFormatIDFromCtx maps the reading format carried by ctx to Hardcover's
 // reading_format id, defaulting to audiobook when none (or an unknown one) is set.
 func readingFormatIDFromCtx(ctx context.Context) int {
-	if formatStr, ok := getReadingFormatFromCtx(ctx); ok && formatStr == "ebook" {
-		return readingFormatIDEbook
-	}
-	return readingFormatIDAudiobook
+	format, _ := getReadingFormatFromCtx(ctx)
+	return models.ReadingFormatID(format)
 }
 
 // getMapKeys returns a sorted list of keys from a map

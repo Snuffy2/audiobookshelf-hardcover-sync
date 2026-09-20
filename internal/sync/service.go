@@ -980,10 +980,7 @@ func audiobookshelfDisplayFormat(book models.AudiobookshelfBook) string {
 // hardcoverReadingFormat returns the Hardcover reading format ("ebook" or
 // "audiobook") that editions matching the item must have.
 func hardcoverReadingFormat(book models.AudiobookshelfBook) string {
-	if book.IsEbook() {
-		return "ebook"
-	}
-	return "audiobook"
+	return book.ReadingFormat()
 }
 
 func audiobookshelfSeries(metadata models.AudiobookshelfMetadataStruct) (string, string) {
