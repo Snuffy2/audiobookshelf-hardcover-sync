@@ -420,7 +420,7 @@ components:
       properties:
         edition_id:
           type: integer
-          description: ID of the created Hardcover edition, or of the existing edition when one with the same ASIN already exists. 0 in dry-run mode, when nothing is created (the request is still validated).
+          description: ID of the created Hardcover edition, or of the existing edition, left unchanged, when the ASIN already identifies an edition of the same Hardcover book. 0 in dry-run mode, when nothing is created (the request is still validated).
         dry_run:
           type: boolean
           description: True when the profile is in dry-run mode and nothing was created on Hardcover.
@@ -777,7 +777,7 @@ paths:
     post:
       tags: [Editions]
       summary: Create a Hardcover edition for a needs-review book
-      description: Creates a Hardcover edition for a book that a retained run marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. If an edition with the same ASIN already exists on Hardcover, its ID is returned instead of creating a duplicate. Requires write permission on the profile.
+      description: Creates a Hardcover edition for a book that a retained run marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. If a non-dry-run request carries an ASIN that already identifies an edition of the same Hardcover book, that edition's ID is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. An ASIN that belongs to an edition of a different Hardcover book is rejected with 409. Requires write permission on the profile.
       parameters:
         - name: profileId
           in: path
@@ -842,7 +842,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: The book is not needs_review or has no numeric Hardcover book ID, the profile is being deleted, or an edition create for the same book is already in progress
+          description: The book is not needs_review or has no numeric Hardcover book ID, the profile is being deleted, an edition create for the same book is already in progress, or the submitted ASIN belongs to an edition of a different Hardcover book
           content:
             application/json:
               schema:

@@ -161,9 +161,12 @@ envelope.
   that is not positive, or a negative publisher, language, country, or audio
   length, or an `edition_format` longer than 100 characters, is rejected with
   `422`. On success, `data` is
-  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`. If an
-  edition with the same ASIN already exists on Hardcover, its ID is returned
-  instead of creating a duplicate.
+  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`. If a
+  non-dry-run request carries an ASIN that already identifies an edition of the
+  same Hardcover book, that edition's ID is returned untouched: nothing is
+  created, and its cover and metadata are not changed, so the response does not
+  tell reuse from creation. An ASIN that belongs to an edition of a different
+  Hardcover book is rejected with `409`.
 - **Cover warnings**: `warnings` is always an array. If the edition was created
   but its cover image could not be downloaded, uploaded, or attached, the
   request still succeeds with `200` and `warnings` holds one entry, `The
@@ -189,7 +192,7 @@ of them):
 | `401` | Authentication is enabled and the request is not authenticated |
 | `403` | The caller is a viewer without write permission |
 | `404` | Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found |
-| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress |
+| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress or the submitted ASIN belongs to an edition of a different Hardcover book |
 | `422` | (`POST`) The submitted edition fails validation; the response carries the message |
 | `500` | Unexpected server failure |
 | `502` | Audiobookshelf or Hardcover failed; the message is generic and names only the service |

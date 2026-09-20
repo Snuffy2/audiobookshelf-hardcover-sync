@@ -41,6 +41,10 @@ var (
 	// ErrEditionItemNotFound indicates that Audiobookshelf no longer has the item.
 	ErrEditionItemNotFound = errors.New("audiobookshelf item not found")
 
+	// ErrEditionASINConflict indicates that the submitted ASIN already belongs to
+	// an edition of a different Hardcover book than the run record's.
+	ErrEditionASINConflict = errors.New("asin belongs to an edition of a different hardcover book")
+
 	// ErrEditionInProgress indicates that an edition submit for the same book is already running.
 	ErrEditionInProgress = errors.New("an edition is already being created for this book")
 )
@@ -88,6 +92,8 @@ type EditionEdits struct {
 }
 
 // EditionCreated is the result of a create request. EditionID is 0 for a dry run.
+// When the ASIN already identifies an edition of the target book, that edition
+// is returned untouched and nothing is created.
 // Warnings lists user-readable problems that did not stop the edition from
 // being created, such as a cover image that could not be uploaded. It is never
 // nil so it always serializes as an array.
@@ -195,6 +201,18 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	// left without its cover; the timeout still bounds the work.
 	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EditionCreateTimeout)
 	defer cancel()
+
+	// A dry run never looks up, so it keeps its no-mutation, edition_id 0 contract.
+	if !dryRun {
+		existingID, err := existingEditionForASIN(createCtx, hcClient, input.ASIN, target.hardcoverBookID)
+		if err != nil {
+			return nil, err
+		}
+		if existingID != 0 {
+			return &EditionCreated{EditionID: existingID, Warnings: []string{}}, nil
+		}
+	}
+
 	result, err := creator.CreateEdition(createCtx, input)
 	if err != nil {
 		return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
@@ -204,6 +222,30 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		created.Warnings = append(created.Warnings, editionCoverWarning)
 	}
 	return created, nil
+}
+
+// existingEditionForASIN returns the ID of the Hardcover edition that already
+// carries asin, or 0 when there is none, so a resubmit reuses it instead of
+// creating a duplicate or re-attaching a cover. An edition of a different book
+// yields ErrEditionASINConflict: the caller-editable ASIN must not reach into
+// another book's edition. A failed or empty lookup returns 0 so creation
+// proceeds as it does without this check.
+func existingEditionForASIN(ctx context.Context, client edition.HardcoverClient, asin string, hardcoverBookID int) (int, error) {
+	if asin == "" {
+		return 0, nil
+	}
+	existing, err := client.GetEditionByASIN(ctx, asin)
+	if err != nil || existing == nil {
+		return 0, nil
+	}
+	editionID, idErr := strconv.Atoi(existing.ID)
+	if idErr != nil || editionID <= 0 {
+		return 0, nil
+	}
+	if existing.BookID != strconv.Itoa(hardcoverBookID) {
+		return 0, ErrEditionASINConflict
+	}
+	return editionID, nil
 }
 
 // editionCreator builds the creator for one create request, using

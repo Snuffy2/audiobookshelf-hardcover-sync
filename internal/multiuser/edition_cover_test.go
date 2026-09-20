@@ -172,3 +172,73 @@ func TestCreateEditionFromRunBook_DryRunIsEnforcedAtTheHardcoverClient(t *testin
 		})
 	}
 }
+
+// TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt covers the
+// ASIN of an edition that already exists on Hardcover. The item has a cover, so
+// any creation work would show up as a mutation or a cover transfer.
+func TestCreateEditionFromRunBook_ReusesAnEditionByASINWithoutChangingIt(t *testing.T) {
+	const asin = "B0EXISTING1"
+	tests := []struct {
+		name        string
+		dryRun      bool
+		existing    *existingEdition
+		wantCreated *EditionCreated
+		wantErr     error
+		wantWrites  bool
+	}{
+		{
+			name:        "same book returns the existing edition",
+			existing:    &existingEdition{editionID: 555, bookID: 4242},
+			wantCreated: &EditionCreated{EditionID: 555, Warnings: []string{}},
+		},
+		{
+			name:     "another book's edition is rejected",
+			existing: &existingEdition{editionID: 555, bookID: 9999},
+			wantErr:  ErrEditionASINConflict,
+		},
+		{
+			name:        "unknown ASIN creates the edition",
+			wantCreated: &EditionCreated{EditionID: 777, Warnings: []string{}},
+			wantWrites:  true,
+		},
+		{
+			name:        "dry run does not consult existing editions",
+			dryRun:      true,
+			existing:    &existingEdition{editionID: 555, bookID: 4242},
+			wantCreated: &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}},
+		},
+		{
+			name:        "dry run ignores a colliding ASIN on another book",
+			dryRun:      true,
+			existing:    &existingEdition{editionID: 555, bookID: 9999},
+			wantCreated: &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, rt := newCoverFixture(t, tt.dryRun)
+			useCoverTransport(f, rt, false)
+			if tt.existing != nil {
+				f.hardcover.asins[asin] = *tt.existing
+			}
+			edits := validEdits()
+			edits.ASIN = asin
+
+			created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.NotContains(t, err.Error(), "9999", "the other book's ID must not leak")
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.wantCreated, created)
+			}
+			if tt.wantWrites {
+				require.NotEmpty(t, f.hardcover.recordedWrites())
+				return
+			}
+			require.Empty(t, f.hardcover.recordedWrites(), "no Hardcover mutation may be sent")
+			require.Empty(t, rt.recorded(), "no cover may be downloaded or uploaded")
+		})
+	}
+}

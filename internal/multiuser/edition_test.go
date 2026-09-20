@@ -24,6 +24,7 @@ type editionHardcoverFake struct {
 
 	mu        stdSync.Mutex
 	authors   map[string]int
+	asins     map[string]existingEdition // editions that already carry an ASIN
 	mutations []map[string]interface{}
 	writes    []string // every GraphQL mutation document received, of any kind
 	failWith  string   // GraphQL error message returned for insert_edition
@@ -32,10 +33,17 @@ type editionHardcoverFake struct {
 	release chan struct{} // when non-nil, insert_edition waits for it to close
 }
 
+// existingEdition is an edition already on Hardcover, found by its ASIN.
+type existingEdition struct {
+	editionID int
+	bookID    int
+}
+
 func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 	t.Helper()
 	fake := &editionHardcoverFake{
 		authors: map[string]int{},
+		asins:   map[string]existingEdition{},
 		entered: make(chan struct{}, 8),
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +84,29 @@ func newEditionHardcoverFake(t *testing.T) *editionHardcoverFake {
 			respond(map[string]interface{}{"insert_image": map[string]interface{}{"id": 55}})
 		case strings.Contains(request.Query, "update_edition"):
 			respond(map[string]interface{}{"update_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
+		case strings.Contains(request.Query, "BookByASIN"):
+			asin, _ := request.Variables["asin"].(string)
+			books := []interface{}{}
+			fake.mu.Lock()
+			found, ok := fake.asins[asin]
+			fake.mu.Unlock()
+			if ok {
+				books = append(books, map[string]interface{}{
+					"id": found.bookID, "title": "Existing", "editions": []interface{}{map[string]interface{}{"id": found.editionID, "asin": asin}},
+				})
+			}
+			respond(map[string]interface{}{"books": books})
+		case strings.Contains(request.Query, "query GetEdition("):
+			editionID, _ := request.Variables["editionId"].(float64)
+			editions := []interface{}{}
+			fake.mu.Lock()
+			for asin, found := range fake.asins {
+				if float64(found.editionID) == editionID {
+					editions = append(editions, map[string]interface{}{"id": found.editionID, "book_id": found.bookID, "asin": asin})
+				}
+			}
+			fake.mu.Unlock()
+			respond(map[string]interface{}{"editions": editions})
 		case strings.Contains(request.Query, "SearchPeopleDirect") || strings.Contains(request.Query, "SearchNarrators"):
 			name, _ := request.Variables["name"].(string)
 			people := []map[string]interface{}{}

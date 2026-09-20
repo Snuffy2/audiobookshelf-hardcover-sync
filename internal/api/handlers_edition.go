@@ -125,6 +125,8 @@ func (h *Handler) writeEditionError(w http.ResponseWriter, action, profileID str
 		h.writeErrorResponse(w, http.StatusNotFound, "Audiobookshelf item not found")
 	case errors.Is(err, multiuser.ErrEditionNotEligible):
 		h.writeErrorResponse(w, http.StatusConflict, "Only needs-review books that matched a Hardcover book can get a new edition")
+	case errors.Is(err, multiuser.ErrEditionASINConflict):
+		h.writeErrorResponse(w, http.StatusConflict, "An edition with this ASIN already exists on a different Hardcover book.")
 	case errors.Is(err, multiuser.ErrEditionInProgress):
 		h.writeErrorResponse(w, http.StatusConflict, "An edition is already being created for this book")
 	case errors.Is(err, multiuser.ErrProfileDeleting):
