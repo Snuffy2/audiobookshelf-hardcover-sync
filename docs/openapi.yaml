@@ -373,7 +373,7 @@ components:
           description: True when the profile is in dry-run mode, so creating the edition will not change Hardcover.
         warnings:
           type: array
-          description: Things to review before creating the edition, such as no author resolved on Hardcover (creation would then fail), no release date, a publisher not found on Hardcover, or no narrator. Never null; empty when there is nothing to flag.
+          description: Things to review before creating the edition, such as no author resolved on Hardcover (creation would then fail), no release date, a publisher not found on Hardcover, or no narrator. A warning can also result from a Hardcover lookup that failed rather than found nothing, for example during an outage, and fetching the draft again may clear it. Never null; empty when there is nothing to flag.
           items: {type: string}
 
     EditionCreateRequest:
@@ -690,7 +690,7 @@ paths:
     get:
       tags: [Editions]
       summary: Get a draft Hardcover edition for a needs-review book
-      description: Builds a draft of a new Hardcover edition from the Audiobookshelf item of a book that a retained run marked needs_review and that has a Hardcover candidate (hardcover_book_id). Requires write permission on the profile. The profile's Audiobookshelf token is used only on the server to fetch the item and is never returned.
+      description: Builds a draft of a new Hardcover edition from the Audiobookshelf item of a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate (hardcover_book_id). Requires write permission on the profile. The profile's Audiobookshelf token is used only on the server to fetch the item and is never returned.
       parameters:
         - name: profileId
           in: path
@@ -724,12 +724,6 @@ paths:
                     example: true
                   data:
                     $ref: '#/components/schemas/EditionDraft'
-        '400':
-          description: Empty path IDs
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Authentication is enabled and the request is not authenticated
           content:
@@ -743,7 +737,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found
+          description: Profile (including another user's profile), run, book record, or Audiobookshelf item not found
           content:
             application/json:
               schema:
@@ -777,7 +771,7 @@ paths:
     post:
       tags: [Editions]
       summary: Create a Hardcover edition for a needs-review book
-      description: Creates a Hardcover edition for a book that a retained run marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. If a non-dry-run request carries an ASIN that already identifies an edition of the same Hardcover book, that edition's ID is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. An ASIN that belongs to an edition of a different Hardcover book is rejected with 409. Requires write permission on the profile.
+      description: Creates a Hardcover edition for a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. If a non-dry-run request carries an ASIN that already identifies an edition of the same Hardcover book, that edition's ID is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. An ASIN that belongs to an edition of a different Hardcover book is rejected with 409. Requires write permission on the profile.
       parameters:
         - name: profileId
           in: path
@@ -818,7 +812,7 @@ paths:
                   data:
                     $ref: '#/components/schemas/EditionCreateResult'
         '400':
-          description: Empty path IDs, malformed or oversize body, an unknown field (including book_id and image_url), or a body that is not exactly one JSON object
+          description: Malformed or oversize body, an unknown field (including book_id and image_url), or a body that is not exactly one JSON object
           content:
             application/json:
               schema:
@@ -836,7 +830,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found
+          description: Profile (including another user's profile), run, book record, or Audiobookshelf item not found
           content:
             application/json:
               schema:

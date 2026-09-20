@@ -67,8 +67,8 @@ Existing single-profile setups are **automatically migrated** on first startup:
 | `DELETE` | `/api/profiles/{id}` | Delete profile |
 | `PUT` | `/api/profiles/{id}/config` | Update profile configuration |
 | `GET` | `/api/profiles/{id}/runs/{runId}/details` | Get book-level details for a retained sync run |
-| `GET` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition-draft` | Get a draft Hardcover edition for a `needs_review` book in a retained run |
-| `POST` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition` | Create a Hardcover edition for a `needs_review` book in a retained run |
+| `GET` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition-draft` | Get a draft Hardcover edition for a `needs_review` book in a run with available details |
+| `POST` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition` | Create a Hardcover edition for a `needs_review` book in a run with available details |
 | `POST` | `/api/profiles/{id}/sync` | Start sync |
 | `DELETE` | `/api/profiles/{id}/sync` | Cancel sync |
 | `GET` | `/api/status` | All profile statuses |
@@ -116,8 +116,8 @@ When a sync run marks a book `needs_review` and its record has a Hardcover
 candidate (`hardcover_book_id`), an authenticated caller can build a draft of
 a new Hardcover edition from the Audiobookshelf item and then create it. This
 is an API-only workflow; the web interface does not offer it yet. Both routes
-are scoped to a retained run and to a book in that run, and require write
-permission on the profile. `{bookId}` is the Audiobookshelf library item ID
+are scoped to a run whose details are available (the active run or a retained
+one) and to a book in that run, and require write permission on the profile. `{bookId}` is the Audiobookshelf library item ID
 from `book_outcomes[].book_id` in the run-details response.
 
 ```bash
@@ -148,7 +148,9 @@ envelope.
   the run record. A `publisher_id` of `0` means no publisher. Warnings flag
   things to review before creating the edition: no author that could be
   resolved on Hardcover (creation would then fail), no release date, a
-  publisher not found on Hardcover, and no narrator.
+  publisher not found on Hardcover, and no narrator. A warning can also come
+  from a Hardcover lookup that failed rather than found nothing, for example
+  during an outage; fetching the draft again may clear it.
 - **Create (`POST`)**: the body must be exactly one JSON object of at most
   64 KiB with only these fields: `title` (required), `subtitle`, `asin`,
   `isbn_10`, `isbn_13`, `release_date` (`YYYY-MM-DD`), `edition_information`,
@@ -183,15 +185,15 @@ envelope.
 - **Audiobookshelf token**: the profile's Audiobookshelf token is used only on
   the server, to fetch the item and its cover, and is never returned.
 
-Errors (`GET` returns every listed status except `422`; `POST` can return all
+Errors (`GET` returns every listed status except `400` and `422`; `POST` can return all
 of them):
 
 | Status | Meaning |
 |--------|---------|
-| `400` | Empty path IDs, malformed or oversize body, an unknown field, or a body that is not exactly one JSON object |
+| `400` | (`POST`) Malformed or oversize body, an unknown field, or a body that is not exactly one JSON object |
 | `401` | Authentication is enabled and the request is not authenticated |
 | `403` | The caller is a viewer without write permission |
-| `404` | Profile (including another user's profile), retained run, book record, or Audiobookshelf item not found |
+| `404` | Profile (including another user's profile), run, book record, or Audiobookshelf item not found |
 | `409` | The book is not `needs_review` or has no numeric Hardcover book ID, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress or the submitted ASIN belongs to an edition of a different Hardcover book |
 | `422` | (`POST`) The submitted edition fails validation; the response carries the message |
 | `500` | Unexpected server failure |
