@@ -123,7 +123,7 @@ func TestNew_CarriesResolvedFields(t *testing.T) {
 		"title":               {d.Title, "The Draft Title"},
 		"subtitle":            {d.Subtitle, "A Draft Subtitle"},
 		"isbn_13":             {d.ISBN13, "9781234567897"},
-		"isbn_10":             {d.ISBN10, ""},
+		"isbn_10":             {d.ISBN10, "123456789X"}, // derived from the ISBN-13
 		"release_date":        {d.ReleaseDate, "2020-01-01"},
 		"edition_information": {d.EditionInformation, "Unabridged"},
 		"author_names":        {d.AuthorNames, "Ada Draftwright"},
@@ -245,6 +245,32 @@ func TestNew_CoverURL(t *testing.T) {
 			}
 			if d.CoverURL != tt.want {
 				t.Errorf("CoverURL = %q, want %q", d.CoverURL, tt.want)
+			}
+		})
+	}
+}
+
+func TestNew_ISBNForms(t *testing.T) {
+	tests := []struct {
+		name   string
+		isbn   string
+		want10 string
+		want13 string
+	}{
+		{name: "hyphenated ISBN-13 fills its ISBN-10", isbn: "978-0-306-40615-7", want10: "0306406152", want13: "9780306406157"},
+		{name: "hyphenated ISBN-10 fills its ISBN-13", isbn: "0-306-40615-2", want10: "0306406152", want13: "9780306406157"},
+		{name: "979 ISBN-13 has no ISBN-10", isbn: "979-10-90636-07-1", want13: "9791090636071"},
+		{name: "invalid checksum keeps only the given form", isbn: "9780306406158", want13: "9780306406158"},
+		{name: "no ISBN", isbn: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := draft.New(context.Background(), absItem(func(b *models.AudiobookshelfBook) { b.Media.Metadata.ISBN = tt.isbn }), 9, "https://abs.example.com", &fakeHardcover{}, "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if d.ISBN10 != tt.want10 || d.ISBN13 != tt.want13 {
+				t.Errorf("ISBN10/ISBN13 = %q/%q, want %q/%q", d.ISBN10, d.ISBN13, tt.want10, tt.want13)
 			}
 		})
 	}

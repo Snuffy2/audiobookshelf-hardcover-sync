@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/isbn"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/mismatch"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/models"
@@ -140,8 +141,25 @@ func New(ctx context.Context, absBook models.AudiobookshelfBook, hardcoverBookID
 		d.NarratorNames = export.Info.NarratorName
 		d.PublisherName = export.Info.PublisherName
 	}
+	d.fillCounterpartISBN()
 	d.Warnings = d.buildWarnings()
 	return d, nil
+}
+
+// fillCounterpartISBN sets the missing ISBN form when the other can be derived
+// from it, so the draft carries both and Hardcover can match either. The user
+// can edit both before creating the edition.
+func (d *Draft) fillCounterpartISBN() {
+	switch {
+	case d.ISBN13 != "" && d.ISBN10 == "":
+		if parsed, ok := isbn.Parse(d.ISBN13); ok {
+			d.ISBN10 = parsed.ISBN10()
+		}
+	case d.ISBN10 != "" && d.ISBN13 == "":
+		if parsed, ok := isbn.Parse(d.ISBN10); ok {
+			d.ISBN13 = parsed.ISBN13()
+		}
+	}
 }
 
 // buildWarnings lists conditions the user should know about before creating
