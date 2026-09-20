@@ -378,7 +378,7 @@ components:
 
     EditionCreateRequest:
       type: object
-      description: Edition fields to create on Hardcover. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400; in particular book_id and image_url are not accepted, because the server takes the Hardcover book from the run record and the cover from Audiobookshelf. title and author_ids are required, but a missing value is reported by validation as 422, not 400. Validation also returns 422 for a malformed release_date, more than 50 author or narrator IDs, an author or narrator ID that is not positive, an edition_format longer than 100 characters, or a negative publisher_id, language_id, country_id, or audio_seconds.
+      description: Edition fields to create on Hardcover. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400; in particular book_id and image_url are not accepted, because the server takes the Hardcover book from the run record and the cover from Audiobookshelf. title and author_ids are required, but a missing value is reported by validation as 422, not 400. At least one of asin, isbn_10 and isbn_13 is also required, and an ISBN may be sent with hyphens or spaces. Validation also returns 422 for a missing identifier, an isbn_10 or isbn_13 that is not a 10- or 13-character ISBN, a malformed release_date, more than 50 author or narrator IDs, an author or narrator ID that is not positive, an edition_format longer than 100 characters, or a negative publisher_id, language_id, country_id, or audio_seconds.
       additionalProperties: false
       required: [title, author_ids]
       properties:
@@ -420,7 +420,7 @@ components:
       properties:
         edition_id:
           type: integer
-          description: ID of the created Hardcover edition, or of the existing edition, left unchanged, when it was detected as an existing edition of the same Hardcover book. 0 in dry-run mode, when nothing is created (the request is still validated).
+          description: ID of the created Hardcover edition, or of the existing edition, left unchanged, when it was detected as an existing audiobook edition of the same Hardcover book. 0 in dry-run mode, when nothing is created (the request is still validated).
         dry_run:
           type: boolean
           description: True when the profile is in dry-run mode and nothing was created on Hardcover.
@@ -690,7 +690,7 @@ paths:
     get:
       tags: [Editions]
       summary: Get a draft Hardcover edition for a needs-review book
-      description: Builds a draft of a new Hardcover edition from the Audiobookshelf item of a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate (hardcover_book_id). Requires write permission on the profile. The profile's Audiobookshelf token is used only on the server to fetch the item and is never returned.
+      description: Builds a draft of a new Hardcover edition from the Audiobookshelf item of a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate (hardcover_book_id). Hyphens and spaces are removed from the ISBN, and when it is valid the draft also fills the other ISBN form. The item must have an ASIN or a valid ISBN, otherwise the request is rejected with 409. Requires write permission on the profile. The profile's Audiobookshelf token is used only on the server to fetch the item and is never returned.
       parameters:
         - name: profileId
           in: path
@@ -743,7 +743,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: The book is not needs_review or has no numeric Hardcover book ID, or the profile is being deleted
+          description: The book is not needs_review or has no numeric Hardcover book ID, its Audiobookshelf item has no ASIN or valid ISBN, or the profile is being deleted
           content:
             application/json:
               schema:
@@ -771,7 +771,7 @@ paths:
     post:
       tags: [Editions]
       summary: Create a Hardcover edition for a needs-review book
-      description: Creates a Hardcover edition for a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. On shutdown, running syncs are cancelled first and in-flight creates are allowed to finish, bounded by the shutdown timeout; requests that start after shutdown begins get 503. Deleting a profile likewise waits for its in-flight edition creates (up to the create timeout), so the DELETE response can be delayed and can outlast the server write timeout even though the deletion succeeds. An existing edition of the same Hardcover book with the same ASIN is detected before creating, and a duplicate ISBN-13 only if Hardcover rejects the insert as already existing. Such an edition's ID is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. Without either detection, a new edition may be created. If the found edition belongs to another book, or its book cannot be confirmed (unknown or merged book ID), the request is rejected with 409; retry, or add the edition manually on Hardcover. A dry run performs no lookup, so it never reports an existing edition or this conflict. Requires write permission on the profile.
+      description: Creates a Hardcover edition for a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record and the cover from Audiobookshelf. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. On shutdown, running syncs are cancelled first and in-flight creates are allowed to finish, bounded by the shutdown timeout; requests that start after shutdown begins get 503. Deleting a profile likewise waits for its in-flight edition creates (up to the create timeout), so the DELETE response can be delayed and can outlast the server write timeout even though the deletion succeeds. Before creating, Hardcover is searched for an existing audiobook edition with the same ASIN, ISBN-13 or ISBN-10 (an ISBN is also searched under its converted ISBN-10 or ISBN-13 form); an edition in another format, or with no reading format, is not a match. One of the same Hardcover book is returned untouched, so nothing is created and its cover and metadata are not changed, so the response does not distinguish reuse from creation. A race with another creator, or a failed lookup, can still let a new edition be created. If the found edition belongs to another book, or its book cannot be confirmed (unknown or merged book ID), the request is rejected with 409; retry, or add the edition manually on Hardcover. A dry run performs no lookup, so it never reports an existing edition or this conflict. Requires write permission on the profile.
       parameters:
         - name: profileId
           in: path
@@ -836,7 +836,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: The book is not needs_review or has no numeric Hardcover book ID, the profile is being deleted, an edition create for the same book is already in progress, or the submitted ASIN or ISBN-13 belongs to an edition of another Hardcover book or one whose book could not be confirmed
+          description: The book is not needs_review or has no numeric Hardcover book ID, the profile is being deleted, its Audiobookshelf item has no ASIN or valid ISBN, an edition create for the same book is already in progress, or the submitted ASIN or ISBN belongs to an edition of another Hardcover book or one whose book could not be confirmed
           content:
             application/json:
               schema:

@@ -145,7 +145,12 @@ envelope.
   `narrator_names`, `publisher_name`), the Audiobookshelf `cover_url` (empty
   when the item has no cover), `dry_run`, and `warnings`. The ID lists and
   `warnings` are arrays and are never `null`. The Hardcover book is taken from
-  the run record. A `publisher_id` of `0` means no publisher. Warnings flag
+  the run record. A `publisher_id` of `0` means no publisher. Hyphens and
+  spaces are removed from the ISBN, and when it is valid the draft also fills
+  the other ISBN form (ISBN-10 or ISBN-13) so Hardcover can match either. Both
+  routes return `409` for a book whose Audiobookshelf item has no ASIN or valid
+  ISBN, because an edition created for it could not be matched by a sync; add
+  one in Audiobookshelf first. Warnings flag
   things to review before creating the edition: no author that could be
   resolved on Hardcover (creation would then fail), no release date, a
   publisher not found on Hardcover, and no narrator. A warning can also come
@@ -153,26 +158,31 @@ envelope.
   during an outage; fetching the draft again may clear it.
 - **Create (`POST`)**: the body must be exactly one JSON object of at most
   64 KiB with only these fields: `title` (required), `subtitle`, `asin`,
-  `isbn_10`, `isbn_13`, `release_date` (`YYYY-MM-DD`), `edition_information`,
+  `isbn_10`, `isbn_13` (with or without hyphens), `release_date`
+  (`YYYY-MM-DD`), `edition_information`,
   `edition_format`, `audio_seconds`, `language_id`, `country_id`, `author_ids`
-  (at least one required), `narrator_ids`, and `publisher_id`. Unknown fields
+  (at least one required), `narrator_ids`, and `publisher_id`. At least one of
+  `asin`, `isbn_10` and `isbn_13` is required. Unknown fields
   are rejected with `400`; in particular, `book_id` and `image_url` are not
   accepted, because the server takes the Hardcover book from the run record and
   the cover from Audiobookshelf. A missing title or author, a malformed
-  `release_date`, more than 50 author or narrator IDs, an author or narrator ID
-  that is not positive, or a negative publisher, language, country, or audio
+  `release_date`, no `asin`, `isbn_10` or `isbn_13`, an `isbn_10` or `isbn_13`
+  that is not a 10- or 13-character ISBN, more than 50 author or narrator IDs,
+  an author or narrator ID that is not positive, or a negative publisher, language, country, or audio
   length, or an `edition_format` longer than 100 characters, is rejected with
   `422`. On success, `data` is
-  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`. An
-  existing edition of the same Hardcover book with the same ASIN is detected
-  before creating, and a duplicate ISBN-13 only if Hardcover rejects the insert
-  as already existing. Such an edition's ID is returned untouched: nothing is
-  created, and its cover and metadata are not changed, so the response does not
-  tell reuse from creation. Without either detection, a new edition may be
-  created. If the found edition belongs to another book, or its book cannot be
-  confirmed (unknown or merged book ID), the request is rejected with `409`;
-  retry, or add the edition manually on Hardcover. A dry run performs no
-  lookup, so it never reports an existing edition or this conflict.
+  `{"edition_id": <id>, "dry_run": <bool>, "warnings": [<string>, ...]}`. 
+  Before creating, Hardcover is searched for an existing audiobook edition with
+  the same ASIN, ISBN-13 or ISBN-10 (an ISBN is also searched under its
+  converted ISBN-10 or ISBN-13 form); an edition in another format, or with no
+  reading format, is not a match. One of the same Hardcover book is returned
+  untouched: nothing is created, and its cover and metadata are not changed, so
+  the response does not tell reuse from creation. A race with another creator,
+  or a failed lookup, can still let a new edition be created. If the found
+  edition belongs to another book, or its book cannot be confirmed (unknown or
+  merged book ID), the request is rejected with `409`; retry, or add the
+  edition manually on Hardcover. A dry run performs no lookup, so it never
+  reports an existing edition or this conflict.
 - **Cover warnings**: `warnings` is always an array. If the edition was created
   but its cover image could not be downloaded, uploaded, or attached, the
   request still succeeds with `200` and `warnings` holds one entry, `The
@@ -203,7 +213,7 @@ of them):
 | `401` | Authentication is enabled and the request is not authenticated |
 | `403` | The caller is a viewer without write permission |
 | `404` | Profile (including another user's profile), run, book record, or Audiobookshelf item not found |
-| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress or the submitted ASIN or ISBN-13 belongs to an edition of another Hardcover book or one whose book could not be confirmed |
+| `409` | The book is not `needs_review` or has no numeric Hardcover book ID, its Audiobookshelf item has no ASIN or valid ISBN, the profile is being deleted, or (`POST`) an edition create for the same book is already in progress or the submitted ASIN or ISBN-13 belongs to an edition of another Hardcover book or one whose book could not be confirmed |
 | `422` | (`POST`) The submitted edition fails validation; the response carries the message |
 | `500` | Unexpected server failure |
 | `502` | Audiobookshelf or Hardcover failed; the message is generic and names only the service |

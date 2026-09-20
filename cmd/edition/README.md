@@ -132,10 +132,12 @@ The tool reads from the same `config.yaml` file as the main application. Make su
    ./edition create --input my-audiobook.json
    ```
 
-   If an edition of the same book with the same ASIN already exists, it is
-   reused untouched (no cover or metadata is sent) and the printed result
-   includes `"existing": true`. An existing edition of a different book, or
-   one whose book cannot be confirmed, is refused with an error.
+   Before creating, the tool looks for an existing audiobook edition with the
+   same ASIN, ISBN-13 or ISBN-10 (an ISBN also under its converted form). One of
+   the same book is reused untouched (no cover or metadata is sent) and the
+   printed result includes `"existing": true`. An existing edition of a
+   different book, or one whose book cannot be confirmed, is refused with an
+   error.
 
 ### Dry Run
 
