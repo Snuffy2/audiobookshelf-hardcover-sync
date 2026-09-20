@@ -366,26 +366,28 @@ func validateEditionInput(input *edition.EditionInput) error {
 // required: an edition without one could never be matched by a sync.
 func normalizeEditionIdentifiers(input *edition.EditionInput) error {
 	input.ASIN = strings.TrimSpace(input.ASIN)
-	if strings.TrimSpace(input.ISBN10) != "" {
-		parsed, ok := isbn.Parse(input.ISBN10)
-		if !ok || parsed.Is13 {
-			return errors.New("isbn_10 must be a valid 10-character ISBN")
-		}
-		input.ISBN10 = parsed.Given
-	} else {
-		input.ISBN10 = ""
+	var err error
+	if input.ISBN10, err = normalizeISBN(input.ISBN10, false, "isbn_10 must be a valid 10-character ISBN"); err != nil {
+		return err
 	}
-	if strings.TrimSpace(input.ISBN13) != "" {
-		parsed, ok := isbn.Parse(input.ISBN13)
-		if !ok || !parsed.Is13 {
-			return errors.New("isbn_13 must be a valid 13-digit ISBN")
-		}
-		input.ISBN13 = parsed.Given
-	} else {
-		input.ISBN13 = ""
+	if input.ISBN13, err = normalizeISBN(input.ISBN13, true, "isbn_13 must be a valid 13-digit ISBN"); err != nil {
+		return err
 	}
 	if input.ASIN == "" && input.ISBN10 == "" && input.ISBN13 == "" {
 		return errors.New("an ASIN or ISBN is required")
 	}
 	return nil
+}
+
+// normalizeISBN returns value without separators, "" for a blank value, or an
+// error with message when it is not an ISBN of the wanted length.
+func normalizeISBN(value string, want13 bool, message string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	parsed, ok := isbn.Parse(value)
+	if !ok || parsed.Is13 != want13 {
+		return "", errors.New(message)
+	}
+	return parsed.Given, nil
 }
