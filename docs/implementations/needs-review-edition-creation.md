@@ -2,24 +2,34 @@
 
 **Status: 🚧 IN PROGRESS** (2026-09-20)
 
-Slices 1 and 2 are implemented and validated; Slices 3 and 4 are not started. Slice 1 also creates ebook editions for
-ebook-only items (see "Ebook items"). Slice 2 needs a rebase onto the current Slice 1 tip.
+The feature is delivered as **seven steps**, each its own PR that leaves `develop` working and shippable. All the
+code for steps 1-5 exists and is validated, but steps 1-4 still sit together on one combined branch (PR #20) that
+was judged too large to review, so it is to be split (see "How the combined branch is split"). Steps 6 and 7 are
+not started. Nothing has been split or pushed yet.
 
-## Slice Tracker
+## Step Tracker
 
-Update this table as each slice lands. Each slice must leave `develop` working and shippable on its own.
+Update this table as each step lands. Each step must leave `develop` working and shippable on its own. Sizes are
+added lines (tests included); "measured" comes from a diff, "estimated" is a guess from the plan and the code the
+step touches.
 
-| Slice | Branch | PR | Status |
-|-------|--------|----|--------|
-| 1 — Create-edition API | `feature/edition-from-needs-review-api` | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | Implemented and validated, including ebook editions; rebased onto `develop` eb50565 (#190); the PR body is stale relative to the branch and must be rewritten |
-| 2 — Sync identifier matching | `feature/sync-identifier-matching` | — | Implemented and validated; branch on `origin`, no PR yet; based on an old Slice 1 tip, so it needs a rebase onto the current one and will likely conflict with #190 (see the Slice 2 notes) |
-| 3 — Immediate read-status resync (backend) | `feature/needs-review-edition-resync` | — | Not started |
-| 4 — UI | `feature/needs-review-edition-ui` | — | Not started |
+| Step | Scope | Branch | PR | Depends on | Size | Status |
+|------|-------|--------|----|-----------|------|--------|
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `feature/edition-export-fixes` | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `feature/edition-creator-hardening` | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
+| 3 | Read-only draft endpoint | `feature/edition-draft-api` | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
+| 4 | Create endpoint, its guards, and docs | `feature/edition-from-needs-review-api` | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, ready for review, base `develop`) | 3 | ~2,000, estimated | PR #20 currently holds steps 1-4 together; it is to be reduced to this step once 1-3 are split out. The PR body is stale |
+| 5 | Sync identifier matching | `feature/sync-identifier-matching` | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin`, no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
+| 6 | Immediate read-status resync (backend) | `feature/needs-review-edition-resync` | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
+| 7 | UI: button, preview modal, resync checkbox | `feature/needs-review-edition-ui` | — | 6 | ~500-800, estimated | Not started |
 
-Stacking: Slice 2 builds on Slice 1 (it needs Slice 1's `internal/isbn`), Slice 3 on Slices 1 and 2, and Slice 4 on
-Slice 3. While Slice 1's PR is unmerged, Slice 2's PR base is the Slice 1 branch; afterwards it is `develop`. Slice 3
-also needs `develop` at or after a2ad4b4 (#188 changed `internal/sync/service.go`, which `SyncBook` will call into).
-
+Stacking and merge order: 1, 2, 3, 4 merge in that order, each PR based on the previous branch until that one
+merges (GitHub retargets it to `develop` afterwards). Step 5 needs only step 1's `internal/isbn`, so it can merge
+any time after step 1 and does not wait for the API. Step 6 needs the create endpoint (4) and the sync matching
+(5), and step 7 needs step 6. Step 6 also needs `develop` at or after a2ad4b4 (#188 changed
+`internal/sync/service.go`, which `SyncBook` will call into). After step 4 the feature is usable with curl; step 7
+is the first thing a user sees. Steps 6 and 7 build on the create response shape from step 4, so a change requested
+in step 4's review carries into them.
 
 ## Context
 
@@ -37,72 +47,127 @@ Decisions confirmed with the user:
   to an existing Hardcover book).
 - After creating the edition, re-sync that book's read status right away ("in that sync loop").
 
-## Delivery: four PRs, not one
+## Delivery: seven steps, not one
 
-This is too large for one reviewable PR (ABS client, a behavior fix in the existing export, the edition
-creator, a new sync entry point, locking against full syncs, two API routes, and a modal UI). The repo's
-recent history (#183-#187) is small vertical slices that each merge on their own, so split the same way.
-Nothing is user-visible until Slice 4, so no half-finished button ships. The plan started as three slices; the
-sync identifier matching was added as Slice 2 (see decision 9 in the Decision log), so the resync and UI became
-Slices 3 and 4.
+The whole feature is too large for one reviewable PR. The repo's recent history (#183-#187) is small vertical
+slices that each merge on their own, so it is split the same way. The plan began as three slices, grew a sync
+matching slice, and the first slice then grew to about 5,000 added lines (2,050 production, 3,000 tests, 435 docs)
+because it mixed changes to existing behavior with a new API. Splitting it by layer gives four PRs, so the plan is
+now seven steps. Nothing is user-visible until step 7, so no half-finished button ships.
 
-- **Slice 1 — Create-edition API** (branch `feature/edition-from-needs-review-api`, from `develop`).
-  Backend 1, 2, 5, 6 and the draft/create path of 4, **without** resync and without the full-sync lock:
-  creating an edition touches neither the profile state file nor the sync caches, so it only needs a
-  per-`profileID/bookID` in-flight guard. Includes README endpoint rows, `docs/openapi.yaml`, `CHANGELOG.md`.
-  The `AddWithMetadata` publisher-default fix goes in its **own commit** (it changes existing export behavior).
-  Exercisable with curl. It grew during review; see the Slice 1 implementation notes for what shipped.
-- **Slice 2 — Sync identifier matching** (branch `feature/sync-identifier-matching`, stacked on Slice 1).
-  An existing edition with the same ASIN, ISBN-13 or ISBN-10 must be matched by the sync instead of ending up
-  under Needs review, which is also what makes an edition created by Slice 1 useful. It uses Slice 1's
-  `internal/isbn` and deliberately changes existing sync matching (see the Slice 2 implementation notes).
-- **Slice 3 — Immediate read-status resync (backend)** (branch `feature/needs-review-edition-resync`).
-  Backend 3 (`Service.SyncBook`), the `bookOps` exclusivity with `StartSyncWithAcceptedRun`, the `resync`
-  request field and response block, and the dry-run skip. This is the concurrency-sensitive part and gets
-  reviewed on its own. It depends on Slices 1 and 2: its own `findBookInHardcover` call must find the created
-  edition, including through the ISBN-10/13 forms. Because Slice 1 refuses to create an edition for a book with
-  neither an ASIN nor an ISBN, the resync only ever applies to books that have an identifier; the earlier concern
-  that title/author-only books cannot be fixed by creating an edition is closed by that block.
-- **Slice 4 — UI** (branch `feature/needs-review-edition-ui`). The Frontend section, JS tests, README
-  user-facing note and the Known limitation. All APIs are already reviewed by then. The button is shown only for
-  `needs_review` records that have a Hardcover candidate and an ASIN or ISBN (the outcome record carries `asin`
-  and `isbn`), and the UI must render the 409 messages (no identifier; an existing edition that could not be
-  confirmed to belong to the book) and the 422 messages.
+- **Step 1 - ISBN and export foundations** (`feature/edition-export-fixes`, from `develop`). The `internal/isbn`
+  package, `models.ReadingFormat`/`ReadingFormatID` and the reading-format context helper (with
+  `hardcover.WithReadingFormat` delegating to it), and the mismatch export fixes: the unresolved-publisher default
+  (1 -> 0), the hyphenated-ISBN split, publisher ID capture, ebook `reading_format` in `BookMismatch`/`EditionExport`
+  (ebook label, no `Unabridged`, no audio length), and removal of the unused `ToEditionInput`. It also swaps the
+  sync service's local reading-format helper for `AudiobookshelfBook.ReadingFormat()`. It changes existing export
+  output, so its behavior changes each get their own commit and a PR-description note.
+- **Step 2 - Edition creator hardening** (`feature/edition-creator-hardening`, stacked on 1). `edition.Creator`:
+  Audiobookshelf token scoping, the honored `edition_format`, proactive duplicate detection by ASIN, ISBN-13, ISBN-10
+  and converted forms with the cross-book guard (`ErrEditionBelongsToOtherBook`, `EditionResult.Existing`), the
+  duplicate-error fallback via the same lookup, the cover `ImageError`, `EditionInput.ReadingFormat` (ebook: reading
+  format 4, `Ebook` label, no narrators or audio length, format-scoped lookups), `GetEditionByISBN10`, and the
+  `edition` CLI's optional `reading_format`. It changes what the `edition` CLI does, so this is its own PR.
+- **Step 3 - Draft endpoint** (`feature/edition-draft-api`, stacked on 2). `GET .../edition-draft`:
+  `audiobookshelf.Client.GetLibraryItem`, the `internal/edition/draft` package (reusing `AddWithMetadata` ->
+  `ToEditionExport`), `MultiUserService.PrepareEditionDraft` with eligibility (needs_review, numeric Hardcover book,
+  ebook or audiobook, identifier requirement), the `newHardcoverClient` extraction, admission checks, the handler
+  and route, the shared `internal/edition/editiontest` fakes, README and OpenAPI for the draft, and CHANGELOG.
+  A read-only endpoint that works on its own and is exercisable with curl.
+- **Step 4 - Create endpoint** (`feature/edition-from-needs-review-api`, stacked on 3; this is PR #20).
+  `POST .../edition`: `CreateEditionFromRunBook`, request validation and normalization, the in-flight guard, the
+  dedicated edition wait group so `Shutdown` cancels syncs before draining creates, the detached 2-minute create
+  context, the response write deadline (with `Unwrap()` on the logger's response wrapper), the create handler and
+  route, and the write-deadline, shutdown and cover tests, README, OpenAPI and CHANGELOG. It has neither resync nor
+  the full-sync lock: creating an edition touches neither the profile state file nor the sync caches.
+- **Step 5 - Sync identifier matching** (`feature/sync-identifier-matching`, stacked on step 1 only). An existing
+  edition with the same ASIN, ISBN-13 or ISBN-10 must be matched by the sync instead of ending up under Needs
+  review, which is also what makes an edition created by step 4 useful. It uses step 1's `internal/isbn` and
+  deliberately changes existing sync matching (see the Step 5 notes).
+- **Step 6 - Immediate read-status resync (backend)** (`feature/needs-review-edition-resync`). Backend 3
+  (`Service.SyncBook`), the `bookOps` exclusivity with `StartSyncWithAcceptedRun`, the `resync` request field and
+  response block, and the dry-run skip. This is the concurrency-sensitive part and gets reviewed on its own. It
+  depends on steps 4 and 5: its own `findBookInHardcover` call must find the created edition, including through the
+  ISBN-10/13 forms. Because step 3 and 4 refuse an edition for a book with neither an ASIN nor an ISBN, the resync
+  only ever applies to books that have an identifier.
+- **Step 7 - UI** (`feature/needs-review-edition-ui`). The Frontend section, JS tests, README user-facing note and
+  the Known limitation. All APIs are already reviewed by then. The button is shown only for `needs_review` records
+  that have a Hardcover candidate and an ASIN or ISBN (the outcome record carries `asin` and `isbn`), and the UI must
+  render the 409 messages (no identifier; an existing edition that could not be confirmed to belong to the book) and
+  the 422 messages. It shows the draft's `reading_format` and hides the narrator and duration fields for an ebook.
 
-**Standalone rule — every slice must leave `develop` fully working and shippable on its own:**
+**Standalone rule - every step must leave `develop` fully working and shippable on its own:**
 - **Builds and passes on its own:** `gofmt`, `go build ./...`, `go vet ./...`, `make test`, `make lint`, and
-  `node --test web/app.test.js` are all green at the tip of each slice, run *before* the slice is reported done.
-- **No dead or half-wired surface:** a slice adds only routes/UI that work end to end within that slice. No UI
-  references an endpoint that doesn't exist yet; no endpoint depends on a later slice. Docs (`README.md`,
-  `docs/openapi.yaml`, `CHANGELOG.md`) describe only what that slice actually delivers.
-- **Existing behavior unchanged unless the slice says so:** ordinary full syncs, `StartSync`/`CancelSync`, the
-  status/details APIs, the mismatch export and the `edition` CLI behave as before. Slice 1's intentional changes
-  to existing behavior are the `AddWithMetadata` publisher-default fix, the hyphenated-ISBN export fix, and the
-  honored `edition_format` and duplicate/cross-book detection in `edition.Creator` (which the `edition` CLI shares);
-  each is isolated in its own commit and called out in the PR description. Slice 2's is the sync's identifier
-  search (an edition stored under the other ISBN form is now matched). The `newHardcoverClient` extraction from
-  `performSync` is a pure behavior-preserving refactor, covered by the existing multiuser tests.
-- **Additive API evolution:** the `resync` request field is **opt-in (default `false`)** so Slice 3 does not
-  change what a Slice 1 caller gets; the response's `resync` block is additive. The Slice 4 UI sends
-  `resync: true` from its checked-by-default checkbox.
-- **Slice 3 regression guard:** the `StartSync` lock check only ever triggers while a book operation is in
-  flight, which only the new endpoint creates. A test proves `StartSync` is unaffected when none is active.
+  `node --test web/app.test.js` are all green at the tip of each step, run *before* the step is reported done.
+- **No dead or half-wired surface:** a step adds only routes/UI that work end to end within that step. No UI
+  references an endpoint that doesn't exist yet; no endpoint depends on a later step. Steps 1 and 2 add helpers and
+  creator behavior that the `edition` CLI and the mismatch export already use, so nothing they add is unreachable.
+  Docs (`README.md`, `docs/openapi.yaml`, `CHANGELOG.md`) describe only what that step actually delivers.
+- **Existing behavior unchanged unless the step says so:** ordinary full syncs, `StartSync`/`CancelSync`, the
+  status/details APIs, the mismatch export and the `edition` CLI behave as before. The intentional changes are: step
+  1's export changes (publisher default, hyphenated ISBN, ebook items exported as ebook editions); step 2's
+  `edition.Creator` changes, which the `edition` CLI shares (`edition_format`, duplicate and cross-book detection,
+  `reading_format`); and step 5's identifier search (an edition stored under the other ISBN form is now matched). The
+  `newHardcoverClient` extraction from `performSync` (step 3) is a pure behavior-preserving refactor, covered by the
+  existing multiuser tests. Each change is isolated in its own commit and called out in its PR description.
+- **Additive API evolution:** the `resync` request field is **opt-in (default `false`)** so step 6 does not change
+  what a step 4 caller gets; the response's `resync` block is additive. The step 7 UI sends `resync: true` from its
+  checked-by-default checkbox.
+- **Step 6 regression guard:** the `StartSync` lock check only ever triggers while a book operation is in flight,
+  which only the new endpoint creates. A test proves `StartSync` is unaffected when none is active.
 
-**Current state (2026-09-20):** Slices 1 and 2 are implemented and validated. Slice 1 is open as PR #20; the Slice 2
-branch is on `origin` but has no PR yet, and Slices 3 and 4 do not exist yet. Each remaining slice is started only
-on the owner's go-ahead. Each branch is created from `develop` (stacked on the previous branch while that one is
-unmerged) and tracks `origin/<same-name>` via `git config branch.<name>.remote/merge`; nothing is pushed without
-permission.
+## How the combined branch is split
 
-## Slice 1 implementation notes
+Nothing below has been done; it needs the owner's go-ahead. The combined branch `feature/edition-from-needs-review-api`
+(tip edf4893, 40 commits over `develop` eb50565, pushed) holds steps 1-4. Its 40 commits
+are interleaved fixes and cleanups, so cherry-picking by commit would not separate the layers. Instead each step's
+branch is built from `develop` (stacked on the previous step) by taking that step's files from the combined branch,
+committed as a few clean commits, then run through the full gates. Step 4 reuses the existing branch and PR #20 so
+its review history stays: once steps 1-3 exist it is rebuilt to contain only the create endpoint and retargeted to
+step 3's branch. The two CodeRabbit threads on #20 move to whichever step they belong to.
 
-Recorded after Slice 1 was implemented and validated, then extended. It first described branch tip 374b7b2
-(13 commits over `develop` a2ad4b4); the branch is now at ad2750b (34 commits over `develop` eb50565, which includes #190)
-and is the head of PR #20. The last commit squashes three changes (a rejection of ebook items, its revert, and ebook
-edition support) into the net ebook support; its subject line still reads "reject ebook-only items" and is misleading.
-The sections below were written against earlier tips (8248c1a and before); the commit hashes they cite predate the
-rebases onto `develop`, so match them by subject rather than by hash.
+Where the files go:
+
+- **Step 1:** `internal/isbn/`, `internal/models/reading_format.go` and its test, the `AudiobookshelfBook.ReadingFormat`
+  method, `internal/mismatch/` (export fixes and tests), the reading-format delegation in
+  `internal/api/hardcover/client.go`, the `book.ReadingFormat()` calls in `internal/sync/service.go`, and the
+  matching CHANGELOG lines.
+- **Step 2:** `internal/edition/creator.go` and its tests (`creator_test.go`, `creator_reuse_test.go`,
+  `creator_cover_test.go`, `creator_token_test.go`, `creator_test_helpers.go`), `cmd/edition/README.md`, and the
+  matching CHANGELOG lines.
+- **Step 3:** `internal/api/audiobookshelf/client.go` (+ test), `internal/edition/draft/`, `internal/edition/editiontest/`,
+  the draft half of `internal/multiuser/edition.go` (`PrepareEditionDraft`, `resolveEditionTarget`, item checks) and
+  `internal/multiuser/service.go` (`newHardcoverClient`, the admission helpers), `GetEditionDraft` and its route, the
+  draft tests, and the draft parts of README and OpenAPI.
+- **Step 4:** the create half of `internal/multiuser/edition.go`, the edition wait group and `Shutdown` drain in
+  `service.go`, `Unwrap()` in `internal/logger/logger.go`, `CreateEdition` and its route, the create, cover, shutdown
+  and write-deadline tests, and the create parts of README and OpenAPI.
+
+The mixed files (`multiuser/edition.go`, `service.go`, `handlers_edition.go` and their tests, README, OpenAPI,
+CHANGELOG) are the fiddly part: each has a draft half and a create half that must be separated by hand. Step 5's
+existing branch is separately rebased onto step 1 and #190.
+
+**Current state (2026-09-20):** steps 1-5 are implemented and validated. PR #20 is open with steps 1-4 together; the
+step 5 branch is on `origin` with no PR; steps 6 and 7 do not exist. Each remaining step is started only on the
+owner's go-ahead. Each branch tracks `origin/<same-name>` via `git config branch.<name>.remote/merge`; nothing is
+pushed without permission.
+
+## Implementation notes for the original combined Slice 1 (now steps 1-4)
+
+These notes were recorded when steps 1-4 were still one slice ("Slice 1"), implemented and validated, then extended. The
+feature-to-step mapping is in "How the combined branch is split". They first described branch tip 374b7b2 (13 commits
+over `develop` a2ad4b4); the branch is now at edf4893 (40 commits over `develop` eb50565, which includes #190, pushed)
+and is the head of PR #20. The sections below were written against earlier tips (8248c1a and
+before); the commit hashes they cite predate the rebases onto `develop`, so match them by subject rather than by hash.
 Where this differs from the plan above, this section is what shipped.
+
+**Cleanup done after the ebook work** (a cleanup loop over the branch, all local): the ebook rule and Hardcover
+reading-format ids now live once in `internal/models` (`AudiobookshelfBook.ReadingFormat`, `ReadingFormatID`) instead
+of in the sync service, the draft package and both the Hardcover client and creator; the creator's duplicate-error
+fallback reuses `findExistingEdition` (so it also covers ISBN-10); ISBN-10/13 request normalization shares one helper;
+the unused `mismatch.ToEditionInput` and its `EditionCreatorInput` type were removed; and the three copies of the
+Hardcover and Audiobookshelf test fakes (service, API and server tests) became one package,
+`internal/edition/editiontest`.
 
 - **Draft sub-package.** The draft builder is `internal/edition/draft/draft.go` (`draft.New`, `draft.Draft`,
   `draft.CoverURL`), not `internal/edition/draft.go` / `edition.NewDraft`. It is a sub-package because `edition` ->
@@ -188,17 +253,19 @@ Grounded in the code on the branch at that time (8248c1a); the ebook support tha
 
 The review threads were not yet replied to or resolved when this was written.
 
-## Slice 2 implementation notes
+## Step 5 implementation notes
 
-Branch `feature/sync-identifier-matching` (4 commits over the old Slice 1 tip 8248c1a: 5190293, 378bbc7, 08492ac, e03754a;
-on `origin` at e03754a, no PR yet). **It has not been rebased onto the current Slice 1 tip (ad2750b) or `develop`
-eb50565.** #190 (ebook detection and matching) changed the same two files, `internal/sync/service.go` and
-`internal/api/hardcover/client.go` (it added the reading-format context and format-aware ASIN/ISBN filters), so expect
-conflicts there and re-check the "unchanged by decision" claim below (the reading-format filters) against the new
-code. Also, #190 moved the reading-format context helper; Slice 1 now keeps it in `internal/models`
-(`WithReadingFormat`) and `hardcover.WithReadingFormat` delegates to it. Six files change: `internal/sync/service.go`, `internal/api/hardcover/client.go`, their tests
-(`internal/sync/isbn_matching_test.go`, `internal/api/hardcover/search_identifier_test.go`, `outcomes_test.go`) and
-`CHANGELOG.md`.
+Branch `feature/sync-identifier-matching` (4 commits over the old combined-branch tip 8248c1a: 5190293, 378bbc7, 08492ac,
+e03754a; on `origin` at e03754a, no PR yet). It is about 500 added lines, of which about 335 are tests. **It has not been
+rebased onto the current combined branch, and the plan now stacks it on step 1 only** (it needs `internal/isbn`), so
+its rebase target is step 1's branch (and `develop` eb50565 with #190). #190 (ebook detection and matching) changed
+the same two files, `internal/sync/service.go` and `internal/api/hardcover/client.go` (it added the reading-format
+context and format-aware ASIN/ISBN filters), so expect conflicts there, and step 1 also touches `service.go` (the
+`book.ReadingFormat()` calls). Re-check the "unchanged by decision" claim below (the reading-format filters) against
+the new code. The reading-format context helper now lives in `internal/models` (`WithReadingFormat`), and
+`hardcover.WithReadingFormat` delegates to it (step 1). Six files change: `internal/sync/service.go`,
+`internal/api/hardcover/client.go`, their tests (`internal/sync/isbn_matching_test.go`,
+`internal/api/hardcover/search_identifier_test.go`, `outcomes_test.go`) and `CHANGELOG.md`.
 
 - **Purpose.** An existing edition with the same ASIN, ISBN-13 or ISBN-10 must be matched by the sync instead of ending
   up under Needs review. A code map found the gaps in the identifier search: an Audiobookshelf ISBN-10 missed an edition
@@ -233,22 +300,25 @@ code. Also, #190 moved the reading-format context helper; Slice 1 now keeps it i
 
 Decisions made by the owner and where they ended up.
 
-1. **Preview modal, then confirm** (not one-click). Slice 4.
-2. **Button only for `needs_review` records with a Hardcover candidate.** Slice 1 eligibility; Slice 4 adds the
+1. **Preview modal, then confirm** (not one-click). Step 7.
+2. **Button only for `needs_review` records with a Hardcover candidate.** Steps 3-4 eligibility; step 7 adds the
    identifier condition.
-3. **Resync right after creating.** Slice 3, opt-in via `resync`.
-4. **Reuse `AddWithMetadata` -> `ToEditionExport`** instead of a parallel builder, with the publisher-default fix. Slice 1.
-5. **Slices are standalone and additive** (first three, now four); the resync is opt-in.
-6. **Shutdown:** first skipped, then fixed once a reviewer reproduced that `Shutdown` skipped cancelling syncs. Slice 1.
-7. **Books without an ASIN or ISBN cannot create an edition** (409). Slice 1.
+3. **Resync right after creating.** Step 6, opt-in via `resync`.
+4. **Reuse `AddWithMetadata` -> `ToEditionExport`** instead of a parallel builder, with the publisher-default fix. Steps 1 and 3.
+5. **Steps are standalone and additive** (first three slices, then four, now seven steps); the resync is opt-in.
+6. **Shutdown:** first skipped, then fixed once a reviewer reproduced that `Shutdown` skipped cancelling syncs. Step 4.
+7. **Books without an ASIN or ISBN cannot create an edition** (409). Step 3 (draft) and step 4 (create).
 8. **Format rule:** only same-format matches count (an audiobook matches only an audiobook edition, an ebook item only an
-   ebook edition); a different or unset format is not a match. Slices 1 and 2.
-9. **Sync-matching changes go in a separate follow-up PR** built on Slice 1. That became Slice 2.
-10. **The unverified `order_by` is not used.** Slice 2.
-11. **Ebook-only items get ebook editions** (the "support" option), not a rejection. Slice 1. The format is decided
+   ebook edition); a different or unset format is not a match. Steps 2 and 5.
+9. **Sync-matching changes go in a separate follow-up PR** built on the API work. That became step 5, which now depends only on step 1.
+10. **The unverified `order_by` is not used.** Step 5.
+11. **Ebook-only items get ebook editions** (the "support" option), not a rejection. Steps 1-4 (export, creator, draft, create). The format is decided
     by the Audiobookshelf item on the server, never by the request.
+12. **Split the combined branch into seven steps** (owner: "steps" over "slices"). The first slice had grown to about
+    5,000 added lines, so it becomes steps 1-4 by layer (export foundations, creator, draft endpoint, create endpoint) and
+    the sync matching, resync and UI become steps 5-7. Step 5 depends only on step 1. The split itself is not done yet.
 
-## Ebook items: ebook editions (resolved, Slice 1)
+## Ebook items: ebook editions (resolved, steps 1-4)
 
 **Decision (owner): an ebook-only `needs_review` item gets an ebook edition through the same routes.** This
 replaces the earlier open question, which offered rejecting ebooks or supporting them. A rejection was implemented
@@ -259,7 +329,7 @@ ebook-only item from its media content with `AudiobookshelfBook.IsEbook()` (an e
 honors `include_ebooks`, and matches ebook items to Hardcover **ebook** editions (reading format id 4). An ebook-only
 item can therefore end a run as `needs_review` and is eligible for the button.
 
-What Slice 1 does now:
+What steps 1-4 do now (creator in step 2, export in step 1, draft in step 3, create in step 4):
 
 - **Format comes from the item.** `draft.ReadingFormat(item)` (`ebook` or `audiobook`, the same `IsEbook()` rule as the
   sync) is set by the server on `EditionInput.ReadingFormat`. A create request cannot choose it: `reading_format` is
@@ -290,14 +360,14 @@ edition format label, and that its ISBN/ASIN duplicate behavior for ebooks match
 filters on the lookups are covered only through fakes. Kindle ASINs for ebooks are not checked against Audible-only
 lookups.
 
-For the Slice 4 UI: show the draft's `reading_format` in the preview so the user can see whether an audiobook or an
+For the step 7 UI: show the draft's `reading_format` in the preview so the user can see whether an audiobook or an
 ebook edition will be created, and hide the narrator and duration fields for an ebook.
 
 ## Reuse (already in the repo)
 
 - `internal/edition/creator.go`: `EditionInput`, `Creator.CreateEdition` (validates, dry-run
   short-circuit, duplicate check by ASIN, ISBN-13, ISBN-10 and converted forms (a same-book edition is
-  returned untouched, another book's is refused; see the Slice 1 notes), GraphQL `insert_edition`, cover upload),
+  returned untouched, another book's is refused; see the implementation notes), GraphQL `insert_edition`, cover upload),
   `NewCreatorWithHTTPClient`.
 - `internal/mismatch`: `Collector.AddWithMetadata` (5 production callers in `internal/sync`) already
   does the ABS-metadata -> edition-fields mapping: Audnex release date with region fallback and date
@@ -330,12 +400,12 @@ written onto a public edition — is fixed in place (see Backend 2).
 
 ## Backend
 
-1. **[Slice 1] ABS client** — `internal/api/audiobookshelf/client.go`: add
+1. **[Step 3] ABS client** — `internal/api/audiobookshelf/client.go`: add
    `GetLibraryItem(ctx, itemID) (*models.AudiobookshelfBook, error)` → `GET /api/items/{id}?expanded=1`
    (same auth/timeout style as `GetLibraryItems`; 404 -> typed not-found error). Not added to
    `AudiobookshelfClientInterface` (avoids breaking existing mocks); callers use the concrete client.
 
-2. **[Slice 1] Draft = existing pipeline, one small fix** (`internal/mismatch/mismatch.go`, new `internal/edition/draft/draft.go`, package `draft`; see Slice 1 implementation notes):
+2. **[Steps 1 and 3] Draft = existing pipeline, one small fix** (the fix in `internal/mismatch/mismatch.go` is step 1; the new `internal/edition/draft/draft.go`, package `draft`, is step 3; see the implementation notes):
    - **Fix in place:** in `AddWithMetadata`, stop defaulting `publisherID := 1`; leave `0` (unresolved).
      `ToEditionExport` and `Creator.createEdition` already treat `0` as "no publisher" (`if input.PublisherID > 0`).
      This changes the mismatch JSON export too: an unresolved publisher now exports `publisher_id: 0` instead of
@@ -354,7 +424,7 @@ written onto a public edition — is fixed in place (see Backend 2).
         `image_url` is forced server-side to `<profile ABS base URL>/api/items/<bookID>/cover`.
    - No new metadata-mapping logic: Audnex date, ISBN split, publisher/author/narrator lookups all stay where they are.
 
-3. **[Slice 3] Single-book sync** — `internal/sync/service.go`: new exported
+3. **[Step 6] Single-book sync** — `internal/sync/service.go`: new exported
    `(*Service).SyncBook(ctx, book models.AudiobookshelfBook) (BookOutcomeRecord, error)`:
    - Reset run-local outcome/collector state (without run-phase transitions), clear the in-memory ASIN
      cache and `hardcover.ClearUserBookCache()`, fetch user progress via `GetUserProgress` (marking
@@ -367,23 +437,23 @@ written onto a public edition — is fixed in place (see Backend 2).
      `needs_review`, `not_found`, `failed`, `would_sync`) plus reason/error; `ErrSkippedBook` is
      translated into that record rather than surfaced as an error.
 
-4. **Service orchestration** — new `internal/multiuser/edition.go`. Slice 1: draft, eligibility, admission,
-   per-book in-flight guard, create, dry-run. Slice 3: full-sync exclusivity (`bookOps`) and the resync call.
+4. **Service orchestration** — new `internal/multiuser/edition.go`. Step 3: draft, eligibility, admission.
+   Step 4: per-book in-flight guard, create, dry-run. Step 6: full-sync exclusivity (`bookOps`) and the resync call.
    - `PrepareEditionDraft(ctx, profileID, runID, bookID)` and
      `CreateEditionFromRunBook(ctx, profileID, runID, bookID, edits, resync bool)`.
    - Both load the run snapshot via `GetSyncRunSnapshot`, require a record with matching `book_id`,
      `outcome == needs_review`, and a numeric `hardcover_book_id`; otherwise `ErrEditionNotEligible`.
      The Hardcover book ID comes from the record, never the client.
    - Admission via `beginSyncStart`/`endSyncStart` so shutdown and profile deletion are respected.
-   - **[Slice 1] Double-submit guard:** an in-flight set keyed by `profileID/bookID` -> `ErrEditionInProgress`
-     (409). Plain edition creation touches neither the profile state file nor the sync caches, so in Slice 1 it
+   - **[Step 4] Double-submit guard:** an in-flight set keyed by `profileID/bookID` -> `ErrEditionInProgress`
+     (409). Plain edition creation touches neither the profile state file nor the sync caches, so in step 4 it
      may run alongside a full sync and does not touch `StartSyncWithAcceptedRun` at all.
-   - **[Slice 3] Exclusivity, only when `resync` is requested:** the one-book resync writes the same per-profile
+   - **[Step 6] Exclusivity, only when `resync` is requested:** the one-book resync writes the same per-profile
      state file and caches as a full sync, so it must never overlap one. Add a `bookOps` set (guarded by
      `syncMutex`): a create-with-resync is rejected up front with `ErrSyncAlreadyActive` (409 "sync in progress,
      try again when it finishes", before any edition is created) if a full sync is active/queued for the
      profile, and `StartSyncWithAcceptedRun` rejects (same sentinel -> 409) while a resync holds the profile.
-     Creation *without* resync keeps the Slice 1 behavior.
+     Creation *without* resync keeps the step 4 behavior.
    - The POST body echoes the draft's editable fields (scalars, ID lists, duration, format, language/country) so
      what was previewed is exactly what is created, with no second round of Hardcover lookups. The server always
      sets `book_id` (from the run record) and `image_url` (from the profile's ABS base URL) itself and never
@@ -399,30 +469,30 @@ written onto a public edition — is fixed in place (see Backend 2).
    - Use `NewCreatorWithHTTPClient` with a TLS-verifying client (default `NewCreator` sets
      `InsecureSkipVerify: true`).
 
-5. **[Slice 1] Creator token scoping** — `internal/edition/creator.go` (~line 221) attaches the ABS token only
+5. **[Step 2] Creator token scoping** — `internal/edition/creator.go` (~line 221) attaches the ABS token only
    when the URL `Contains("audiobookshelf")`, which fails for hosts like `abs.home`. Add an optional
    `audiobookshelfBaseURL` (setter) so the token is sent only to URLs under that base; keep the legacy
    behavior when unset so `cmd/edition` is unchanged.
 
-6. **[Slice 1; `resync` field and response block added in Slice 3] HTTP handlers + routes** — new `internal/api/handlers_edition.go`, routes in
+6. **[Steps 3 and 4; `resync` field and response block added in step 6] HTTP handlers + routes** — new `internal/api/handlers_edition.go`, routes in
    `internal/server/server.go` under `apiMux` (auth middleware already wraps `/api/`):
    - `GET  /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft`
    - `POST /api/profiles/{id}/runs/{runID}/books/{bookID}/edition`
-     body: editable scalars, ID lists; from Slice 3, an optional `resync` (default `false`, opt-in).
+     body: editable scalars, ID lists; from step 6, an optional `resync` (default `false`, opt-in).
    - Both use `authorizeProfileMetadata(..., mutation=true)` (viewers 403; foreign profiles 404). POST body
      capped with `http.MaxBytesReader` (64 KiB), unknown fields rejected.
    - Status mapping: bad IDs 400; profile/run/book not found or not eligible 404/409; same-book submit in flight
-     409 (Slice 1); full sync active while `resync` is requested 409 (Slice 3); validation failure (e.g. no author
+     409 (step 4); full sync active while `resync` is requested 409 (step 6); validation failure (e.g. no author
      resolved) 422 with a readable message; upstream ABS/Hardcover failure 502.
-     POST success: `{edition_id, dry_run}` in Slice 1; Slice 3 adds `resync: {attempted, outcome, reason, error}`.
-     Added after validation: the Slice 1 POST success `data` is `{edition_id, dry_run, warnings}`, where `warnings` is a
+     POST success: `{edition_id, dry_run}` in step 4; step 6 adds `resync: {attempted, outcome, reason, error}`.
+     Added after validation: the step 4 POST success `data` is `{edition_id, dry_run, warnings}`, where `warnings` is a
      `[]string` that is always present (an empty array when nothing went wrong). It holds one fixed message when the
      edition was created but its cover could not be uploaded; the status stays 200.
      Also added after validation: 409 when the book has neither an ASIN nor an ISBN, or when an existing edition could
      not be confirmed to belong to the book; 422 when a create request has none of `asin`, `isbn_10`, `isbn_13`; 503
      while the service is shutting down.
 
-## [Slice 4] Frontend (`web/static/app.js`, `index.html`, `styles.css`)
+## [Step 7] Frontend (`web/static/app.js`, `index.html`, `styles.css`)
 
 - `renderOutcomeRecord` (app.js ~1726): for `record.outcome === 'needs_review'` with a
   `hardcover_book_id` and an `asin` or `isbn` (an edition cannot be created without one), and `!this.isViewer()`,
@@ -443,7 +513,7 @@ written onto a public edition — is fixed in place (see Backend 2).
   `synced`, `already_current`, `skipped: unread book`, or `needs_review`/`failed` with its reason), records
   `editionResults[bookId]`, and re-renders.
 
-## Known limitation (Slice 4 docs; also stated in the Slice 3 handoff)
+## Known limitation (step 7 docs; also stated in the step 6 handoff)
 
 The retained run report is a durable, generation-checked historical record; this change does **not**
 rewrite it. After a successful resync the book still appears under Needs review in that run's details
@@ -466,69 +536,70 @@ the same format only, so a repeat submit normally returns the existing edition. 
 - Numeric fields and identifiers have only loose bounds.
 - Books with neither an ASIN nor an ISBN cannot get an edition through this feature at all.
 
-## Tests (slice noted per group; each slice ships its own tests)
+## Tests (step noted per group; each step ships its own tests)
 
-- **Slice 1** — `internal/api/audiobookshelf/client_test.go`: `GetLibraryItem` success, 404, auth header/path.
-- **Slice 1** — `internal/mismatch/mismatch_test.go`: other `AddWithMetadata` tests (incl. Audnex region fallback) pass unchanged;
+- **Step 3** — `internal/api/audiobookshelf/client_test.go`: `GetLibraryItem` success, 404, auth header/path.
+- **Step 1** — `internal/mismatch/mismatch_test.go`: other `AddWithMetadata` tests (incl. Audnex region fallback) pass unchanged;
   the publisher assertion is updated and a resolved-publisher case added.
-- **Slice 1** — `internal/edition/draft/draft_test.go` (fake Hardcover client): people/publisher IDs carried through, Hardcover book ID
+- **Step 3** — `internal/edition/draft/draft_test.go` (fake Hardcover client): people/publisher IDs carried through, Hardcover book ID
   taken from the run record, unresolved author/publisher/date -> warnings, cover URL forced to the ABS base URL,
   ISBN forms (`ToInput()` was removed).
-- **Slice 1** — `internal/edition/creator_test.go`: ABS token attached only under the configured base URL.
+- **Step 2** — `internal/edition/creator_test.go`: ABS token attached only under the configured base URL.
   `internal/edition/creator_reuse_test.go`: an existing edition is detected by every identifier before inserting, and
-  another book's edition is refused. `internal/multiuser/edition_cover_test.go`: an ISBN match never touches another
+  another book's edition is refused. `internal/multiuser/edition_cover_test.go` (step 4): an ISBN match never touches another
   book's edition.
-- **Slice 1** — `internal/isbn/isbn_test.go`: `Normalize`, `Parse` and the derived forms.
-- **Slice 1** — ebook editions: `internal/edition/creator_reuse_test.go` (ebook and audiobook dto fields, lookups scoped
+- **Step 1** — `internal/isbn/isbn_test.go`: `Normalize`, `Parse` and the derived forms.
+- **Steps 1-4** — ebook editions: `internal/edition/creator_reuse_test.go` (ebook and audiobook dto fields, lookups scoped
   to the input's format, invalid `reading_format`), `internal/mismatch/reading_format_test.go` (ebook export),
   `internal/edition/draft/draft_test.go` (ebook draft) and `internal/api/handlers_edition_test.go` (ebook draft and
   create, a request cannot set `reading_format`).
-- **Slice 2** — `internal/api/hardcover/search_identifier_test.go` and `internal/sync/isbn_matching_test.go`: the given ISBN
+- **Step 5** — `internal/api/hardcover/search_identifier_test.go` and `internal/sync/isbn_matching_test.go`: the given ISBN
   form is searched first and then the counterpart, each in its own field; ISBN normalization (lowercase `x`,
   separators); the ASIN is trimmed and blank identifiers are ignored; a 979 or bad-checksum ISBN has no counterpart
   search; the ISBN reading-format filter is kept (audiobook 2, ebook 4).
-- **Slice 3** — `internal/sync/`: `SyncBook` via existing test mocks — a book with an in-progress ABS state and a newly
+- **Step 6** — `internal/sync/`: `SyncBook` via existing test mocks — a book with an in-progress ABS state and a newly
   discoverable ASIN edition ends `synced` with the read/status mutations issued and state checkpointed;
   already-synced -> `already_current`; unread with `process_unread_books` off -> `skipped`; Hardcover lookup
   failure -> `failed`; **dry-run issues no Hardcover mutation and persists no state** (real mutation boundary).
-- **Slice 1** — `internal/api/handlers_edition_test.go` (fixture style of `handlers_status_test.go`; httptest ABS +
+- **Steps 3 and 4** — `internal/api/handlers_edition_test.go` (fixture style of `handlers_status_test.go`; httptest ABS +
   Hardcover): non-`needs_review` / no candidate -> not eligible; viewer 403, foreign owner 404; draft success;
   create sends the record's Hardcover `book_id` and ignores client-supplied `book_id`/`image_url`; dry-run -> no
   Hardcover mutation; same-book concurrent submit -> 409; validation -> 422; creation is unaffected by an active
   full sync; `StartSync`/`CancelSync` behave exactly as before.
-- **Slice 3** — same file plus `internal/multiuser`: resync outcome returned; resync failure still returns 200 with
+- **Step 6** — same file plus `internal/multiuser`: resync outcome returned; resync failure still returns 200 with
   the failure in `resync`; dry-run -> no resync; `resync=true` while a full sync is active -> 409 with **no edition
   created**; `StartSync` -> 409 while a resync is in flight and **unaffected when none is** (regression guard);
   `-race` for the exclusivity tests.
-- **Slice 4** — `web/app.test.js`: button only for eligible `needs_review` records and hidden for viewers; result
+- **Step 7** — `web/app.test.js`: button only for eligible `needs_review` records and hidden for viewers; result
   state replaces the button; modal HTML escapes ABS-supplied strings; checkbox hidden for dry-run; request sends
   `resync: true` only when checked.
 
-## Docs (each slice documents only what it delivers)
+## Docs (each step documents only what it delivers)
 
-- **Slice 1:** `README.md` two endpoint rows (draft + create, no resync) and a short API note (identifier requirement,
+- **Steps 1-4:** `README.md` two endpoint rows (draft in step 3, create in step 4, no resync) and a short API note (identifier requirement,
   ISBN matching, hyphen handling); `docs/openapi.yaml` for both operations; `CHANGELOG.md` `[Unreleased]` -> `### Added`,
   plus `### Changed`/`### Fixed` lines for the publisher export default, the honored `edition_format`, the hyphenated
   ISBN fix and the cross-book guard, plus the ebook support (`reading_format`, the mismatch export change, and the
-  `edition` CLI field).
-- **Slice 2:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
-- **Slice 3:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
-- **Slice 4:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
+  `edition` CLI field). Each step adds only the lines for what it delivers: the export fixes in step 1, the creator changes in step 2, and
+  the draft and create endpoints (README, OpenAPI) in steps 3 and 4.
+- **Step 5:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
+- **Step 6:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
+- **Step 7:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
   read-status resync, dry-run behavior, the Known limitation); CHANGELOG entry.
 
-## Verification (run at the tip of **each** slice before reporting it done)
+## Verification (run at the tip of **each** step before reporting it done)
 
 1. `gofmt -l .` clean; `go build ./...`; `go vet ./...`; `go build ./cmd/edition-tool`.
-2. Focused `go test` for the touched packages (Slice 1: `./internal/mismatch/... ./internal/edition/...
-   ./internal/api/... ./internal/multiuser/... ./internal/server/... ./internal/isbn/...`; Slice 2:
-   `./internal/sync/... ./internal/api/hardcover/... ./internal/isbn/...`; Slice 3 adds `-race`).
+2. Focused `go test` for the touched packages (steps 1-2: `./internal/isbn/... ./internal/models/... ./internal/mismatch/... ./internal/edition/... ./internal/api/hardcover/...`;
+   steps 3-4 add `./internal/api/... ./internal/multiuser/... ./internal/server/...`; step 5:
+   `./internal/sync/... ./internal/api/hardcover/... ./internal/isbn/...`; step 6 adds `-race`).
 3. `make test` (race + coverage) and `make lint` (golangci-lint; needs the CI-matching Go 1.26.7 toolchain first on
    `PATH`).
-4. `node --test web/app.test.js` (all slices; Slice 4 adds new cases).
-5. Exercise the slice's real surface: Slices 1 and 3 by curl or the httptest fixture against stub ABS/Hardcover
-   servers; Slice 2 through the sync tests against a stub Hardcover; Slice 4 in the browser pane (button only on
+4. `node --test web/app.test.js` (all steps; step 7 adds new cases).
+5. Exercise the step's real surface: steps 3, 4 and 6 by curl or the httptest fixture against stub ABS/Hardcover
+   servers; steps 1, 2 and 5 through their unit and sync tests against a stub Hardcover; step 7 in the browser pane (button only on
    eligible `needs_review` records, modal shows the draft, edits POST, resync result renders, error/dry-run paths, modal survives a status poll). Confirm a normal
    full sync and Sync Status still behave as before. A live create against real Hardcover is not part of
    automated verification — I will state that explicitly in each handoff.
-6. Commit locally on the slice's branch (`feature/edition-from-needs-review-api` first); report that nothing
+6. Commit locally on the step's branch; report that nothing
    was pushed.
