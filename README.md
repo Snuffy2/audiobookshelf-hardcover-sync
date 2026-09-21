@@ -109,11 +109,12 @@ history return `404`. Clients can filter `book_outcomes` for `needs_review`,
 failed, and canceled attempts; `last_successful_at` is updated only by a
 successful non-dry-run completion.
 
-### Draft an edition for a `needs_review` book (API)
+### Create an edition for a `needs_review` book (API)
 
 If a sync marks a book `needs_review`, API clients can preview the Hardcover
-edition data that would be used for that book. The web interface does not offer
-this workflow yet.
+edition data built from Audiobookshelf, edit it, and create the edition on the
+Hardcover book recorded by the sync run. The web interface does not offer this
+workflow yet.
 
 Get the run and book IDs from the run-details response, then call the draft
 endpoint with an authenticated account that can edit the profile:
@@ -121,6 +122,10 @@ endpoint with an authenticated account that can edit the profile:
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/api/profiles/$PROFILE_ID/runs/$RUN_ID/books/$BOOK_ID/edition-draft"
+
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"Example Title","isbn_13":"9780306406157","author_ids":[123]}' \
+  "http://localhost:8080/api/profiles/$PROFILE_ID/runs/$RUN_ID/books/$BOOK_ID/edition"
 ```
 
 The preview uses Audiobookshelf metadata and optional Audnex release data,
@@ -128,9 +133,11 @@ handles audiobook and ebook fields, derives the other ISBN form when possible,
 and returns warnings for metadata worth reviewing. If the item has no ASIN or
 parseable ISBN, add one in Audiobookshelf before trying again.
 
-This operation is read-only: it does not contact Hardcover or create anything,
-and it does not require a Hardcover token or scope. See the
-[OpenAPI specification](docs/openapi.yaml) for the response fields and errors.
+Previewing is read-only and makes no Hardcover request. Creation validates the
+submitted identifiers and Hardcover contributor IDs, honors dry-run mode, and
+may return a warning if the edition succeeds but its cover cannot be uploaded.
+See the [OpenAPI specification](docs/openapi.yaml) for request fields, response
+fields, and errors.
 
 ### Environment Variables (Multi-Profile)
 
