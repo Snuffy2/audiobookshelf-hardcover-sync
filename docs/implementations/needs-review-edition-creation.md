@@ -120,11 +120,14 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [x] Maintainer review on #195: every point verified against current code; dispositions:
   - **Q1, checksum-invalid ISBNs: decided.** Keep accepting by shape and keep the value in `isbn_10` / `isbn_13`, and report the
     checksum: `isbn.Result.Valid`, and `isbn_10_valid` / `isbn_13_valid` in the export (omitted when that ISBN is empty; the
-    `edition` command ignores them). The policy is documented in the `isbn` package. Why: Hardcover's docs list
-    `isbn_10_valid` / `isbn_13_valid` on `editions`, which suggests it stores and flags such ISBNs, and step 5 must still find
-    an edition by the given value. **Not verified:** whether `insert_edition` accepts a bad checksum, whether a lookup by one
-    matches, and whether Audiobookshelf routinely serves them; none of it has been run against the real API. The open part
-    (warn or reject on a `false` flag when drafting or creating) is queued under steps 3 and 4.
+    `edition` command ignores them). The policy is documented in the `isbn` package. Why: Hardcover stores editions with a
+    bad checksum and flags them `false` instead of rejecting them, and step 5 must still find an edition by the given value.
+    **Confirmed against the hosted API** with read-only queries (the maintainer asked): the two fields exist on `editions`, they
+    are `null` for an empty ISBN, they matched `internal/isbn`'s checksum on all 27 sampled values, and an exact lookup matches
+    only the stored, hyphen-free value (details in the crosswalk's R5 and R6 field note). The checked-in schema snapshot does not
+    list the fields. **Not tested:** whether `insert_edition` accepts a bad checksum, whether Hardcover strips hyphens on write,
+    and how often Audiobookshelf serves a bad checksum. The open part (warn or reject on a `false` flag when drafting or
+    creating) is queued under steps 3 and 4.
   - **Q2, ebook with an audiobook label: fixed.** `ToEditionExport` now forces `Ebook` for any ebook record (R11 says
     `Ebook`), with a test over `""`, `Audiobook`, `Audible Audio` and `libro.fm`.
   - **ABS schema: fixed.** `abridged` added beside `explicit` in `bookMetadataBase` in
@@ -220,8 +223,9 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       JSON field disappears from a file users see (check `BookMismatch`'s `edition_information` in the status API first).
 - [ ] ISBN checksum flags from step 1: the export carries `isbn_10_valid` / `isbn_13_valid`. Decide what the draft does with a
       `false` one (a warning next to the ISBN field is the smallest change that loses nothing) and expose the flag in the draft;
-      check with a real Hardcover token first whether `insert_edition` accepts a bad checksum, since nothing here has run
-      against it. The raw `isbn` stays on the record, so the value is never lost.
+      check with a real Hardcover token first whether `insert_edition` accepts a bad checksum: the flags and their behavior on
+      read are confirmed (see the crosswalk), but no write has been tried. The raw `isbn` stays on the record, so the value is
+      never lost.
 - [ ] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
       `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
       or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).

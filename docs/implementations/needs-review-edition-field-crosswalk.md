@@ -117,8 +117,9 @@ Points about the target that shape the mapping:
   when only the year is known.
 - **`language_id`, `country_id`, `publisher_id`** are foreign keys (`languages`, `countries`, `publishers`), not names.
   `languages` has `language`, `code2`, `code3`.
-- **Identifiers**: Hardcover strips hyphens from ISBNs itself. `isbn_10_valid`/`isbn_13_valid` are computed on their
-  side. Their ISBN guide warns that adding or removing `978` does not give a valid number, because the check digit
+- **Identifiers**: Hardcover's docs say it strips hyphens from ISBNs itself (a write behavior, not tested). `isbn_10_valid` /
+  `isbn_13_valid` are computed on their side; they exist on the hosted API's `editions` (see the R5 and R6 field note for what
+  was confirmed). Their ISBN guide warns that adding or removing `978` does not give a valid number, because the check digit
   must be recalculated (`internal/isbn` does recalculate it).
 - **Cover**: `image_id` is set on a *second* call. The tool uploads the file to Hardcover's storage
   (`POST https://hardcover.app/api/upload/google`, then a multipart POST to the returned URL), calls `insert_image`,
@@ -164,9 +165,24 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 13 digits, or 9 digits followed by a digit or `X`. The draft first records only the form the item carries, then fills
 the other with `isbn.ISBN10()/ISBN13()`, which returns the counterpart only for a valid checksum. A bad-checksum ISBN
 is still sent as given and has no counterpart. Step 1's export adds `isbn_10_valid` / `isbn_13_valid` (the names Hardcover's
-`editions` table uses) so a later step can decide what to do with it. Hardcover's docs list those two flags, which suggests it
-stores and flags such ISBNs, but that has not been tried against the real API. Whether a `false` flag is a warning or a
-rejection in the draft and create endpoints is open (see the step 3 and step 4 checklists). On create, each field is
+`editions` table uses) so a later step can decide what to do with it.
+
+Confirmed against the hosted API with read-only GraphQL queries (the checked-in schema snapshot does not list these fields, so
+their existence rests on the hosted API and its docs, not on this repository):
+- `isbn_10_valid` and `isbn_13_valid` exist on `editions` as booleans, and `true` for ordinary valid ISBNs.
+- Hardcover stores editions whose ISBN has a bad checksum and flags them `false`; it does not reject them. Both flags returned
+  `false` rows, and a valid 979 ISBN-13 is `true`.
+- The flag is `null` when the ISBN is empty, which matches our export omitting the key in that case.
+- On 27 sampled values (valid and invalid, ISBN-10 and ISBN-13, 978 and 979) every Hardcover flag matched the checksum
+  result of `internal/isbn`.
+- An exact `_eq` lookup matches only the stored, hyphen-free value; a hyphenated form returned no row. Lookups must therefore
+  send a normalized ISBN (step 5's client does).
+- Some 979 ISBN-13 editions carry an ISBN-10 of their own, entered directly; we never derive one for a 979, and an ISBN-10
+  search still finds them.
+
+**Not tested:** whether `insert_edition` accepts a bad-checksum ISBN (that needs a write), whether Hardcover really strips
+hyphens on write, the `isbns_match` field, and how often Audiobookshelf serves a bad checksum. Whether a `false` flag is a
+warning or a rejection in the draft and create endpoints is open (see the step 3 and step 4 checklists). On create, each field is
 re-normalized and must have the right length for its slot (`isbn_10 must be a valid 10-character ISBN`), and at least
 one of `asin`, `isbn_10`, `isbn_13` is required.
 
