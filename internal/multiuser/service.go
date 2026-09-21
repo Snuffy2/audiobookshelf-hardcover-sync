@@ -958,8 +958,10 @@ func (s *MultiUserService) StartSyncWithAcceptedRun(profileID string) (AcceptedS
 }
 
 // Shutdown closes admission to new starts, cancels every active profile run,
-// and waits for accepted workers to exit until ctx is done. It is safe to call
-// more than once; a later call can continue draining after an earlier timeout.
+// and waits for accepted workers and in-flight edition creates to exit until ctx
+// is done. Running syncs are cancelled without waiting for edition creates. It
+// is safe to call more than once; a later call can continue draining after an
+// earlier timeout.
 // Repository operations performed while canceling runs are profile-scoped and
 // never hold the service-wide lifecycle lock.
 func (s *MultiUserService) Shutdown(ctx context.Context) error {
@@ -986,6 +988,12 @@ func (s *MultiUserService) Shutdown(ctx context.Context) error {
 
 	if err := waitForSyncGroup(ctx, &s.syncWaitGroup); err != nil {
 		return fmt.Errorf("wait for sync workers to finish: %w", err)
+	}
+
+	// Creates are drained last: syncs are already cancelled, and a create that
+	// outlives ctx must not be abandoned silently.
+	if err := waitForSyncGroup(ctx, &s.editionWaitGroup); err != nil {
+		return fmt.Errorf("wait for in-flight edition creates to finish: %w", err)
 	}
 	return nil
 }
