@@ -58,12 +58,12 @@ carries the matching item, and its PR description names the rows it delivers.
 | Step | Delivers | Verifies | Crosswalk findings to decide |
 |------|----------|----------|------------------------------|
 | 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
-| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (cover chain, token scoping) | R5, R6 forms from step 1 | 5, 8 |
-| 3 Draft endpoint | The ABS side: decode, then R1-R17 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
-| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 and R17 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
+| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (the creator's cover chain and token scoping; the app does not use it) | R5, R6 forms from step 1 | 5, 8 |
+| 3 Draft endpoint | The ABS side: decode, then R1-R16 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
+| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
 | 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
 | 6 Resync | nothing new | R1, R4-R6, R12: the resync finds the edition just created | none |
-| 7 UI | What is editable, shown, hidden and echoed: R2-R14, R17 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
+| 7 UI | What is editable, shown, hidden and echoed: R2-R14 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
 
 ## Step checklists
 
@@ -91,8 +91,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       existing audiobook edition by ASIN and reuses it; a bad-checksum ISBN is accepted and stored flagged invalid; hyphens are
       stripped on write; a valid ISBN-10 alone also stores the derived ISBN-13; Hardcover normalizes the format label (`Audible
       Audio` was stored as `Audible`); `language_id` 1 and `country_id` 1 are English and the United States. **Not working or
-      untested:** the cover upload (`hardcover.app/api/upload/google` answered 401 to an API token, so the edition was created
-      without a cover), `insert_image`, WebP rejection, Hardcover's own duplicate rejection on insert, and live Audnex. Say what is
+      untested:** the creator's cover upload (`hardcover.app/api/upload/google` answered 401 to a new API token; the app does
+      not upload covers), `insert_image`, WebP rejection, Hardcover's own duplicate rejection on insert, and live Audnex. Say what is
       untested in each PR's testing notes for steps 2-4, and repeat the live check before the upstream PRs for steps 2-4 if the
       owner wants one.
 - [ ] **Hardcover token scopes.** The key that adds editions needs `read:library`, `write:library`, `read:catalog` and
@@ -182,7 +182,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       uploaded, decided from the file's bytes rather than the response `Content-Type`; WebP is not supported by Hardcover, so
       it is rejected. The download is capped at 15 MiB, the largest size Hardcover documents ("If you want to upload a 15mb file,
       go for it"); it documents no hard maximum. Dimensions are not enforced (300x450 is only a recommendation). A rejected
-      cover keeps the edition and sets a fixed `ImageError` label. **Not verified:** Hardcover's real server-side limits.
+      cover keeps the edition and sets a fixed `ImageError` label. **Not verified:** Hardcover's real server-side limits. This applies to
+      the `edition` and `image-tool` commands only; the app does not upload covers (see the cover decision below).
 - [x] `GetEditionByISBN10` has a test at the GraphQL boundary (the `isbn_10` field, the reading-format filter, the returned
       book ID).
 - [ ] The fork PR description says: `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4
@@ -201,14 +202,14 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Step 1's CHANGELOG bullet says the `edition` command does not read `reading_format` yet, which step 2 makes false. The
       one-bullet rule forbids editing an earlier step's bullet, so decide before step 2 goes upstream: amend step 1's bullet, or
       accept the mismatch and say so in the step 2 PR.
-- [x] `cmd/edition/README.md` documents the token scopes (`read:catalog` and `write:catalog:append`, with a link that pre-selects
-      them), the `403 insufficient_scope` error, and that the cover step is best effort.
-- [ ] Decide the cover upload. The creator asks `hardcover.app/api/upload/google` for storage credentials with browser-style headers
-      and the API token; against the real API that answered `401` (a plain HTTP client gets a Cloudflare challenge). The endpoint is
-      not part of the documented GraphQL API, so with an API token the cover step cannot be relied on: the edition is still created and
-      `image_error` says so, and Hardcover attached a cover itself from the ISBN on the ebook edition. Options: keep it best effort
-      (current, documented), check whether `insert_image` accepts an external image URL (a write that has not been tried), or drop the
-      cover upload. Decide before step 4, whose create response promises a `warnings` entry for a failed cover.
+- [x] `cmd/edition/README.md` lists the token scopes the command needs (`read:library`, `write:library`, `read:catalog`,
+      `write:catalog:append`).
+- [x] Cover upload, decided: the app does not upload a cover when it creates an edition, for now. The creator keeps its existing cover
+      flow, which runs only when a caller passes `image_url` (the `edition` and `image-tool` commands); the app never does. The upload
+      endpoint (`hardcover.app/api/upload/google`) is outside the documented GraphQL API and answered `401` to a new scoped API token,
+      although tokens from before August 2026 (all-access) may still work. Revisit if a supported way to upload is found. Steps 3, 4
+      and 7 therefore drop R17: no draft cover URL, no `image_url` on create, no cover warning, no `SetAudiobookshelfBaseURL` call and no
+      cover in the preview. Hardcover also attaches a cover itself from the ISBN where it can (seen on an ebook edition).
 - [ ] `cmd/edition/README.md` says the token is set as the `HARDCOVER_TOKEN` environment variable, but the command loads
       `config.yaml` with `config.LoadFromFile`, which ignores the environment: with only the variable set, every request failed with
       "Token cannot be blank", and the file must exist. Fix the README (the token is `hardcover.token` in `config.yaml`) or make the
@@ -220,8 +221,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       what else the model reads (findings 2-4; `abridged`, finding 1, is already decoded by step 1); build fixtures from a real expanded item, one audiobook and one ebook; pin
       R1 (book ID from the run record, identifier requirement), R5 and R6 (counterpart only when derivable), R7 and R9
       (warnings, no narrator for an ebook), R8 (Audnex fallback, year fallback, warning), R10 (warning), R11, R13 and R14
-      (rounding, ebook), R12 (`reading_format`), R15 and R16, and R17 (`CoverURL`: empty, stripped, escaped, no Hardcover
-      cover fallback); verify step 1's export behavior through the draft.
+      (rounding, ebook), R12 (`reading_format`), R15 and R16 (R17 is not used: the draft carries no cover URL); verify step 1's
+      export behavior through the draft.
 - [ ] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
       the step 1 bullet: step 3 currently rewrites step 1's hyphenated-ISBN line, which the rule forbids.
 - [ ] The PR description says the response write-deadline mechanism (`extendEditionWriteDeadline`, `Unwrap()` in the logger, and
@@ -264,8 +265,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       set is exactly `EditionEdits` (any other field, including `reading_format`, `book_id` and `image_url`, is 400); test
       R1 (run record only), R12 (from the item fetched at create time), R2 (trim, blank is 422), R4-R6 (ASIN trim, ISBN
       normalization, wrong shape 422, an identifier required, an item without one 409), R7 and R9 (at most 50, positive),
-      R10, R13, R15, R16 (not negative), R11 (at most 100), and R17 (URL rebuilt server-side, the first production caller of
-      `SetAudiobookshelfBaseURL`, a cover failure is a warning with a 200); verify R3, R8 and R14 reach the creator unchanged.
+      R10, R13, R15, R16 (not negative) and R11 (at most 100); R17 is not used: `image_url` is rejected and no cover is uploaded, so
+      `SetAudiobookshelfBaseURL` stays without a production caller; verify R3, R8 and R14 reach the creator unchanged.
       State finding 8 in the PR's testing notes.
 - [ ] Its CHANGELOG diff must be ONE new bullet for the create endpoint (one-bullet-per-PR rule) and must not touch earlier
       steps' bullets; today it replaces step 3's entry and reshuffles steps 1-2's lines, so redo that hunk. This means step 4's
@@ -330,7 +331,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 **Step 7** (not started)
 - [ ] Crosswalk scope ([section 5, Step 7](needs-review-edition-field-crosswalk.md#step-7-ui)): editable inputs are exactly
       R2 title, R3 subtitle, R4 ASIN, R5 ISBN-13, R6 ISBN-10, R8 release date, R14 edition information; read-only are R7, R9,
-      R10 (resolved names), R11, R12, R13 and R17; an ebook hides R9 and R13 and shows R12; `author_ids`, `narrator_ids`,
+      R10 (resolved names), R11, R12 and R13; an ebook hides R9 and R13 and shows R12; `author_ids`, `narrator_ids`,
       `publisher_id`, `language_id`, `country_id`, `audio_seconds` and `edition_format` are echoed from the draft unedited;
       every draft warning and the 409 and 422 messages are shown; every ABS-supplied string is escaped. Findings 9 and, if
       the language is shown, 3.
@@ -523,7 +524,8 @@ Each remaining step is started only on the owner's go-ahead, and nothing is push
 
 These notes were recorded when steps 1-4 were still one slice ("Slice 1"), implemented and validated, then extended. The
 feature-to-step mapping is in "How the combined branch was split". The combined branch is deleted and its content lives in
-steps 1-4; fork PR #20, its head, is closed. Where this differs from the plan above, this section is what shipped.
+steps 1-4; fork PR #20, its head, is closed. Where this differs from the plan above, this section is what shipped. Decision log 16 (no cover upload from the app) supersedes
+anything below about a draft cover URL, a cover warning on create, or the app using the ABS token scoping.
 
 **Cleanup done after the ebook work** (a cleanup loop over the branch): the ebook rule and Hardcover
 reading-format ids now live once in `internal/models` (`AudiobookshelfBook.ReadingFormat`, `ReadingFormatID`) instead
@@ -689,6 +691,11 @@ Decisions made by the owner and where they ended up.
     assignment is a table near the top of this document, repeated as one checklist item per step. Row IDs (R1 to R18) never
     change, so PR descriptions and checklists can cite them.
 
+16. **No cover upload from the app, for now.** Creating an edition from Sync Status uploads no cover: the draft has no cover URL, create
+    sets no `image_url` and returns no cover warning, and the preview shows no cover. The creator and the `edition` and
+    `image-tool` commands keep their existing cover flow, used only when a caller passes `image_url`. Reason: the upload endpoint is
+    outside the documented API and answered `401` to a new scoped token. Steps 2, 3, 4 and 7.
+
 ## Ebook items: ebook editions (resolved, steps 1-4)
 
 **Decision (owner): an ebook-only `needs_review` item gets an ebook edition through the same routes.** This
@@ -795,7 +802,7 @@ written onto a public edition — is fixed in place (see Backend 2).
      4. wrap as `Draft`: the export's fields + display names from `Export.Info` (`author_names`, `narrator_names`,
         `publisher_name`) + `warnings []string` (no author resolved -> `EditionInput.Validate` would fail; missing
         release date; unresolved publisher) + `dry_run`. `Draft.ToInput()` mapped the export to `edition.EditionInput` (removed later as unused).
-        `image_url` is forced server-side to `<profile ABS base URL>/api/items/<bookID>/cover`.
+        No `image_url` is set: the app does not upload covers (decision log 16).
    - No new metadata-mapping logic: Audnex date, ISBN split, publisher/author/narrator lookups all stay where they are.
 
 3. **[Step 6] Single-book sync** — `internal/sync/service.go`: new exported
@@ -830,9 +837,8 @@ written onto a public edition — is fixed in place (see Backend 2).
      Creation *without* resync keeps the step 4 behavior.
    - The POST body echoes the draft's editable fields (scalars, ID lists, duration, format, language/country) so
      what was previewed is exactly what is created, with no second round of Hardcover lookups. The server always
-     sets `book_id` (from the run record) and `image_url` (from the profile's ABS base URL) itself and never
-     accepts them from the request: the Creator attaches the ABS bearer token to the image download, so a
-     client-supplied URL would be a token-exfiltration/SSRF vector.
+     sets `book_id` (from the run record) itself and never accepts it from the request. It sets no `image_url` and a request that
+     sends one is rejected: the app does not upload covers (decision log 16).
    - Dry-run profile: `hcClient.SetDryRun(true)`, Creator `dryRun=true` (returns `edition_id: 0`), and the
      resync is **not** attempted (`resync.attempted=false, reason="dry run"`) — nothing was created for
      it to find. Honors the AGENTS.md dry-run safeguard.
@@ -860,9 +866,8 @@ written onto a public edition — is fixed in place (see Backend 2).
      409 (step 4); full sync active while `resync` is requested 409 (step 6); validation failure (e.g. no author
      resolved) 422 with a readable message; upstream ABS/Hardcover failure 502.
      POST success: `{edition_id, dry_run}` in step 4; step 6 adds `resync: {attempted, outcome, reason, error}`.
-     Added after validation: the step 4 POST success `data` is `{edition_id, dry_run, warnings}`, where `warnings` is a
-     `[]string` that is always present (an empty array when nothing went wrong). It holds one fixed message when the
-     edition was created but its cover could not be uploaded; the status stays 200.
+     The step 4 POST success `data` is `{edition_id, dry_run}`. An earlier design added a `warnings` array for a failed cover
+     upload; the app uploads no cover, so it is dropped.
      Also added after validation: 409 when the book has neither an ASIN nor an ISBN, or when an existing edition could
      not be confirmed to belong to the book; 422 when a create request has none of `asin`, `isbn_10`, `isbn_13`; 503
      while the service is shutting down.
@@ -878,7 +883,7 @@ written onto a public edition — is fixed in place (see Backend 2).
   `#edit-user-modal`, plus styles reusing the existing modal classes.
 - Delegated click handler for `[data-add-edition]` -> `openAddEditionModal(bookId)`: uses
   `this.openSummary.{profileId,runId}`, fetches the draft with the same auth-generation / abort /
-  `handleAuthExpiry` guards as `fetchAndRenderDetails`, renders read-only context (cover, resolved
+  `handleAuthExpiry` guards as `fetchAndRenderDetails`, renders read-only context (resolved
   author/narrator/publisher names, duration, format, target Hardcover book, warnings) and editable text
   inputs (title, subtitle, ASIN, ISBN-10, ISBN-13, release date, edition information), all through
   `escapeHtml`/`escapeHtmlAttribute`, plus a checked-by-default checkbox
@@ -922,7 +927,7 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
 - **Step 1** — `internal/mismatch/mismatch_test.go`: other `AddWithMetadata` tests (incl. Audnex region fallback) pass unchanged;
   the publisher assertion is updated and a resolved-publisher case added.
 - **Step 3** — `internal/edition/draft/draft_test.go` (fake Hardcover client): people/publisher IDs carried through, Hardcover book ID
-  taken from the run record, unresolved author/publisher/date -> warnings, cover URL forced to the ABS base URL,
+  taken from the run record, unresolved author/publisher/date -> warnings, no cover URL,
   ISBN forms (`ToInput()` was removed).
 - **Step 2** — `internal/edition/creator_test.go`: ABS token attached only under the configured base URL.
   `internal/edition/creator_reuse_test.go`: an existing edition is detected by every identifier before inserting, and

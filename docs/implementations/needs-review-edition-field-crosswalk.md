@@ -37,12 +37,11 @@ draft.Draft  ->  GET .../edition-draft    editable preview, plus display names a
 multiuser.validateEditionInput            trim title, normalize ISBNs, require an identifier         (step 4)
   |                                       and an author, bound the ID lists
   v
-edition.Creator.CreateEdition             duplicate lookups, insert_edition, then the cover chain    (step 2)
+edition.Creator.CreateEdition             duplicate lookups, insert_edition (no cover upload)          (step 2)
 ```
 
-Two fields never come from the client: `book_id` (from the run record's `hardcover_book_id`) and the cover URL (rebuilt
-from the profile's ABS base URL). The reading format is also decided on the server, from the ABS item fetched again
-at create time.
+One field never comes from the client: `book_id` (from the run record's `hardcover_book_id`). The reading format is also
+decided on the server, from the ABS item fetched again at create time. The app sets no cover and uploads none (see R17).
 
 ## 2. Source: what ABS returns
 
@@ -54,7 +53,7 @@ Fields relevant to an edition (`media` is the book; `media.metadata` is its meta
 
 | ABS field | Type | Decoded by `models.AudiobookshelfBook`? | Notes |
 |-----------|------|------------------------------------------|-------|
-| `id` | string | yes (`ID`) | Library item ID, for example `li_8gch9ve09orgn4fdz8`. Used for the cover URL. |
+| `id` | string | yes (`ID`) | Library item ID, for example `li_8gch9ve09orgn4fdz8`. |
 | `libraryId` | string | yes | Carried in the mismatch export only. |
 | `mediaType` | `"book"` or `"podcast"` | yes | ABS says `"book"` for ebooks too, so it does not identify an ebook. |
 | `media.metadata.title` | string or null | yes | |
@@ -127,6 +126,7 @@ Points about the target that shape the mapping:
   supported**, and larger is better (at least 300x450 for the top quality tier). Against the real API with an API token the
   storage-credentials call to `hardcover.app/api/upload/google` answered `401` (a plain HTTP client gets a Cloudflare challenge), so the
   cover step could not complete and the edition was created without it; Hardcover itself attached a cover from the ISBN to an ebook edition.
+  The app therefore uploads no cover for now (see R17); the creator's flow stays for the `edition` and `image-tool` commands.
 - **Permissions** (confirmed): creating an edition needs `write:catalog:append`, and `read:catalog` covers the lookups. A token
   without it is refused with `403 insufficient_scope` ("Missing scopes: write:catalog:append") and nothing is created; with it the
   insert succeeds. The sync token's scopes
@@ -171,7 +171,7 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
 | R15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 2, 3, 4 | API |
 | R16 | `country_id` | none | Constant `1` (assumed United States). | 2, 3, 4 | API |
-| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Only a PNG or JPEG of at most 15 MiB is uploaded (decided from the downloaded bytes). Any failure is a warning; the edition stays. | 2, 3, 4, 7 | server |
+| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | **Not used by the app for now: it uploads no cover.** The creator keeps the flow for the `edition` and `image-tool` commands, which pass `image_url`. URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Only a PNG or JPEG of at most 15 MiB is uploaded (decided from the downloaded bytes). Any failure is a warning; the edition stays. | 2 | server |
 | R18 | `page_count` | none | Not sent. ABS has no page count. | n/a | n/a |
 
 ### Field notes
@@ -236,7 +236,7 @@ which is acceptable to Hardcover but not large. `?raw=1` returns the original fi
 WebP, which Hardcover does not support). The creator follows Hardcover's Edition Standards (PNG and JPEG work best, WebP is
 not supported, larger is better, no hard size maximum documented; a 15 MB file is named as fine): it decides the format from
 the downloaded bytes, uploads only PNG (`png`) or JPEG (`jpg`), refuses a download over 15 MiB, and keeps the edition, with a
-fixed `ImageError`, when it rejects a cover.
+fixed `ImageError`, when it rejects a cover. This is the creator only: the app passes no `image_url`, so it never runs.
 
 ## 5. What each step must deliver from the crosswalk
 
@@ -253,12 +253,12 @@ Every step in [the plan](needs-review-edition-creation.md) touches some rows. Fo
 | Step | Delivers | Verifies | Findings to decide |
 |------|----------|----------|--------------------|
 | 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
-| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (cover chain, token scoping) | R5, R6 forms from step 1 | 5, 8 |
-| 3 Draft endpoint | The ABS side: decode, then R1-R17 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
-| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 and R17 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
+| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (the creator's cover chain and token scoping; the app does not use it) | R5, R6 forms from step 1 | 5, 8 |
+| 3 Draft endpoint | The ABS side: decode, then R1-R16 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
+| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
 | 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
 | 6 Resync | nothing new | R1, R4-R6, R12: the resync finds the edition just created | none |
-| 7 UI | What is editable, shown, hidden and echoed: R2-R14, R17 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
+| 7 UI | What is editable, shown, hidden and echoed: R2-R14 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
 
 ### Step 1: ISBN and export foundations
 
@@ -308,8 +308,9 @@ Code: `edition.Creator`. This step owns everything sent to Hardcover, so its tes
 - **R17:** the cover chain (download, storage credentials, upload, `insert_image`, `update_edition`); the ABS token goes only
   to the configured ABS base URL; each failure keeps the edition and sets `ImageError`; only a PNG or JPEG, decided from the
   downloaded bytes, is uploaded (extension `png` or `jpg`), and a download over 15 MiB is refused; the token is never sent on a
-  non-https hop of a request that started on https, and not to a different domain on redirect. `SetAudiobookshelfBaseURL` has no production caller until step 4, so the `edition` CLI keeps the
-  legacy host heuristic.
+  non-https hop of a request that started on https, and not to a different domain on redirect. This is the creator level: the app
+  uploads no cover, so `SetAudiobookshelfBaseURL` has no production caller and the `edition` and `image-tool` commands keep the legacy host
+  heuristic.
 - **Verifies:** the ISBN forms that step 1's `isbn` package produces for the converted lookups.
 - **Decided:** finding 5 (cover size and format), see the findings list; finding 8 (token scope) is confirmed against the real API but cannot be tested offline, so say so
   in the PR.
@@ -335,8 +336,7 @@ ebook.
   (33854.905 becomes 33855); an ebook has no audio and no `Unabridged`.
 - **R12:** the draft reports `reading_format`.
 - **R15, R16:** constants; finding 3 adds a warning when ABS names a language other than English.
-- **R17:** `CoverURL` is server-controlled: empty when there is no cover or no usable base URL; credentials, query and fragment
-  are stripped; the item ID is path-escaped; the export's Hardcover-cover fallback never reaches the draft.
+- **R17:** not used: the draft carries no cover URL.
 - **Verifies:** the step 1 behavior above, seen through the draft (R5, R6, R10-R14), and R12.
 - **Decide:** findings 2, 3, 4, 7 and 9 (draft level); finding 6 is informational.
 
@@ -352,8 +352,7 @@ Code: `EditionEdits`, `validateEditionInput`, `normalizeEditionIdentifiers`, `Cr
   wrong shape for its slot is 422; at least one of ASIN, ISBN-10, ISBN-13 is required (422); an ABS item with no identifier
   is 409.
 - **R7, R9:** at most 50 IDs each, all positive. **R10, R13, R15, R16:** not negative. **R11:** at most 100 characters.
-- **R17:** the cover URL is rebuilt from the profile's ABS base URL, never taken from the request; this is where
-  `SetAudiobookshelfBaseURL` gets its first production caller; a cover failure becomes the fixed warning with a 200.
+- **R17:** not used: create sets no `image_url` (a request that sends one is 400), uploads no cover and returns no cover warning.
 - **Also:** a duplicate on another book is 409 with the fixed message; a dry run issues no mutation and returns
   `edition_id: 0`.
 - **Verifies:** R3, R8 and R14 reach the creator unchanged.
@@ -392,7 +391,7 @@ Code: `web/static/app.js`, `index.html`, `styles.css`. This step decides what th
 - **Editable inputs, exactly:** R2 title, R3 subtitle, R4 ASIN, R5 ISBN-13, R6 ISBN-10, R8 release date, R14 edition
   information.
 - **Read-only:** R7, R9, R10 (the resolved author, narrator and publisher names), R11 edition format, R12 reading format,
-  R13 duration, R17 cover.
+  R13 duration.
 - **Ebook:** hide R9 (narrators) and R13 (duration) and show R12.
 - **Echoed back unedited:** `author_ids`, `narrator_ids`, `publisher_id`, `language_id`, `country_id`, `audio_seconds` and
   `edition_format` from the draft, so what was previewed is what is created, with no second round of lookups.
@@ -423,7 +422,7 @@ afterwards by `update_edition`). `EditionInput.locked` is not sent.
 | Field | Who decides | Detail |
 |-------|-------------|--------|
 | `book_id` | server | Run record; the request cannot retarget the edition. |
-| cover URL | server | `draft.CoverURL(profile ABS URL, item)` at both draft and create. A client-supplied URL would be a way to send the ABS token elsewhere, so none is accepted. |
+| cover URL | none | Not used: the app sets no `image_url` and uploads no cover (see R17). |
 | `reading_format_id`, reading-format-dependent fields | server | `item.ReadingFormat()` on the item fetched at create time. |
 | Everything else in `EditionEdits` | the client, validated | `title`, `subtitle`, `asin`, `isbn_10`, `isbn_13`, `release_date`, `edition_information`, `edition_format`, `audio_seconds`, `language_id`, `country_id`, `author_ids`, `narrator_ids`, `publisher_id`. At most 50 author and 50 narrator IDs, all positive; publisher, language, country and audio length not negative. |
 
@@ -497,7 +496,7 @@ a date, `release_date` is that date instead of `2008-01-01`):
 }
 ```
 
-The cover then goes through the four-step chain from `https://<abs>/api/items/li_8gch9ve09orgn4fdz8/cover`. `subtitle`,
+No cover is uploaded from the app (R17). `subtitle`,
 `isbn_10` and `isbn_13` are absent because ABS had none. `isbn` is null here, so the request carries only the ASIN
 identifier and duplicates are looked up by ASIN.
 
@@ -534,7 +533,7 @@ which step decides it.
 5. **Cover** (decided in step 2). The default is a 400 px JPEG; Hardcover prefers larger images and rejects WebP. `?raw=1` would
    return the original but in any format. The creator now applies Hardcover's documented rules: PNG and JPEG only, decided from
    the bytes, at most 15 MiB (the largest size Hardcover documents; it documents no hard maximum), dimensions not enforced.
-   Not verified against the real API.
+   Not verified against the real API. The app uploads no cover for now, so this applies to the `edition` and `image-tool` commands only.
 6. **`edition_format` from an ASIN** (informational). `Audible Audio` is kept for parity with the mismatch export, but Hardcover
    stores it as `Audible`. Its draft FAQ says the field should describe the edition and is usually blank.
 7. **Audnex for ebooks** (step 3, minor). An ebook's Kindle ASIN still triggers up to two Audnex calls (sharing one 15 s cap) that are not expected to
