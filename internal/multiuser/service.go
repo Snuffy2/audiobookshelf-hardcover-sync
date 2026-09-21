@@ -17,6 +17,7 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/config"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 	statepkg "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync/state"
@@ -116,6 +117,19 @@ type MultiUserService struct {
 	shutdownMutex         stdSync.Mutex
 	cancellationWaitGroup stdSync.WaitGroup
 	shuttingDown          bool
+	// editionWaitGroup tracks in-flight edition creates. It is separate from
+	// startWaitGroup so a create, which may run for minutes, never delays
+	// Shutdown's cancellation of running syncs; Shutdown drains it last.
+	editionWaitGroup stdSync.WaitGroup
+
+	// editionsInFlight guards against overlapping edition submits for one
+	// profile/book pair. It is independent of the full-sync lifecycle state.
+	editionMutex     stdSync.Mutex
+	editionsInFlight map[string]struct{}
+	// newEditionCreator, when set, replaces how an edition create request builds
+	// its creator. It exists so tests can inject the HTTP client used for cover
+	// transfers; production leaves it nil.
+	newEditionCreator func(client edition.HardcoverClient, dryRun bool, audiobookshelfToken string) *edition.Creator
 }
 
 // NewMultiUserService creates a new multi-user service
@@ -182,6 +196,27 @@ func (s *MultiUserService) admissionErrorLocked(profileID string) error {
 		return ErrProfileNotFound
 	}
 	return nil
+}
+
+// beginEditionWork admits one edition create. Like a sync start it is tracked on
+// the profile gate, so DeleteProfile waits for it, but it is tracked service-wide
+// on editionWaitGroup instead of startWaitGroup: Shutdown must cancel running
+// syncs without waiting behind a create. Pair it with endEditionWork.
+func (s *MultiUserService) beginEditionWork(profileID string) (*profileRunGate, error) {
+	s.admissionMutex.Lock()
+	defer s.admissionMutex.Unlock()
+	if err := s.admissionErrorLocked(profileID); err != nil {
+		return nil, err
+	}
+	gate := s.profileGate(profileID)
+	s.editionWaitGroup.Add(1)
+	gate.startWaitGroup.Add(1)
+	return gate, nil
+}
+
+func (s *MultiUserService) endEditionWork(gate *profileRunGate) {
+	gate.startWaitGroup.Done()
+	s.editionWaitGroup.Done()
 }
 
 // checkEditionAdmission rejects read-only edition work for a service that is

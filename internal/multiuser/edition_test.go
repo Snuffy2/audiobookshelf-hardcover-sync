@@ -29,6 +29,14 @@ func editionItem(id, title, author string) map[string]interface{} {
 	}
 }
 
+// editionItemWithCover is editionItem with a cover, so creating its edition
+// downloads the cover from Audiobookshelf and uploads it to Hardcover.
+func editionItemWithCover(id, title, author string) map[string]interface{} {
+	item := editionItem(id, title, author)
+	item["media"].(map[string]interface{})["coverPath"] = "/covers/" + id + ".jpg"
+	return item
+}
+
 type editionFixture struct {
 	service   *MultiUserService
 	hardcover *editiontest.HardcoverRequestCounter
@@ -84,6 +92,52 @@ func needsReview(bookID, hardcoverBookID string) syncsvc.BookOutcomeRecord {
 	return syncsvc.BookOutcomeRecord{BookID: bookID, Outcome: syncsvc.OutcomeNeedsReview, HardcoverBookID: hardcoverBookID}
 }
 
+func validEdits() EditionEdits {
+	return EditionEdits{
+		Title:              "A Title",
+		ISBN13:             "9780306406157",
+		ReleaseDate:        "2021-02-03",
+		EditionInformation: "Unabridged",
+		AudioSeconds:       3600,
+		LanguageID:         1,
+		CountryID:          1,
+		AuthorIDs:          []int{101},
+		NarratorIDs:        []int{202},
+	}
+}
+
+func TestCreateEditionFromRunBook_TargetsTheRecordedHardcoverBook(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+
+	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.NoError(t, err)
+	require.Equal(t, &EditionCreated{EditionID: 777, DryRun: false, Warnings: []string{}}, created)
+
+	mutations := f.hardcover.RecordedMutations()
+	require.Len(t, mutations, 1)
+	require.EqualValues(t, 4242, mutations[0]["bookId"], "the edition must attach to the run record's Hardcover book")
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.Equal(t, "A Title", dto["title"])
+	require.Equal(t, "2021-02-03", dto["release_date"])
+	require.Len(t, dto["contributions"], 2)
+	require.NotContains(t, dto, "image_id", "an item without a cover must not attach an image")
+}
+
+func TestCreateEditionFromRunBook_DryRunIssuesNoMutation(t *testing.T) {
+	f := newEditionFixture(t, true,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+
+	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.NoError(t, err)
+	require.Equal(t, &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}}, created)
+	require.Empty(t, f.hardcover.RecordedMutations())
+}
+
 func TestEditionRequestsRequireAnEligibleRecord(t *testing.T) {
 	records := []syncsvc.BookOutcomeRecord{
 		needsReview("ok-item", "4242"),
@@ -120,7 +174,48 @@ func TestEditionRequestsRequireAnEligibleRecord(t *testing.T) {
 
 			_, draftErr := f.service.PrepareEditionDraft(context.Background(), tt.profileID, tt.runID, tt.bookID)
 			require.ErrorIs(t, draftErr, tt.want)
+
+			_, createErr := f.service.CreateEditionFromRunBook(context.Background(), tt.profileID, tt.runID, tt.bookID, validEdits())
+			require.ErrorIs(t, createErr, tt.want)
+			require.Empty(t, f.hardcover.RecordedMutations())
 			require.Zero(t, f.hardcover.RequestCount())
+		})
+	}
+}
+
+func TestCreateEditionFromRunBook_RejectsInvalidEdits(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*EditionEdits)
+	}{
+		{"no author", func(e *EditionEdits) { e.AuthorIDs = nil }},
+		{"no ASIN or ISBN", func(e *EditionEdits) { e.ISBN13 = "" }},
+		{"blank ASIN and ISBNs", func(e *EditionEdits) { e.ASIN, e.ISBN10, e.ISBN13 = "  ", " ", "\t" }},
+		{"malformed ISBN-13", func(e *EditionEdits) { e.ISBN13 = "978030640615" }},
+		{"ISBN-10 sent as the ISBN-13", func(e *EditionEdits) { e.ISBN13 = "0306406152" }},
+		{"malformed ISBN-10", func(e *EditionEdits) { e.ISBN10 = "03064061" }},
+		{"ISBN-13 sent as the ISBN-10", func(e *EditionEdits) { e.ISBN10 = "9780306406157" }},
+		{"no title", func(e *EditionEdits) { e.Title = "" }},
+		{"blank title", func(e *EditionEdits) { e.Title = " \t\n " }},
+		{"malformed release date", func(e *EditionEdits) { e.ReleaseDate = "03/02/2021" }},
+		{"non-positive author ID", func(e *EditionEdits) { e.AuthorIDs = []int{0} }},
+		{"non-positive narrator ID", func(e *EditionEdits) { e.NarratorIDs = []int{-1} }},
+		{"negative audio length", func(e *EditionEdits) { e.AudioSeconds = -1 }},
+		{"edition format over the length limit", func(e *EditionEdits) { e.EditionFormat = strings.Repeat("f", maxEditionFormatLength+1) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newEditionFixture(t, false,
+				[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+				map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+			)
+			edits := validEdits()
+			tt.mutate(&edits)
+
+			_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+			var validation *EditionValidationError
+			require.ErrorAs(t, err, &validation)
+			require.Empty(t, f.hardcover.RecordedMutations())
 		})
 	}
 }
@@ -130,7 +225,9 @@ func TestEditionRequests_AudiobookshelfFailures(t *testing.T) {
 		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
 		map[string]map[string]interface{}{}, // Audiobookshelf no longer has the item
 	)
-	_, err := f.service.PrepareEditionDraft(context.Background(), "profile-1", "run-1", "item-1")
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.ErrorIs(t, err, ErrEditionItemNotFound)
+	_, err = f.service.PrepareEditionDraft(context.Background(), "profile-1", "run-1", "item-1")
 	require.ErrorIs(t, err, ErrEditionItemNotFound)
 
 	f.abs.Status = http.StatusInternalServerError
@@ -141,6 +238,65 @@ func TestEditionRequests_AudiobookshelfFailures(t *testing.T) {
 	require.Zero(t, f.hardcover.RequestCount())
 }
 
+func TestCreateEditionFromRunBook_HardcoverFailureIsUpstream(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+	f.hardcover.FailWith = "hardcover rejected the edition"
+
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	var upstream *EditionUpstreamError
+	require.ErrorAs(t, err, &upstream)
+	require.Equal(t, "hardcover", upstream.Service)
+}
+
+func TestCreateEditionFromRunBook_RejectsOverlappingSubmitForTheSameBook(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242"), needsReview("item-2", "4343")},
+		map[string]map[string]interface{}{
+			"item-1": editionItem("item-1", "A Title", "An Author"),
+			"item-2": editionItem("item-2", "Another", "An Author"),
+		},
+	)
+	release := make(chan struct{})
+	f.hardcover.HoldInsert(release)
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+		firstDone <- err
+	}()
+	select {
+	case <-f.hardcover.Entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first submit never reached Hardcover")
+	}
+
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.ErrorIs(t, err, ErrEditionInProgress)
+
+	// A different book is independent of the held one.
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-2", validEdits())
+		secondDone <- err
+	}()
+	select {
+	case <-f.hardcover.Entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a different book was blocked by the in-flight submit")
+	}
+
+	close(release)
+	require.NoError(t, <-firstDone)
+	require.NoError(t, <-secondDone)
+
+	// Once finished, the same book can be submitted again.
+	_, err = f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.NoError(t, err)
+}
+
 func TestEditionRequestsAreRejectedAfterShutdown(t *testing.T) {
 	f := newEditionFixture(t, false,
 		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
@@ -148,7 +304,9 @@ func TestEditionRequestsAreRejectedAfterShutdown(t *testing.T) {
 	)
 	require.NoError(t, f.service.Shutdown(context.Background()))
 
-	_, err := f.service.PrepareEditionDraft(context.Background(), "profile-1", "run-1", "item-1")
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.ErrorIs(t, err, ErrServiceShuttingDown)
+	_, err = f.service.PrepareEditionDraft(context.Background(), "profile-1", "run-1", "item-1")
 	require.ErrorIs(t, err, ErrServiceShuttingDown)
 	require.Zero(t, f.hardcover.RequestCount())
 }
@@ -202,17 +360,39 @@ func TestEditionRequestsRequireAnIdentifierOnTheAudiobookshelfItem(t *testing.T)
 			f := newEditionFixture(t, false, []syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")}, tt.items)
 
 			built, draftErr := f.service.PrepareEditionDraft(context.Background(), "profile-1", "run-1", "item-1")
+			require.Zero(t, f.hardcover.RequestCount(), "previewing must not send any Hardcover request")
+			_, createErr := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 
 			if tt.allowed {
 				require.NoError(t, draftErr)
+				require.NoError(t, createErr)
 				if tt.name == "an ASIN only" {
 					require.Equal(t, "B0EXISTING1", built.ASIN)
 				}
-				require.Zero(t, f.hardcover.RequestCount(), "previewing must not send any Hardcover request")
 				return
 			}
 			require.ErrorIs(t, draftErr, ErrEditionNoIdentifier)
+			require.ErrorIs(t, createErr, ErrEditionNoIdentifier)
 			require.Zero(t, f.hardcover.RequestCount(), "no Hardcover request may be made for a book without an identifier")
 		})
 	}
+}
+
+func TestCreateEditionFromRunBook_NormalizesSubmittedISBNs(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+	edits := validEdits()
+	edits.ISBN13 = "978-0-306-40615-7"
+	edits.ISBN10 = " 0-306-40615-2 "
+
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+	require.NoError(t, err)
+
+	mutations := f.hardcover.RecordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.Equal(t, "9780306406157", dto["isbn_13"])
+	require.Equal(t, "0306406152", dto["isbn_10"])
 }
