@@ -69,7 +69,7 @@ Fields relevant to an edition (`media` is the book; `media.metadata` is its meta
 | `media.metadata.isbn` | string or null | yes | One field. It may hold an ISBN-10 or an ISBN-13, hyphenated or not. |
 | `media.metadata.asin` | string or null | yes | |
 | `media.metadata.language` | string or null | yes | Free text such as `"English"`. Not used today. |
-| `media.metadata.abridged` | boolean | **no** | Present in the server source (all three metadata shapes) but not in the API docs sample. |
+| `media.metadata.abridged` | boolean | **no** | Present in the server source (all three metadata shapes) but not in the API docs sample. Step 1's review added it to the checked-in OpenAPI schema (`bookMetadataBase`, beside `explicit`). |
 | `media.metadata.explicit` | boolean | **no** | |
 | `media.metadata.description`, `descriptionPlain` | string or null | no | `descriptionPlain` is the description with HTML stripped (server source). |
 | `media.metadata.genres[]`, `series[]`, `seriesName` | array, array of `{id, name, sequence}`, string | yes | Book-level on Hardcover, so not part of an edition. |
@@ -143,13 +143,13 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R2 | `title` | `metadata.title` | Passed through. Create trims it and rejects a blank one. No series or prefix clean-up. | 2, 3, 4, 7 | UI, API |
 | R3 | `subtitle` | `metadata.subtitle` | Passed through; omitted when empty. | 2, 3, 7 | UI, API |
 | R4 | `asin` | `metadata.asin` | Trimmed only. No case or shape check. Also triggers the Audnex lookup (R8) and sets `edition_format` (R11). | 2, 3, 4, 5, 7 | UI, API |
-| R5 | `isbn_13` | `metadata.isbn` | Normalized (separators removed, trailing `x` uppercased), classified by shape. 13 digits goes here; a 10-character value goes to R6. The draft then fills the *other* form when it can be derived. | 1, 2, 3, 4, 5, 7 | UI, API |
+| R5 | `isbn_13` | `metadata.isbn` | Normalized (separators removed, trailing `x` uppercased), classified by shape. 13 digits goes here; a 10-character value goes to R6. The draft then fills the *other* form when it can be derived. The export also carries `isbn_10_valid` / `isbn_13_valid`: whether the exported ISBN's own check digit is correct (omitted when that ISBN is empty). A bad-checksum ISBN is still exported. | 1, 2, 3, 4, 5, 7 | UI, API |
 | R6 | `isbn_10` | `metadata.isbn` | As R5. The ISBN-10 to ISBN-13 conversion adds `978` and recalculates the check digit; a 979 ISBN-13 has no ISBN-10. A counterpart is derived only when the input's own checksum is valid. | 1, 2, 3, 4, 5, 7 | UI, API |
 | R7 | `contributions[]`, author (`contribution: null`) | `metadata.authorName` | Split on `,`, each name trimmed, empty names dropped. Each name is looked up on Hardcover by **exact, case-sensitive name** among active authors; the first row returned is used. IDs are de-duplicated and keep ABS order. No match on any name means zero authors, which is a draft warning and a create failure. | 2, 3, 4, 7 | API |
 | R8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The result is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. `metadata.publishedDate` is not read. Create requires `YYYY-MM-DD`. | 2, 3, 7 | UI, API |
 | R9 | `contributions[]`, `"Narrator"` | `metadata.narratorName` | Same split as R7. Lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook draft passes no narrator. No match is a warning; the edition is created without a narrator. | 1, 2, 3, 4, 7 | API |
 | R10 | `publisher_id` | `metadata.publisher` | Looked up by **exact, case-sensitive** publisher name. Not found gives `0`, which is omitted (warning). Never defaults to a guessed ID (was `1` before step 1). | 1, 2, 3, 4 | API |
-| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: `Ebook`. Trimmed, at most 100 characters. | 1, 2, 3, 4 | API |
+| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: always `Ebook`, replacing any label the record carries. Trimmed, at most 100 characters. | 1, 2, 3, 4 | API |
 | R12 | `reading_format_id` | `mediaType`, `ebookFile`, `ebookFormat`, `duration`, `numTracks` | `IsEbook()` gives 4, otherwise 2. Recomputed from ABS at create time; the request cannot set it (an extra `reading_format` field is rejected with 400). | 1, 2, 3, 4, 5, 7 | server |
 | R13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Sent only when greater than 0 and the item is an audiobook. | 1, 2, 3, 4, 7 | API |
 | R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
@@ -163,7 +163,10 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 **R5 and R6, ISBN.** ABS has one `isbn` string; Hardcover has two fields. `isbn.Parse` accepts a value by shape only:
 13 digits, or 9 digits followed by a digit or `X`. The draft first records only the form the item carries, then fills
 the other with `isbn.ISBN10()/ISBN13()`, which returns the counterpart only for a valid checksum. A bad-checksum ISBN
-is still sent as given (Hardcover will flag it `..._valid = false`); it has no counterpart. On create, each field is
+is still sent as given and has no counterpart. Step 1's export adds `isbn_10_valid` / `isbn_13_valid` (the names Hardcover's
+`editions` table uses) so a later step can decide what to do with it. Hardcover's docs list those two flags, which suggests it
+stores and flags such ISBNs, but that has not been tried against the real API. Whether a `false` flag is a warning or a
+rejection in the draft and create endpoints is open (see the step 3 and step 4 checklists). On create, each field is
 re-normalized and must have the right length for its slot (`isbn_10 must be a valid 10-character ISBN`), and at least
 one of `asin`, `isbn_10`, `isbn_13` is required.
 
@@ -229,13 +232,17 @@ Code: `internal/isbn`, `internal/models` (`ReadingFormat`, `ReadingFormatID`), `
   digit is uppercased; spaces, dots, underscores and dash variants are removed; a value that is neither 10 nor 13 characters
   in shape produces neither field; the export records only the form the item carries, never a derived counterpart;
   `isbn.Parse` derives a counterpart only for a valid checksum and never for a 979 ISBN-13.
+- **Delivers the ISBN checksum flags (maintainer review).** A checksum-invalid ISBN is still exported as given (the package
+  accepts by shape; this is documented in `internal/isbn`). `isbn.Result.Valid` reports the input's own checksum and the export
+  adds `isbn_10_valid` / `isbn_13_valid`, omitted when that ISBN is empty; the `edition` command ignores them. A valid 979
+  ISBN-13 is `true` even though it has no ISBN-10.
 - **Delivers R10.** An unresolved publisher exports `publisher_id: 0` (it was `1`); a resolved ID is exported, including one
   resolved late inside `ToEditionExport`.
 - **Delivers R12.** `ReadingFormat()` and `ReadingFormatID` are pinned by a truth table: audio plus an ebook file is an
   audiobook; an ebook file or `ebookFormat` and no audio is an ebook; the legacy `mediaType: "ebook"` is an ebook; nothing
   is an audiobook; an unknown format string maps to id 2.
-- **Delivers R11, R13, R14 for an ebook.** The export has `edition_format: Ebook`, `reading_format: ebook`, no audio seconds
-  and no `Unabridged`.
+- **Delivers R11, R13, R14 for an ebook.** The export has `edition_format: Ebook` (forced, so an audiobook platform label on a
+  legacy or hand-built record cannot leak), `reading_format: ebook`, no audio seconds and no `Unabridged`.
 - **Verifies (audiobook export is otherwise unchanged, field for field):** R2-R4 pass-through; the R7 and R9 ID lookups; R8 (Audnex
   date, region fallback, normalization, year fallback); the R11 audiobook labels (`Audible Audio`, `libro.fm`, empty); R13
   rounding; R14 `Unabridged` default (when not abridged) and the discarded `Audiobookshelf` placeholder; R15 and R16 constants; R17 cover
@@ -364,7 +371,7 @@ Code: `web/static/app.js`, `index.html`, `styles.css`. This step decides what th
 | `chapters`, `audioFiles`, `tracks`, `size`, `libraryFiles`, `path`, timestamps | No Hardcover analogue. | By design |
 | `titleIgnorePrefix`, `authorNameLF` | Sort helpers. | By design |
 | `libraryId`, `folderId` | Only recorded in the mismatch export. | By design |
-| `abridged` | Informs `edition_information` (`Abridged`). | Mapped in step 1 (finding 1) |
+| `abridged` | Informs `edition_information` (`Abridged`). | Mapped in step 1 (finding 1); documented in the OpenAPI schema in step 1's review |
 | `authors[]`, `narrators[]` | Exact names, instead of splitting the joined strings. | **Gap** (finding 2) |
 | `language` | Should inform `language_id`. | **Gap** (finding 3) |
 | `publishedDate` | Could come before the year fallback. | Gap, minor (finding 4) |

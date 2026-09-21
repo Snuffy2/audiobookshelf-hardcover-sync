@@ -1,11 +1,12 @@
 # Implementation Plan: Add an Edition to Hardcover from a `needs_review` Book
 
-**Status: 🚧 IN PROGRESS** (2026-09-20)
+**Status: 🚧 IN PROGRESS** (2026-09-21)
 
 The feature is delivered as **seven steps**, each its own **upstream** PR (to `drallgood/audiobookshelf-hardcover-sync`)
 that leaves `develop` working and shippable. The former combined branch has been split: steps 1-4 exist as four stacked
-branches, all validated. Step 1 is published as fork PR #24; steps 2-4 are local only until the owner asks for their fork
-PRs. Step 5 is built but still needs a rebase onto step 1. Steps 6 and 7 are not started. No upstream PR exists yet.
+branches, all validated. Step 1 is published as fork PR #24 and as upstream PR #195 (open; the maintainer requested changes on
+2026-09-21 and the fixes are committed locally, not pushed yet); steps 2-4 are local only until the owner asks for their fork
+PRs. Step 5 is built but still needs a rebase onto step 1. Steps 6 and 7 are not started. No upstream PR exists for steps 2-7.
 
 **Two stages per step.** `origin` (the fork, `Snuffy2/audiobookshelf-hardcover-sync`) is where each step is developed, tested and
 reviewed by AI (CodeRabbit) through a **fork PR** (`Snuffy2:step_N_needs_review_add_edition` -> a fork branch). Only when a
@@ -22,7 +23,7 @@ step touches.
 
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
-| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (tip 6635da8, 17 commits; the last 4 are not pushed yet) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | — | `develop` | ~850 (15 files, tests included), measured | Built and validated; fork PR #24 open, its body and the last 4 commits still to update and push (see its checklist) |
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (local tip d037602, 21 commits; `origin` is at 091df9d, so the last 2 are not pushed yet) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) (open, base `develop`, changes requested) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; maintainer review fixes committed locally (baa768f, d037602), not pushed; PR bodies, CI re-run and the reply still to do (see its checklist) |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` (tip 1b6f408, 5 commits) | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated; local only, no fork PR yet. See its checklist under "Step checklists" |
 | 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` (tip 61a7ac6, 5 commits) | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated; local only, no fork PR yet |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (tip 7ce35cd, 4 commits) | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated; local only, no fork PR yet. Its final tree is identical to the old combined branch's tree |
@@ -98,7 +99,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       section 5, at a real interface (the GraphQL variables sent, the HTTP response, the export JSON), not implementation
       details; if the code behaves differently from a row, correct the crosswalk in the same commit as the code.
 
-**Step 1** (fork PR #24 is open; the code is done, see the last two items for what is left)
+**Step 1** (fork PR #24 and upstream PR #195 are open; the code is done, see the unchecked items for what is left)
 - [x] Crosswalk scope ([section 5, Step 1](needs-review-edition-field-crosswalk.md#step-1-isbn-and-export-foundations)):
       deliver R5 and R6 (hyphenated ISBN-13 and ISBN-10 kept, lowercase `x`, other separators, a 979 or wrong-shape value,
       no derived counterpart in the export), R10 (unresolved publisher is 0, late-resolved ID exported), R12 (format helpers
@@ -117,13 +118,40 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       exports `Unabridged`. It is a behavior change to the audiobook export, so it is called out in the CHANGELOG bullet
       and must be called out in the PR body. (An earlier commit had narrowed the audiobook rule without being asked; it was
       reverted in f25b221 because the audiobook export must otherwise stay unchanged.)
-- [ ] Update the fork PR #24 body before it goes upstream: it still says "Nothing changes for audiobook syncing" and
-      "Audiobook items export as before", which is no longer true for an abridged audiobook; name the crosswalk rows this
-      step delivers (R5, R6, R10, R12, R11/R13/R14 for an ebook, R14 `Abridged`) and verifies (R2-R4, R7-R9, R11, R13-R17,
-      audiobook R14 default); refresh the test list; and carry the updated "Multi-Step Project" block. Only on the owner's
-      command.
-- [ ] Push the local step 1 commits after e2d4c38 (f25b221, 669094c, f152b08, 6635da8) to fork PR #24, on the owner's
-      command, then read the new CodeRabbit feedback and address the valid items.
+- [x] Update the fork PR #24 body before it went upstream: the crosswalk rows this step delivers and verifies, the refreshed
+      test list, the "Multi-Step Project" block, and no "Nothing changes for audiobook syncing" claim. Done; #195 carries the
+      same body (no issue links, since upstream's default branch is `main` and the base is `develop`).
+- [x] Push the local step 1 commits to fork PR #24. Done up to 091df9d.
+- [x] Upstream PR #195 opened (2026-09-21, on the owner's command) from `Snuffy2:step_1_needs_review_add_edition` to
+      `drallgood:develop`. Its `Test (1.26.x, ubuntu-latest)` check failed once in the "Run linters" step, before any test ran:
+      building `golangci-lint` got `INTERNAL_ERROR` from `sum.golang.org`. The fork's run of the same job on the same commit
+      passed. A contributor cannot re-run it ("Must have admin rights"), so it needs a maintainer's re-run or a new push.
+- [x] Maintainer review on #195 (drallgood, changes requested). Every point verified against current code; dispositions:
+  - **Q1, checksum-invalid ISBNs: decided.** Keep accepting by shape and keep the value in `isbn_10` / `isbn_13`, and report the
+    checksum: `isbn.Result.Valid`, and `isbn_10_valid` / `isbn_13_valid` in the export (omitted when that ISBN is empty; the
+    `edition` command ignores them). The policy is documented in the `isbn` package (d037602). Why: Hardcover's docs list
+    `isbn_10_valid` / `isbn_13_valid` on `editions`, which suggests it stores and flags such ISBNs, and step 5 must still find
+    an edition by the given value. **Not verified:** whether `insert_edition` accepts a bad checksum, whether a lookup by one
+    matches, and whether Audiobookshelf routinely serves them; none of it has been run against the real API. The open part
+    (warn or reject on a `false` flag when drafting or creating) is queued under steps 3 and 4.
+  - **Q2, ebook with an audiobook label: fixed** (baa768f). `ToEditionExport` now forces `Ebook` for any ebook record (R11 says
+    `Ebook`), with a test over `""`, `Audiobook`, `Audible Audio` and `libro.fm`.
+  - **ABS schema: fixed** (baa768f). `abridged` added beside `explicit` in `bookMetadataBase` in
+    `internal/api/audiobookshelf/audiobookshelf-openapi.json`. The suggested raw-response fixture change is declined:
+    `audiobookshelf_raw_response.json` is a 129-byte debug dump written by the client at runtime, no test reads it, and it has no
+    `isbn` or `explicit` either.
+  - **Nits:** the saved-export test now sorts the files (`filepath.Glob` output is already lexical and the names carry a
+    `%03d` prefix, so the flake risk was low); the CHANGELOG bullet has `(#195)`; the PR body said "no audio length" but the
+    export writes `audio_seconds: 0` (corrected in the draft body, not yet applied); `isbn.Parse`, `Result`, `ISBN10()` and
+    `ISBN13()` have no production caller until step 2, as the PR already says.
+- [ ] On the owner's command: push baa768f and d037602 to the fork branch (this updates both #24 and #195), then apply the PR
+      body fixes to #24 and #195 (`audio_seconds: 0`; the `isbn_10_valid` / `isbn_13_valid` sentence; the test list; the
+      "audiobook export otherwise unchanged" claim becomes "adds the two ISBN flags"), reply to the maintainer with the
+      dispositions above, and get the CI re-run. Then read the new CodeRabbit feedback and address the valid items.
+- [ ] Unresolved CodeRabbit thread on 091df9d (case-insensitive audiobook placeholder filter in `ToEditionExport`) was
+      verified and skipped: the filter is `develop`'s own audiobook rule, kept unchanged on purpose (f25b221), its only
+      production writer is the constant `"Audiobookshelf"` it already rejects, and step 3 deletes it with `EditionInfo`. Reply
+      to and resolve the thread when the owner says so; do not change the audiobook rule in step 1.
 
 **Step 2** (`edition` CLI behavior changes)
 - [ ] Crosswalk scope ([section 5, Step 2](needs-review-edition-field-crosswalk.md#step-2-edition-creator-hardening)): this
@@ -140,6 +168,11 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       (honored `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`).
 - [ ] Decide CodeRabbit item F3: the pre-existing `CheckRedirect` in `edition.NewCreator` that copies the `Authorization` header
       to redirects. Either fix it here or open a separate small PR (owner's choice); do not let it drop.
+
+- [ ] Rebase steps 2-4 (and 5) onto step 1's new tip once it is pushed: step 1's review changed `internal/mismatch/types.go`
+      (forced `Ebook`, `MarkEbook`, the ISBN flags), `internal/isbn/isbn.go`, the ABS OpenAPI schema and step 1's CHANGELOG
+      bullet (now with `(#195)`), so expect conflicts in those files and in `CHANGELOG.md`; step 3's edit must still leave
+      step 1's bullet untouched.
 
 **Step 3**
 - [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
@@ -170,9 +203,13 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       value on the record wins" branch and the placeholder and debug-text filter in `ToEditionExport`, and the tests that
       only exercise them (the `EditionInfo: "Special Edition"` cases in `mismatch_test.go`, the real-value, placeholder and
       debug-text rows of `TestExportEditionInformation`, and the `"Audiobookshelf"` assertion in `TestAddWithMetadata`).
-      Keep `EditionExport.EditionInfo` (`edition_information`): the `edition` tool imports it. The exported files must be
+      The unresolved CodeRabbit thread about making the audiobook placeholder filter case-insensitive disappears with it. Keep `EditionExport.EditionInfo` (`edition_information`): the `edition` tool imports it. The exported files must be
       identical for every record production can build; say so in the PR body and add a CHANGELOG note only if a mismatch
       JSON field disappears from a file users see (check `BookMismatch`'s `edition_information` in the status API first).
+- [ ] ISBN checksum flags from step 1: the export carries `isbn_10_valid` / `isbn_13_valid`. Decide what the draft does with a
+      `false` one (a warning next to the ISBN field is the smallest change that loses nothing) and expose the flag in the draft;
+      check with a real Hardcover token first whether `insert_edition` accepts a bad checksum, since nothing here has run
+      against it. The raw `isbn` stays on the record, so the value is never lost.
 - [ ] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
       `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
       or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
@@ -188,6 +225,10 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Its CHANGELOG diff must be ONE new bullet for the create endpoint (one-bullet-per-PR rule) and must not touch earlier
       steps' bullets; today it replaces step 3's entry and reshuffles steps 1-2's lines, so redo that hunk. This means step 4's
       tree will no longer equal the old combined branch's tree in `CHANGELOG.md`, which is intended.
+- [ ] ISBN checksum policy on create: the endpoint validates only the shape and length of `isbn_10` / `isbn_13`. Decide whether a
+      bad checksum is accepted (Hardcover flags it `..._valid = false`), warned about, or rejected with a 422, using what step 3
+      learned about the real API, and test that one policy at the HTTP boundary. The maintainer of #195 recommended gating on the
+      checksum; step 1 deliberately did not, so that this decision could be made here.
 - [ ] The PR description says `CreateEditionFromRunBook` has no caller until the handler commit (consider squashing those two
       commits).
 - [ ] Re-check CodeRabbit item F2 (the shutdown drain of in-flight creates) against this step's code.
