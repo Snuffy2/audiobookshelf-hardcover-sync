@@ -22,7 +22,7 @@ step touches.
 
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
-| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (tip 30f7e78, 5 commits) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | — | `develop` | ~513 (254 prod, 259 tests), measured | Built, validated, pushed to `origin`; fork PR #24 open |
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (tip 6635da8, 17 commits; the last 4 are not pushed yet) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | — | `develop` | ~850 (15 files, tests included), measured | Built and validated; fork PR #24 open, its body and the last 4 commits still to update and push (see its checklist) |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` (tip 1b6f408, 5 commits) | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated; local only, no fork PR yet. See its checklist under "Step checklists" |
 | 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` (tip 61a7ac6, 5 commits) | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated; local only, no fork PR yet |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (tip 7ce35cd, 4 commits) | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated; local only, no fork PR yet. Its final tree is identical to the old combined branch's tree |
@@ -58,7 +58,7 @@ carries the matching item, and its PR description names the rows it delivers.
 
 | Step | Delivers | Verifies | Crosswalk findings to decide |
 |------|----------|----------|------------------------------|
-| 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R12 (format helpers) | Audiobook export unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 |
+| 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
 | 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (cover chain, token scoping) | R5, R6 forms from step 1 | 5, 8 |
 | 3 Draft endpoint | The ABS side: decode, then R1-R17 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
 | 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 and R17 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
@@ -98,20 +98,32 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       section 5, at a real interface (the GraphQL variables sent, the HTTP response, the export JSON), not implementation
       details; if the code behaves differently from a row, correct the crosswalk in the same commit as the code.
 
-**Step 1** (fork PR #24 is open)
-- [ ] Crosswalk scope ([section 5, Step 1](needs-review-edition-field-crosswalk.md#step-1-isbn-and-export-foundations)):
+**Step 1** (fork PR #24 is open; the code is done, see the last two items for what is left)
+- [x] Crosswalk scope ([section 5, Step 1](needs-review-edition-field-crosswalk.md#step-1-isbn-and-export-foundations)):
       deliver R5 and R6 (hyphenated ISBN-13 and ISBN-10 kept, lowercase `x`, other separators, a 979 or wrong-shape value,
       no derived counterpart in the export), R10 (unresolved publisher is 0, late-resolved ID exported), R12 (format helpers
-      and their truth table), and R11, R13, R14 for an ebook export; verify the audiobook export is otherwise unchanged
-      (R2-R4, R7-R9, R11, R13-R17).
-- [ ] Collapse this step's three CHANGELOG bullets (hyphenated ISBNs, unresolved publisher, ebook export) into one bullet, per
-      the one-bullet-per-PR rule, and push that to fork PR #24.
-- [ ] Read the CodeRabbit feedback on #24 and address the valid items (F1, the stale publisher ID in `ToEditionExport`, is
-      already fixed in this step).
-- [ ] The PR body says `isbn.Result.ISBN10()/ISBN13()/Counterpart` have their first production caller in step 2; keep that note.
-- [ ] Crosswalk finding 1: `ToEditionExport` labels every audiobook `Unabridged` and ignores ABS `metadata.abridged`. Decide
-      whether to decode `abridged` and export `Abridged` (or blank), which changes existing export output, so it would be
-      its own commit and PR note here, or record it as out of scope.
+      and their truth table), R11, R13 and R14 for an ebook export, and R14 for an audiobook (`Abridged`, see finding 1
+      below); verify the audiobook export is otherwise unchanged (R2-R4, R7-R9, R11, R13-R17, including R8's date
+      normalization and year fallback). Done: `internal/isbn`, `internal/models/reading_format_test.go`,
+      `internal/mismatch/reading_format_test.go` and the `mismatch_test.go` cases pin each row at the export boundary.
+- [x] Collapse this step's three CHANGELOG bullets (hyphenated ISBNs, unresolved publisher, ebook export) into one bullet, per
+      the one-bullet-per-PR rule, and push that to fork PR #24. Done; the bullet has no `(#NNN)` until the upstream PR exists.
+- [x] Read the CodeRabbit feedback on #24 and address the valid items. F1 (the stale publisher ID in `ToEditionExport`) and
+      both threads on b214d91 (the CHANGELOG ebook wording, the case-insensitive ebook placeholder filter) are fixed and
+      pushed (e2d4c38).
+- [x] The PR body says `isbn.Result.ISBN10()/ISBN13()/Counterpart` have their first production caller in step 2; keep that note.
+- [x] Crosswalk finding 1: decided, done in its own commit (f152b08). ABS `metadata.abridged` is decoded, carried on the
+      mismatch record, and an abridged audiobook exports `edition_information: "Abridged"`; every other audiobook still
+      exports `Unabridged`. It is a behavior change to the audiobook export, so it is called out in the CHANGELOG bullet
+      and must be called out in the PR body. (An earlier commit had narrowed the audiobook rule without being asked; it was
+      reverted in f25b221 because the audiobook export must otherwise stay unchanged.)
+- [ ] Update the fork PR #24 body before it goes upstream: it still says "Nothing changes for audiobook syncing" and
+      "Audiobook items export as before", which is no longer true for an abridged audiobook; name the crosswalk rows this
+      step delivers (R5, R6, R10, R12, R11/R13/R14 for an ebook, R14 `Abridged`) and verifies (R2-R4, R7-R9, R11, R13-R17,
+      audiobook R14 default); refresh the test list; and carry the updated "Multi-Step Project" block. Only on the owner's
+      command.
+- [ ] Push the local step 1 commits after e2d4c38 (f25b221, 669094c, f152b08, 6635da8) to fork PR #24, on the owner's
+      command, then read the new CodeRabbit feedback and address the valid items.
 
 **Step 2** (`edition` CLI behavior changes)
 - [ ] Crosswalk scope ([section 5, Step 2](needs-review-edition-field-crosswalk.md#step-2-edition-creator-hardening)): this
@@ -132,7 +144,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 **Step 3**
 - [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
       the ABS side and the mapping into the draft. Decode the ABS item (`GetLibraryItem`, expanded, 404 typed) and decide
-      what else the model reads (findings 1-4); build fixtures from a real expanded item, one audiobook and one ebook; pin
+      what else the model reads (findings 2-4; `abridged`, finding 1, is already decoded by step 1); build fixtures from a real expanded item, one audiobook and one ebook; pin
       R1 (book ID from the run record, identifier requirement), R5 and R6 (counterpart only when derivable), R7 and R9
       (warnings, no narrator for an ebook), R8 (Audnex fallback, year fallback, warning), R10 (warning), R11, R13 and R14
       (rounding, ebook), R12 (`reading_format`), R15 and R16, and R17 (`CoverURL`: empty, stripped, escaped, no Hardcover
@@ -149,6 +161,18 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       on commas; (3) do not silently create a non-English item as language 1 (at least warn in the draft when ABS
       `metadata.language` is set and is not English); (4) try ABS `publishedDate` before the year-only fallback; (7) skip
       Audnex for ebook items.
+- [ ] Cleanup left by step 1: `BookMismatch.EditionInfo` is dead and should be removed in this step (or a small PR of its
+      own straight after step 1 merges), because the draft is the first new caller of `AddWithMetadata` -> `ToEditionExport`.
+      Its only production writer is the constant `"Audiobookshelf"` in `mismatch.AddWithMetadata`, which `ToEditionExport`
+      discards, and nothing else reads it; since step 1 the export's `edition_information` is decided by the reading format
+      and `BookMismatch.Abridged` alone (ebook empty, abridged `Abridged`, else `Unabridged`). Step 1 kept the field so the
+      audiobook export stayed unchanged and no existing test expectation had to change. Remove: the field, the "a real
+      value on the record wins" branch and the placeholder and debug-text filter in `ToEditionExport`, and the tests that
+      only exercise them (the `EditionInfo: "Special Edition"` cases in `mismatch_test.go`, the real-value, placeholder and
+      debug-text rows of `TestExportEditionInformation`, and the `"Audiobookshelf"` assertion in `TestAddWithMetadata`).
+      Keep `EditionExport.EditionInfo` (`edition_information`): the `edition` tool imports it. The exported files must be
+      identical for every record production can build; say so in the PR body and add a CHANGELOG note only if a mismatch
+      JSON field disappears from a file users see (check `BookMismatch`'s `edition_information` in the status API first).
 - [ ] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
       `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
       or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
@@ -226,7 +250,7 @@ The block to paste (with `(this PR)` moved to the PR's own step and merged steps
 ```markdown
 ## Multi-Step Project
 
-1. ISBN and export foundations: Add shared ISBN normalization and reading-format helpers, and fix the mismatch export (hyphenated ISBNs are kept, no default publisher, ebook items export as ebook editions).
+1. ISBN and export foundations: Add shared ISBN normalization and reading-format helpers, and fix the mismatch export (hyphenated ISBNs are kept, no default publisher, ebook items export as ebook editions, an abridged audiobook exports as Abridged).
 
 2. Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, report cover failures, and create ebook editions.
 
@@ -272,7 +296,7 @@ Audiobookshelf-to-Hardcover field mapping each step delivers or must verify is i
   package, `models.ReadingFormat`/`ReadingFormatID` and the reading-format context helper (with
   `hardcover.WithReadingFormat` delegating to it), and the mismatch export fixes: the unresolved-publisher default
   (1 -> 0), the hyphenated-ISBN split, publisher ID capture, ebook `reading_format` in `BookMismatch`/`EditionExport`
-  (ebook label, no `Unabridged`, no audio length), and removal of the unused `ToEditionInput`. It also swaps the
+  (ebook label, no `Unabridged`, no audio length), an abridged audiobook exporting `Abridged` (ABS `metadata.abridged` is decoded), and removal of the unused `ToEditionInput`. It also swaps the
   sync service's local reading-format helper for `AudiobookshelfBook.ReadingFormat()`. It changes existing export
   output, so its behavior changes each get their own commit and a PR-description note.
 - **Step 2 - Edition creator hardening** (`step_2_needs_review_add_edition`, stacked on 1). `edition.Creator`:

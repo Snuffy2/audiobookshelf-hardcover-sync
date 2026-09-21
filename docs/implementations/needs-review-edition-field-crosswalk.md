@@ -152,7 +152,7 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: `Ebook`. Trimmed, at most 100 characters. | 1, 2, 3, 4 | API |
 | R12 | `reading_format_id` | `mediaType`, `ebookFile`, `ebookFormat`, `duration`, `numTracks` | `IsEbook()` gives 4, otherwise 2. Recomputed from ABS at create time; the request cannot set it (an extra `reading_format` field is rejected with 400). | 1, 2, 3, 4, 5, 7 | server |
 | R13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Sent only when greater than 0 and the item is an audiobook. | 1, 2, 3, 4, 7 | API |
-| R14 | `edition_information` | none | Audiobook: `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded. `metadata.abridged` is not consulted. | 1, 2, 3, 7 | UI, API |
+| R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
 | R15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 2, 3, 4 | API |
 | R16 | `country_id` | none | Constant `1` (assumed United States). | 2, 3, 4 | API |
 | R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Any failure is a warning; the edition stays. | 2, 3, 4, 7 | server |
@@ -213,7 +213,7 @@ Every step in [the plan](needs-review-edition-creation.md) touches some rows. Fo
 
 | Step | Delivers | Verifies | Findings to decide |
 |------|----------|----------|--------------------|
-| 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R12 (format helpers) | Audiobook export unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 |
+| 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
 | 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (cover chain, token scoping) | R5, R6 forms from step 1 | 5, 8 |
 | 3 Draft endpoint | The ABS side: decode, then R1-R17 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
 | 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 and R17 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
@@ -236,11 +236,13 @@ Code: `internal/isbn`, `internal/models` (`ReadingFormat`, `ReadingFormatID`), `
   is an audiobook; an unknown format string maps to id 2.
 - **Delivers R11, R13, R14 for an ebook.** The export has `edition_format: Ebook`, `reading_format: ebook`, no audio seconds
   and no `Unabridged`.
-- **Verifies (audiobook export is unchanged, field for field):** R2-R4 pass-through; the R7 and R9 ID lookups; R8 (Audnex
+- **Verifies (audiobook export is otherwise unchanged, field for field):** R2-R4 pass-through; the R7 and R9 ID lookups; R8 (Audnex
   date, region fallback, normalization, year fallback); the R11 audiobook labels (`Audible Audio`, `libro.fm`, empty); R13
-  rounding; R14 `Unabridged` default and the discarded `Audiobookshelf` placeholder; R15 and R16 constants; R17 cover
+  rounding; R14 `Unabridged` default (when not abridged) and the discarded `Audiobookshelf` placeholder; R15 and R16 constants; R17 cover
   preference (ABS cover, then its image URL, then the Hardcover cover).
-- **Decide:** finding 1 (`abridged`).
+- **Delivers R14 for an audiobook (finding 1, done).** `metadata.abridged` is decoded, carried on the mismatch record, and
+  an abridged audiobook exports `Abridged`; a book that is not marked abridged, or where the flag is absent (older
+  servers), still exports `Unabridged`. A real value on the record still wins, and an ebook is unaffected.
 
 ### Step 2: Edition creator hardening
 
@@ -274,7 +276,7 @@ the mapping into the previewable draft. Its fixtures are real expanded ABS items
 ebook.
 
 - **ABS decode.** `GetLibraryItem` reads `?expanded=1`; a 404 is a typed not-found. Decide what else the model decodes:
-  `authors[]`, `narrators[]`, `abridged`, `language`, `publishedDate` (findings 1-4).
+  `authors[]`, `narrators[]`, `language`, `publishedDate` (findings 2-4; `abridged` is already decoded by step 1).
 - **R1:** the book ID comes from the run record and overrides enrichment; a record without a positive Hardcover book is not
   eligible. **Identifier requirement:** an item with neither an ASIN nor a parseable ISBN is refused (409) before any
   Hardcover call.
@@ -362,7 +364,7 @@ Code: `web/static/app.js`, `index.html`, `styles.css`. This step decides what th
 | `chapters`, `audioFiles`, `tracks`, `size`, `libraryFiles`, `path`, timestamps | No Hardcover analogue. | By design |
 | `titleIgnorePrefix`, `authorNameLF` | Sort helpers. | By design |
 | `libraryId`, `folderId` | Only recorded in the mismatch export. | By design |
-| `abridged` | Should inform `edition_information`. | **Gap** (finding 1) |
+| `abridged` | Informs `edition_information` (`Abridged`). | Mapped in step 1 (finding 1) |
 | `authors[]`, `narrators[]` | Exact names, instead of splitting the joined strings. | **Gap** (finding 2) |
 | `language` | Should inform `language_id`. | **Gap** (finding 3) |
 | `publishedDate` | Could come before the year fallback. | Gap, minor (finding 4) |
@@ -474,8 +476,9 @@ ASIN (Audnex is Audible-only, so a Kindle ASIN is not expected to resolve, which
 Each is also an unchecked item under the matching step in the plan document's "Step checklists", and section 5 says
 which step decides it.
 
-1. **`abridged` is ignored** (step 1 export, step 3 draft). Every audiobook draft says `Unabridged`, even when ABS marks it
-   abridged. Needs the model field and a decision (`Abridged`, or blank).
+1. **`abridged` was ignored** (resolved in step 1, f152b08). Every audiobook export said `Unabridged`, even when ABS marked
+   it abridged. `metadata.abridged` is now decoded and an abridged audiobook exports `Abridged` (R14); the draft gets it
+   through the same export path.
 2. **Names are split from a joined string** (step 3). Use the exact `authors[].name` and `narrators[]` arrays from the
    expanded item instead of splitting `authorName` and `narratorName` on commas.
 3. **`language` is ignored** (step 3). A non-English item is created as language 1. Minimum: a draft warning when ABS gives
