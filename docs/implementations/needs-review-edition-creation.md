@@ -70,6 +70,9 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Nothing here has run against real Hardcover (image upload, `insert_edition`, its duplicate behavior for ISBN/ASIN, and
       the ebook reading format id 4 with the `Ebook` label) or live Audnex. Say so in each PR's testing notes for steps 2-4,
       and do a manual check against a real Hardcover account before the upstream PRs for steps 2-4 if the owner wants one.
+      Also unchecked: that an ordinary Hardcover token may call `insert_edition` and `insert_image` (Hardcover's
+      capabilities file lists them under `write:catalog*` scopes), and that `language_id` 1 and `country_id` 1 are English
+      and the United States (see the crosswalk).
 
 **Step 1** (fork PR #24 is open)
 - [ ] Collapse this step's three CHANGELOG bullets (hyphenated ISBNs, unresolved publisher, ebook export) into one bullet, per
@@ -77,6 +80,9 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Read the CodeRabbit feedback on #24 and address the valid items (F1, the stale publisher ID in `ToEditionExport`, is
       already fixed in this step).
 - [ ] The PR body says `isbn.Result.ISBN10()/ISBN13()/Counterpart` have their first production caller in step 2; keep that note.
+- [ ] Crosswalk finding 1: `ToEditionExport` labels every audiobook `Unabridged` and ignores ABS `metadata.abridged`. Decide
+      whether to decode `abridged` and export `Abridged` (or blank), which changes existing export output, so it would be
+      its own commit and PR note here, or record it as out of scope.
 
 **Step 2** (`edition` CLI behavior changes)
 - [ ] Collapse this step's CHANGELOG bullets into ONE bullet (one-bullet-per-PR rule) that also covers the Audiobookshelf token
@@ -96,6 +102,14 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       `internal/edition/editiontest` includes helpers first used in step 4 (`HoldInsert`, `HoldSearches`, `FailWith`).
 - [ ] Some comments keep create wording (`editionWriteDeadline`, `editionRequestIDs`, the `newHeldCreateFixture` test helper name)
       so step 4 stays additive; reword them only if it does not make step 4 non-additive.
+- [ ] Crosswalk findings, decide each and either do it in this step or record it as out of scope: (2) use the exact
+      `authors[].name` and `narrators[]` arrays from the expanded item instead of splitting `authorName` and `narratorName`
+      on commas; (3) do not silently create a non-English item as language 1 (at least warn in the draft when ABS
+      `metadata.language` is set and is not English); (4) try ABS `publishedDate` before the year-only fallback; (7) skip
+      Audnex for ebook items.
+- [ ] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
+      `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
+      or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
 
 **Step 4**
 - [ ] Its CHANGELOG diff must be ONE new bullet for the create endpoint (one-bullet-per-PR rule) and must not touch earlier
@@ -125,6 +139,9 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       user-facing README note and the Known limitation text.
 - [ ] Verify in the browser pane (button only on eligible needs_review records, modal, resync result, error and dry-run paths,
       the modal surviving a status poll).
+- [ ] Crosswalk finding 9: when no Hardcover author matches, create fails (an author is required) and the preview has no way
+      to supply one. Decide between letting the user enter or search a Hardcover author, or showing a clear "cannot create
+      an edition for this book" state instead of an enabled Create button.
 
 **Known, unrelated**
 - [ ] `TestProcessBookSnapshotKeepsEnrichedSecondLookupFailure` is flaky on the second run of `-count>=2` (shared
@@ -205,7 +222,9 @@ now seven steps. Nothing is user-visible until step 7, so no half-finished butto
   `ToEditionExport`), `MultiUserService.PrepareEditionDraft` with eligibility (needs_review, numeric Hardcover book,
   ebook or audiobook, identifier requirement), the `newHardcoverClient` extraction, admission checks, the handler
   and route, the shared `internal/edition/editiontest` fakes, README and OpenAPI for the draft, and CHANGELOG.
-  A read-only endpoint that works on its own and is exercisable with curl.
+  A read-only endpoint that works on its own and is exercisable with curl. The field-by-field mapping from the
+  Audiobookshelf item to the Hardcover edition is in
+  [needs-review-edition-field-crosswalk.md](needs-review-edition-field-crosswalk.md).
 - **Step 4 - Create endpoint** (`step_4_needs_review_add_edition`, stacked on 3).
   `POST .../edition`: `CreateEditionFromRunBook`, request validation and normalization, the in-flight guard, the
   dedicated edition wait group so `Shutdown` cancels syncs before draining creates, the detached 2-minute create
@@ -515,6 +534,10 @@ For the step 7 UI: show the draft's `reading_format` in the preview so the user 
 ebook edition will be created, and hide the narrator and duration fields for an ebook.
 
 ## Reuse (already in the repo)
+
+The Audiobookshelf-to-Hardcover field mapping that this reuse produces is tabulated in
+[needs-review-edition-field-crosswalk.md](needs-review-edition-field-crosswalk.md), with the transformation for each
+field and the gaps found while writing it.
 
 - `internal/edition/creator.go`: `EditionInput`, `Creator.CreateEdition` (validates, dry-run
   short-circuit, duplicate check by ASIN, ISBN-13, ISBN-10 and converted forms (a same-book edition is
