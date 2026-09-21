@@ -22,7 +22,7 @@ step touches.
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, cover format and size limits, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, the cover upload code kept but switched off, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
 | 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
@@ -58,7 +58,7 @@ carries the matching item, and its PR description names the rows it delivers.
 | Step | Delivers | Verifies | Crosswalk findings to decide |
 |------|----------|----------|------------------------------|
 | 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
-| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (the creator's cover chain and token scoping; the app does not use it) | R5, R6 forms from step 1 | 5, 8 |
+| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (the creator's cover chain, switched off so no cover request is made, and token scoping; nothing uploads a cover) | R5, R6 forms from step 1 | 5, 8 |
 | 3 Draft endpoint | The ABS side: decode, then R1-R16 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
 | 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
 | 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
@@ -91,8 +91,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       existing audiobook edition by ASIN and reuses it; a bad-checksum ISBN is accepted and stored flagged invalid; hyphens are
       stripped on write; a valid ISBN-10 alone also stores the derived ISBN-13; Hardcover normalizes the format label (`Audible
       Audio` was stored as `Audible`); `language_id` 1 and `country_id` 1 are English and the United States. **Not working or
-      untested:** the creator's cover upload (`hardcover.app/api/upload/google` answered 401 to a new API token; the app does
-      not upload covers), `insert_image`, WebP rejection, Hardcover's own duplicate rejection on insert, and live Audnex. Say what is
+      untested:** the cover upload (`hardcover.app/api/upload/google` answered 401 to a new API token; no caller uploads a cover and
+      the creator's cover flow is switched off), `insert_image`, WebP rejection, Hardcover's own duplicate rejection on insert, and live Audnex. Say what is
       untested in each PR's testing notes for steps 2-4, and repeat the live check before the upstream PRs for steps 2-4 if the
       owner wants one.
 - [ ] **Hardcover token scopes.** The key that adds editions needs `read:library`, `write:library`, `read:catalog` and
@@ -167,33 +167,38 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       the exact `GraphQLMutation` variables for R1-R16 (omitted-when-empty, greater-than-0-only, contribution order, format
       fallbacks, `reading_format_id` 2 or 4, narrators and audio dropped for an ebook, date must be `YYYY-MM-DD`), the
       duplicate detection for R4-R6 (order, format scoping, same-book reuse, cross-book refusal, dry run), and the R17 cover
-      chain (token scoping including redirects, `ImageError`, format from the downloaded bytes, size limit). The ISBN forms
+      chain: tested with `EnableCoverUpload` on (token scoping including redirects, `ImageError`, format from the downloaded
+      bytes, size limit), and with it off no cover request is made and `image_url` is reported in `ImageError`. The ISBN forms
       from step 1 are verified. Findings 5 and 8: 5 is decided (below); 8 cannot be tested offline, so say so in the PR.
 - [x] One CHANGELOG bullet for the step (one-bullet-per-PR rule) that also covers the Audiobookshelf token scoping
-      (`SetAudiobookshelfBaseURL`), the redirect behavior change, the cover rules and the cover-upload failure signal
-      (`EditionResult.ImageError`, and `Existing` in the `edition` command's JSON output). It has no `(#NNN)` until the upstream PR
+      (`SetAudiobookshelfBaseURL`), the redirect behavior change, the switched-off cover upload (`image_url` is not fetched and
+      `EditionResult.ImageError` says so; `image-tool` reports it as unsupported), and `Existing` in the `edition` command's JSON output. It has no `(#NNN)` until the upstream PR
       exists.
 - [x] CodeRabbit item F3, decided: fix it here. `edition.NewCreator`'s `CheckRedirect` no longer copies the `Authorization` header
       onto redirects, and drops it on any non-https hop of a request that started on https. `net/http` still forwards it to
       subdomains and other ports of the same host, so the claim is "a different domain", not "any other host". The client is
       shared by the `edition` and `image-tool` commands, so both change. Tests cover a cross-host redirect, scheme chains and the
       10-redirect limit, and the Hardcover credentials header is pinned by a test.
-- [x] Finding 5, decided: the cover download follows Hardcover's documented rules (Edition Standards). Only PNG and JPEG are
+- [x] Finding 5, decided: while cover upload is switched on (it is not, see the cover decision below), the cover download follows
+      Hardcover's documented rules (Edition Standards). Only PNG and JPEG are
       uploaded, decided from the file's bytes rather than the response `Content-Type`; WebP is not supported by Hardcover, so
       it is rejected. The download is capped at 15 MiB, the largest size Hardcover documents ("If you want to upload a 15mb file,
       go for it"); it documents no hard maximum. Dimensions are not enforced (300x450 is only a recommendation). A rejected
-      cover keeps the edition and sets a fixed `ImageError` label. **Not verified:** Hardcover's real server-side limits. This applies to
-      the `edition` and `image-tool` commands only; the app does not upload covers (see the cover decision below).
+      cover keeps the edition and sets a fixed `ImageError` label. **Not verified:** Hardcover's real server-side limits. These rules are
+      tested but inert: no caller switches the upload on (see the cover decision below).
 - [x] `GetEditionByISBN10` has a test at the GraphQL boundary (the `isbn_10` field, the reading-format filter, the returned
       book ID).
-- [ ] The fork PR description says: `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4
-      (`internal/multiuser`), so token scoping is tested here but inert for the `edition` and `image-tool` commands, which keep the
-      legacy "URL contains `audiobookshelf`" heuristic, until then; the `edition` command's behavior changes (honored
+- [ ] The fork PR description says: the creator's cover upload is kept but switched off (`Creator.EnableCoverUpload`, which no
+      production caller uses), so `CreateEdition` makes no cover request and reports a requested `image_url` in `ImageError`, and
+      `UploadEditionImage` (`image-tool`) returns `ErrCoverUploadDisabled`; the reason is below and none of the upload path was
+      verified live. `Creator.SetAudiobookshelfBaseURL` is called by the `edition` and `image-tool` commands (the app never
+      calls it, decision 16) and only matters once the upload is on; the `edition` command's behavior changes (honored
       `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`); the redirect
-      and cover-rule changes also affect `image-tool`; the crosswalk rows delivered (R1-R17 on the Hardcover side); the
-      token scopes the `edition` command needs (`read:catalog` and `write:catalog:append`); and the live-API status from "Every
-      step": it ran against a test book except the cover upload, which Hardcover rejected with a 401 for an API token, and its
-      real cover limits are unknown.
+      and switched-off cover changes also affect `image-tool`; the crosswalk rows delivered (R1-R17 on the Hardcover side, R17
+      switched off); the token scopes the `edition` command needs (`read:library`, `write:library`, `read:catalog` and
+      `write:catalog:append`); and the live-API status from "Every step": it ran against a test book except the cover upload,
+      which Hardcover rejected with a 401 for a new scoped API token (older all-access tokens are untested), and its real cover
+      limits are unknown.
 - [ ] Known limits to state in the PR, all decided as acceptable for this step: duplicate lookups treat any lookup error as "not
       found" (`develop` already did this for the ASIN lookup, without a cross-book check); a dry run skips the lookups, so it
       does not report a would-be cross-book conflict; the same-book check compares book IDs literally, so a merged or canonical
@@ -204,10 +209,13 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       accept the mismatch and say so in the step 2 PR.
 - [x] `cmd/edition/README.md` lists the token scopes the command needs (`read:library`, `write:library`, `read:catalog`,
       `write:catalog:append`).
-- [x] Cover upload, decided: the app does not upload a cover when it creates an edition, for now. The creator keeps its existing cover
-      flow, which runs only when a caller passes `image_url` (the `edition` and `image-tool` commands); the app never does. The upload
+- [x] Cover upload, decided: nothing uploads a cover for now, and nothing attempts it. The creator keeps its cover flow but
+      switched off (`Creator.EnableCoverUpload`, which no production caller uses): `CreateEdition` skips it and sets `ImageError` to
+      a fixed "not supported yet" label when an `image_url` is passed, and `UploadEditionImage` returns `ErrCoverUploadDisabled`
+      without a request, so the `edition` and `image-tool` commands do not fetch or upload anything either. The upload
       endpoint (`hardcover.app/api/upload/google`) is outside the documented GraphQL API and answered `401` to a new scoped API token,
-      although tokens from before August 2026 (all-access) may still work. Revisit if a supported way to upload is found. Steps 3, 4
+      although tokens from before August 2026 (all-access) may still work. To restore it once a supported way to upload is found, call
+      `EnableCoverUpload` where a cover is wanted and re-verify the flow live. Steps 3, 4
       and 7 therefore drop R17: no draft cover URL, no `image_url` on create, no cover warning, no `SetAudiobookshelfBaseURL` call and no
       cover in the preview. Hardcover also attaches a cover itself from the ISBN where it can (seen on an ebook edition).
 - [ ] `cmd/edition/README.md` says the token is set as the `HARDCOVER_TOKEN` environment variable, but the command loads
@@ -374,7 +382,7 @@ The block to paste (with `(this PR)` moved to the PR's own step and merged steps
 
 1. ISBN and export foundations: Add shared ISBN normalization and reading-format helpers, and fix the mismatch export (hyphenated ISBNs are kept, no default publisher, ebook items export as ebook editions, an abridged audiobook exports as Abridged).
 
-2. Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, report cover failures, and create ebook editions.
+2. Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, keep the cover upload code but switched off, and create ebook editions.
 
 3. Edition draft endpoint: Add a read-only endpoint that drafts a new Hardcover edition from a needs-review book's Audiobookshelf item, with author, narrator, and publisher resolved.
 
@@ -424,7 +432,8 @@ Audiobookshelf-to-Hardcover field mapping each step delivers or must verify is i
 - **Step 2 - Edition creator hardening** (`step_2_needs_review_add_edition`, stacked on 1). `edition.Creator`:
   Audiobookshelf token scoping, the honored `edition_format`, proactive duplicate detection by ASIN, ISBN-13, ISBN-10
   and converted forms with the cross-book guard (`ErrEditionBelongsToOtherBook`, `EditionResult.Existing`), the
-  duplicate-error fallback via the same lookup, the cover `ImageError`, `EditionInput.ReadingFormat` (ebook: reading
+  duplicate-error fallback via the same lookup, the cover upload kept but switched off (`EnableCoverUpload`; a requested cover is reported
+  in `ImageError`, nothing is fetched or uploaded), `EditionInput.ReadingFormat` (ebook: reading
   format 4, `Ebook` label, no narrators or audio length, format-scoped lookups), `GetEditionByISBN10`, and the
   `edition` CLI's optional `reading_format`. It changes what the `edition` CLI does, so this is its own PR.
 - **Step 3 - Draft endpoint** (`step_3_needs_review_add_edition`, stacked on 2). `GET .../edition-draft` (with the response write-deadline mechanism and `Unwrap()` on the logger's response wrapper, since a draft makes many paced lookups):
@@ -693,7 +702,8 @@ Decisions made by the owner and where they ended up.
 
 16. **No cover upload from the app, for now.** Creating an edition from Sync Status uploads no cover: the draft has no cover URL, create
     sets no `image_url` and returns no cover warning, and the preview shows no cover. The creator and the `edition` and
-    `image-tool` commands keep their existing cover flow, used only when a caller passes `image_url`. Reason: the upload endpoint is
+    `image-tool` commands attempt no upload either: the creator's cover flow stays in the code but is switched off
+    (`EnableCoverUpload`, called by nothing), and a requested cover is reported in `ImageError`. Reason: the upload endpoint is
     outside the documented API and answered `401` to a new scoped token. Steps 2, 3, 4 and 7.
 
 ## Ebook items: ebook editions (resolved, steps 1-4)

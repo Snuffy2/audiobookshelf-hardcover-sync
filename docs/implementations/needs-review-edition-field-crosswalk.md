@@ -126,7 +126,7 @@ Points about the target that shape the mapping:
   supported**, and larger is better (at least 300x450 for the top quality tier). Against the real API with an API token the
   storage-credentials call to `hardcover.app/api/upload/google` answered `401` (a plain HTTP client gets a Cloudflare challenge), so the
   cover step could not complete and the edition was created without it; Hardcover itself attached a cover from the ISBN to an ebook edition.
-  The app therefore uploads no cover for now (see R17); the creator's flow stays for the `edition` and `image-tool` commands.
+  Nothing uploads a cover for now (see R17); the creator's flow stays in the code but is switched off.
 - **Permissions** (confirmed): creating an edition needs `write:catalog:append`, and `read:catalog` covers the lookups. A token
   without it is refused with `403 insufficient_scope` ("Missing scopes: write:catalog:append") and nothing is created; with it the
   insert succeeds. The sync token's scopes
@@ -171,7 +171,7 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
 | R15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 2, 3, 4 | API |
 | R16 | `country_id` | none | Constant `1` (assumed United States). | 2, 3, 4 | API |
-| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | **Not used by the app for now: it uploads no cover.** The creator keeps the flow for the `edition` and `image-tool` commands, which pass `image_url`. URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Only a PNG or JPEG of at most 15 MiB is uploaded (decided from the downloaded bytes). Any failure is a warning; the edition stays. | 2 | server |
+| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | **Not used for now: nothing uploads a cover.** The creator keeps the flow but switched off (`EnableCoverUpload`, called by nothing), so `image_url` is neither fetched nor uploaded and `ImageError` says so. If it is switched on: URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Only a PNG or JPEG of at most 15 MiB is uploaded (decided from the downloaded bytes). Any failure is a warning; the edition stays. | 2 | server |
 | R18 | `page_count` | none | Not sent. ABS has no page count. | n/a | n/a |
 
 ### Field notes
@@ -305,12 +305,12 @@ Code: `edition.Creator`. This step owns everything sent to Hardcover, so its tes
 - **R11:** the trimmed `edition_format` is sent; empty falls back to `Audiobook` or `Ebook`.
 - **R12:** `reading_format_id` is 2 or 4; an invalid `reading_format` fails validation.
 - **R13, R14:** `audio_seconds` only when greater than 0 and an audiobook; `edition_information` when non-empty.
-- **R17:** the cover chain (download, storage credentials, upload, `insert_image`, `update_edition`); the ABS token goes only
+- **R17:** switched off: with the upload off no cover request is made and `ImageError` says so. With it on (tested), the cover chain (download, storage credentials, upload, `insert_image`, `update_edition`); the ABS token goes only
   to the configured ABS base URL; each failure keeps the edition and sets `ImageError`; only a PNG or JPEG, decided from the
   downloaded bytes, is uploaded (extension `png` or `jpg`), and a download over 15 MiB is refused; the token is never sent on a
   non-https hop of a request that started on https, and not to a different domain on redirect. This is the creator level: the app
-  uploads no cover, so `SetAudiobookshelfBaseURL` has no production caller and the `edition` and `image-tool` commands keep the legacy host
-  heuristic.
+  uploads no cover and never calls `SetAudiobookshelfBaseURL`; the `edition` and `image-tool` commands call it, and it only matters once
+  the upload is switched on.
 - **Verifies:** the ISBN forms that step 1's `isbn` package produces for the converted lookups.
 - **Decided:** finding 5 (cover size and format), see the findings list; finding 8 (token scope) is confirmed against the real API but cannot be tested offline, so say so
   in the PR.
