@@ -46,6 +46,26 @@ first thing a user sees. Steps 6 and 7 build on the create response shape from s
 review carries into them. Each step's single CHANGELOG bullet carries its own upstream PR number as `(#NNN)`, added when that
 upstream PR is created; fork PR numbers such as #20 are not that number.
 
+## Crosswalk scope by step
+
+[needs-review-edition-field-crosswalk.md](needs-review-edition-field-crosswalk.md) maps every Audiobookshelf field to its
+Hardcover edition field. Its rows have stable IDs, R1 to R18. Each step **delivers** some rows (its code implements or
+changes that behavior, and its tests pin it) and **verifies** others (it depends on behavior that already exists, so a test
+must fail if that changes). This table is the summary; the crosswalk's
+[section 5](needs-review-edition-field-crosswalk.md#5-what-each-step-must-deliver-from-the-crosswalk) has the edge cases each
+step must cover, and if the two ever differ the crosswalk wins and this table is corrected. Each step's checklist below
+carries the matching item, and its PR description names the rows it delivers.
+
+| Step | Delivers | Verifies | Crosswalk findings to decide |
+|------|----------|----------|------------------------------|
+| 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R12 (format helpers) | Audiobook export unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 |
+| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (cover chain, token scoping) | R5, R6 forms from step 1 | 5, 8 |
+| 3 Draft endpoint | The ABS side: decode, then R1-R17 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
+| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 and R17 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
+| 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
+| 6 Resync | nothing new | R1, R4-R6, R12: the resync finds the edition just created | none |
+| 7 UI | What is editable, shown, hidden and echoed: R2-R14, R17 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
+
 ## Step checklists
 
 **These checklists are the follow-up list. Anything not written here will not happen.** Before preparing a step's PR (fork
@@ -73,8 +93,17 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       Also unchecked: that an ordinary Hardcover token may call `insert_edition` and `insert_image` (Hardcover's
       capabilities file lists them under `write:catalog*` scopes), and that `language_id` 1 and `country_id` 1 are English
       and the United States (see the crosswalk).
+- [ ] **Crosswalk:** the PR description names the crosswalk rows (R-numbers) the step delivers and verifies, taken from the
+      "Crosswalk scope by step" table above; the step's tests cover each delivered row's edge cases from the crosswalk's
+      section 5, at a real interface (the GraphQL variables sent, the HTTP response, the export JSON), not implementation
+      details; if the code behaves differently from a row, correct the crosswalk in the same commit as the code.
 
 **Step 1** (fork PR #24 is open)
+- [ ] Crosswalk scope ([section 5, Step 1](needs-review-edition-field-crosswalk.md#step-1-isbn-and-export-foundations)):
+      deliver R5 and R6 (hyphenated ISBN-13 and ISBN-10 kept, lowercase `x`, other separators, a 979 or wrong-shape value,
+      no derived counterpart in the export), R10 (unresolved publisher is 0, late-resolved ID exported), R12 (format helpers
+      and their truth table), and R11, R13, R14 for an ebook export; verify the audiobook export is otherwise unchanged
+      (R2-R4, R7-R9, R11, R13-R17).
 - [ ] Collapse this step's three CHANGELOG bullets (hyphenated ISBNs, unresolved publisher, ebook export) into one bullet, per
       the one-bullet-per-PR rule, and push that to fork PR #24.
 - [ ] Read the CodeRabbit feedback on #24 and address the valid items (F1, the stale publisher ID in `ToEditionExport`, is
@@ -85,6 +114,12 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       its own commit and PR note here, or record it as out of scope.
 
 **Step 2** (`edition` CLI behavior changes)
+- [ ] Crosswalk scope ([section 5, Step 2](needs-review-edition-field-crosswalk.md#step-2-edition-creator-hardening)): this
+      step owns everything sent to Hardcover, so assert the exact `GraphQLMutation` variables for R1-R16 (omitted-when-empty,
+      greater-than-0-only, format fallbacks, `reading_format_id` 2 or 4, narrators and audio dropped for an ebook, date must
+      be `YYYY-MM-DD`), the duplicate detection for R4-R6 (order, format scoping, same-book reuse, cross-book refusal), and
+      the R17 cover chain (token only to the configured ABS host, `ImageError`, extension from `Content-Type`); verify the
+      ISBN forms from step 1. Findings 5 and 8.
 - [ ] Collapse this step's CHANGELOG bullets into ONE bullet (one-bullet-per-PR rule) that also covers the Audiobookshelf token
       scoping (`SetAudiobookshelfBaseURL`) and the cover-upload failure signal (`EditionResult.ImageError`, and `Existing` in
       the `edition` command's JSON output), which no branch had a line for.
@@ -95,6 +130,13 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       to redirects. Either fix it here or open a separate small PR (owner's choice); do not let it drop.
 
 **Step 3**
+- [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
+      the ABS side and the mapping into the draft. Decode the ABS item (`GetLibraryItem`, expanded, 404 typed) and decide
+      what else the model reads (findings 1-4); build fixtures from a real expanded item, one audiobook and one ebook; pin
+      R1 (book ID from the run record, identifier requirement), R5 and R6 (counterpart only when derivable), R7 and R9
+      (warnings, no narrator for an ebook), R8 (Audnex fallback, year fallback, warning), R10 (warning), R11, R13 and R14
+      (rounding, ebook), R12 (`reading_format`), R15 and R16, and R17 (`CoverURL`: empty, stripped, escaped, no Hardcover
+      cover fallback); verify step 1's export behavior through the draft.
 - [ ] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
       the step 1 bullet: step 3 currently rewrites step 1's hyphenated-ISBN line, which the rule forbids.
 - [ ] The PR description says the response write-deadline mechanism (`extendEditionWriteDeadline`, `Unwrap()` in the logger, and
@@ -112,6 +154,13 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
 
 **Step 4**
+- [ ] Crosswalk scope ([section 5, Step 4](needs-review-edition-field-crosswalk.md#step-4-create-endpoint)): the editable
+      set is exactly `EditionEdits` (any other field, including `reading_format`, `book_id` and `image_url`, is 400); test
+      R1 (run record only), R12 (from the item fetched at create time), R2 (trim, blank is 422), R4-R6 (ASIN trim, ISBN
+      normalization, wrong shape 422, an identifier required, an item without one 409), R7 and R9 (at most 50, positive),
+      R10, R13, R15, R16 (not negative), R11 (at most 100), and R17 (URL rebuilt server-side, the first production caller of
+      `SetAudiobookshelfBaseURL`, a cover failure is a warning with a 200); verify R3, R8 and R14 reach the creator unchanged.
+      State finding 8 in the PR's testing notes.
 - [ ] Its CHANGELOG diff must be ONE new bullet for the create endpoint (one-bullet-per-PR rule) and must not touch earlier
       steps' bullets; today it replaces step 3's entry and reshuffles steps 1-2's lines, so redo that hunk. This means step 4's
       tree will no longer equal the old combined branch's tree in `CHANGELOG.md`, which is intended.
@@ -120,6 +169,10 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Re-check CodeRabbit item F2 (the shutdown drain of in-flight creates) against this step's code.
 
 **Step 5** (built; needs work before its fork PR)
+- [ ] Crosswalk scope ([section 5, Step 5](needs-review-edition-field-crosswalk.md#step-5-sync-identifier-matching)): the
+      sync must find every edition shape the crosswalk can create, so add one matching test each for: ASIN only; ISBN-10
+      only; ISBN-13 only; both ISBNs; an ISBN-13 with no derivable ISBN-10; an ebook (R4-R6, R12). The created edition can
+      hold just one ISBN form, so matching must not depend on both. This includes the ASIN reading-format test below.
 - [ ] Rebase `step_5_needs_review_add_edition` onto `step_1_needs_review_add_edition`; expect conflicts with #190 in
       `internal/sync/service.go` and `internal/api/hardcover/client.go`; re-check the "unchanged by decision" claims (the
       reading-format filters) against the current code; re-run all gates.
@@ -130,10 +183,20 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       leave it out of scope, and note the decision.
 
 **Step 6** (not started; concurrency-sensitive)
+- [ ] Crosswalk scope ([section 5, Step 6](needs-review-edition-field-crosswalk.md#step-6-immediate-read-status-resync)):
+      nothing new is delivered; verify that after a create the resync's own lookup finds the new edition for each identifier
+      shape and both formats (R4-R6, R12), on the same Hardcover book as the run record's candidate (R1), and that a dry run
+      (`edition_id: 0`) attempts no resync.
 - [ ] All items in the plan sections "Backend 3-4" and the Step 6 tests: `Service.SyncBook`, `bookOps` exclusivity, opt-in
       `resync`, dry-run skip, `-race` tests, and the regression test that `StartSync` is unaffected when no book operation runs.
 
 **Step 7** (not started)
+- [ ] Crosswalk scope ([section 5, Step 7](needs-review-edition-field-crosswalk.md#step-7-ui)): editable inputs are exactly
+      R2 title, R3 subtitle, R4 ASIN, R5 ISBN-13, R6 ISBN-10, R8 release date, R14 edition information; read-only are R7, R9,
+      R10 (resolved names), R11, R12, R13 and R17; an ebook hides R9 and R13 and shows R12; `author_ids`, `narrator_ids`,
+      `publisher_id`, `language_id`, `country_id`, `audio_seconds` and `edition_format` are echoed from the draft unedited;
+      every draft warning and the 409 and 422 messages are shown; every ABS-supplied string is escaped. Findings 9 and, if
+      the language is shown, 3.
 - [ ] All items in the "Frontend" section and its tests, plus: show the draft's `reading_format` and hide narrator and
       duration fields for an ebook; render the 409 (no identifier, existing edition not confirmed) and 422 messages; the
       user-facing README note and the Known limitation text.
@@ -202,7 +265,8 @@ The whole feature is too large for one reviewable PR. The repo's recent history 
 slices that each merge on their own, so it is split the same way. The plan began as three slices, grew a sync
 matching slice, and the first slice then grew to about 5,000 added lines (2,050 production, 3,000 tests, 435 docs)
 because it mixed changes to existing behavior with a new API. Splitting it by layer gives four PRs, so the plan is
-now seven steps. Nothing is user-visible until step 7, so no half-finished button ships.
+now seven steps. Nothing is user-visible until step 7, so no half-finished button ships. Which parts of the
+Audiobookshelf-to-Hardcover field mapping each step delivers or must verify is in "Crosswalk scope by step" near the top.
 
 - **Step 1 - ISBN and export foundations** (`step_1_needs_review_add_edition`, from `develop`). The `internal/isbn`
   package, `models.ReadingFormat`/`ReadingFormatID` and the reading-format context helper (with
@@ -487,6 +551,9 @@ Decisions made by the owner and where they ended up.
     the previous step merged, rebased onto upstream `develop`. The CHANGELOG `(#NNN)` is the upstream PR number.
 14. **The combined branch is retired.** Steps 1-4 were split out, the old branch deleted, and fork PR #20 left closed (the
     rename that retired it closed the PR; see "How the combined branch was split").
+15. **Crosswalk rows are assigned to steps.** Each step delivers some rows of the field crosswalk and verifies others, and the
+    assignment is a table near the top of this document, repeated as one checklist item per step. Row IDs (R1 to R18) never
+    change, so PR descriptions and checklists can cite them.
 
 ## Ebook items: ebook editions (resolved, steps 1-4)
 
@@ -711,6 +778,11 @@ the same format only, so a repeat submit normally returns the existing edition. 
 - Books with neither an ASIN nor an ISBN cannot get an edition through this feature at all.
 
 ## Tests (step noted per group; each step ships its own tests)
+
+Every step's tests also cover the crosswalk rows that step delivers, with the edge cases listed for that step in the
+crosswalk's [section 5](needs-review-edition-field-crosswalk.md#5-what-each-step-must-deliver-from-the-crosswalk), and add a
+test for each row it only verifies. The groups below are the pre-existing test plan; where a crosswalk edge case is not
+covered by a group, the crosswalk item is added to that step's checklist and tested there.
 
 - **Step 3** — `internal/api/audiobookshelf/client_test.go`: `GetLibraryItem` success, 404, auth header/path.
 - **Step 1** — `internal/mismatch/mismatch_test.go`: other `AddWithMetadata` tests (incl. Audnex region fallback) pass unchanged;

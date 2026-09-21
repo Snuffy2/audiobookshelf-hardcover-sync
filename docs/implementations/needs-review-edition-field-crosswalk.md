@@ -132,40 +132,42 @@ Points about the target that shape the mapping:
 
 ## 4. The crosswalk
 
-"Step" is the step whose code owns the logic. **UI** means the field appears as an editable input in the step 7
-preview; **API** means the POST body accepts it (`EditionEdits`); **server** means the client cannot set it.
+Row IDs (`R1` to `R18`) are stable: other documents refer to them, so a new row is appended and an existing row is never
+renumbered. "Steps" lists every step that delivers part of the row (implements or changes it); section 5 says what each
+step delivers and what it only has to verify. **UI** means the field appears as an editable input in the step 7 preview;
+**API** means the POST body accepts it (`EditionEdits`); **server** means the client cannot set it.
 
-| # | Hardcover field | ABS source | Transformation and logic | Step | Edit |
+| Row | Hardcover field | ABS source | Transformation and logic | Steps | Edit |
 |---|-----------------|------------|--------------------------|------|------|
-| 1 | `book_id` (mutation argument) | none; the run record's `hardcover_book_id` | Integer greater than 0, else the book is not eligible. Overrides any candidate the enrichment guessed. | 3, 4 | server |
-| 2 | `title` | `metadata.title` | Passed through. Create trims it and rejects a blank one. No series or prefix clean-up. | 3, 4 | UI, API |
-| 3 | `subtitle` | `metadata.subtitle` | Passed through; omitted when empty. | 3 | UI, API |
-| 4 | `asin` | `metadata.asin` | Trimmed only. No case or shape check. Also triggers the Audnex lookup (row 8) and sets `edition_format` (row 11). | 3, 4 | UI, API |
-| 5 | `isbn_13` | `metadata.isbn` | Normalized (separators removed, trailing `x` uppercased), classified by shape. 13 digits goes here; a 10-character value goes to row 6. The draft then fills the *other* form when it can be derived. | 1, 3, 4 | UI, API |
-| 6 | `isbn_10` | `metadata.isbn` | As row 5. The ISBN-10 to ISBN-13 conversion adds `978` and recalculates the check digit; a 979 ISBN-13 has no ISBN-10. A counterpart is derived only when the input's own checksum is valid. | 1, 3, 4 | UI, API |
-| 7 | `contributions[]`, author (`contribution: null`) | `metadata.authorName` | Split on `,`, each name trimmed, empty names dropped. Each name is looked up on Hardcover by **exact, case-sensitive name** among active authors; the first row returned is used. IDs are de-duplicated and keep ABS order. No match on any name means zero authors, which is a draft warning and a create failure. | 1, 3, 4 | API |
-| 8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The result is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. `metadata.publishedDate` is not read. Create requires `YYYY-MM-DD`. | 1, 3, 4 | UI, API |
-| 9 | `contributions[]`, `"Narrator"` | `metadata.narratorName` | Same split as row 7. Lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook draft passes no narrator. No match is a warning; the edition is created without a narrator. | 1, 3, 4 | API |
-| 10 | `publisher_id` | `metadata.publisher` | Looked up by **exact, case-sensitive** publisher name. Not found gives `0`, which is omitted (warning). Never defaults to a guessed ID (was `1` before step 1). | 1, 3, 4 | API |
-| 11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: `Ebook`. Trimmed, at most 100 characters. | 1, 2, 3, 4 | API |
-| 12 | `reading_format_id` | `mediaType`, `ebookFile`, `ebookFormat`, `duration`, `numTracks` | `IsEbook()` gives 4, otherwise 2. Recomputed from ABS at create time; the request cannot set it (an extra `reading_format` field is rejected with 400). | 1, 2, 4 | server |
-| 13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Sent only when greater than 0 and the item is an audiobook. | 1, 3, 4 | API |
-| 14 | `edition_information` | none | Audiobook: `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded. `metadata.abridged` is not consulted. | 1, 3, 4 | UI, API |
-| 15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 1, 3, 4 | API |
-| 16 | `country_id` | none | Constant `1` (assumed United States). | 1, 3, 4 | API |
-| 17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Any failure is a warning; the edition stays. | 2, 3, 4 | server |
-| 18 | `page_count` | none | Not sent. ABS has no page count. | n/a | n/a |
+| R1 | `book_id` (mutation argument) | none; the run record's `hardcover_book_id` | Integer greater than 0, else the book is not eligible. Overrides any candidate the enrichment guessed. | 2, 3, 4 | server |
+| R2 | `title` | `metadata.title` | Passed through. Create trims it and rejects a blank one. No series or prefix clean-up. | 2, 3, 4, 7 | UI, API |
+| R3 | `subtitle` | `metadata.subtitle` | Passed through; omitted when empty. | 2, 3, 7 | UI, API |
+| R4 | `asin` | `metadata.asin` | Trimmed only. No case or shape check. Also triggers the Audnex lookup (R8) and sets `edition_format` (R11). | 2, 3, 4, 5, 7 | UI, API |
+| R5 | `isbn_13` | `metadata.isbn` | Normalized (separators removed, trailing `x` uppercased), classified by shape. 13 digits goes here; a 10-character value goes to R6. The draft then fills the *other* form when it can be derived. | 1, 2, 3, 4, 5, 7 | UI, API |
+| R6 | `isbn_10` | `metadata.isbn` | As R5. The ISBN-10 to ISBN-13 conversion adds `978` and recalculates the check digit; a 979 ISBN-13 has no ISBN-10. A counterpart is derived only when the input's own checksum is valid. | 1, 2, 3, 4, 5, 7 | UI, API |
+| R7 | `contributions[]`, author (`contribution: null`) | `metadata.authorName` | Split on `,`, each name trimmed, empty names dropped. Each name is looked up on Hardcover by **exact, case-sensitive name** among active authors; the first row returned is used. IDs are de-duplicated and keep ABS order. No match on any name means zero authors, which is a draft warning and a create failure. | 2, 3, 4, 7 | API |
+| R8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The result is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. `metadata.publishedDate` is not read. Create requires `YYYY-MM-DD`. | 2, 3, 7 | UI, API |
+| R9 | `contributions[]`, `"Narrator"` | `metadata.narratorName` | Same split as R7. Lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook draft passes no narrator. No match is a warning; the edition is created without a narrator. | 1, 2, 3, 4, 7 | API |
+| R10 | `publisher_id` | `metadata.publisher` | Looked up by **exact, case-sensitive** publisher name. Not found gives `0`, which is omitted (warning). Never defaults to a guessed ID (was `1` before step 1). | 1, 2, 3, 4 | API |
+| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: `Ebook`. Trimmed, at most 100 characters. | 1, 2, 3, 4 | API |
+| R12 | `reading_format_id` | `mediaType`, `ebookFile`, `ebookFormat`, `duration`, `numTracks` | `IsEbook()` gives 4, otherwise 2. Recomputed from ABS at create time; the request cannot set it (an extra `reading_format` field is rejected with 400). | 1, 2, 3, 4, 5, 7 | server |
+| R13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Sent only when greater than 0 and the item is an audiobook. | 1, 2, 3, 4, 7 | API |
+| R14 | `edition_information` | none | Audiobook: `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded. `metadata.abridged` is not consulted. | 1, 2, 3, 7 | UI, API |
+| R15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 2, 3, 4 | API |
+| R16 | `country_id` | none | Constant `1` (assumed United States). | 2, 3, 4 | API |
+| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Any failure is a warning; the edition stays. | 2, 3, 4, 7 | server |
+| R18 | `page_count` | none | Not sent. ABS has no page count. | n/a | n/a |
 
 ### Field notes
 
-**Rows 5 and 6, ISBN.** ABS has one `isbn` string; Hardcover has two fields. `isbn.Parse` accepts a value by shape only:
+**R5 and R6, ISBN.** ABS has one `isbn` string; Hardcover has two fields. `isbn.Parse` accepts a value by shape only:
 13 digits, or 9 digits followed by a digit or `X`. The draft first records only the form the item carries, then fills
 the other with `isbn.ISBN10()/ISBN13()`, which returns the counterpart only for a valid checksum. A bad-checksum ISBN
 is still sent as given (Hardcover will flag it `..._valid = false`); it has no counterpart. On create, each field is
 re-normalized and must have the right length for its slot (`isbn_10 must be a valid 10-character ISBN`), and at least
 one of `asin`, `isbn_10`, `isbn_13` is required.
 
-**Rows 7 and 9, people.** ABS's `authorName` is `authors.map(name).join(', ')`, so a single author called
+**R7 and R9, people.** ABS's `authorName` is `authors.map(name).join(', ')`, so a single author called
 `"John Smith, Jr."` is indistinguishable from two authors once joined. The expanded item carries the exact
 `authors[].name` and `narrators[]`, but the model does not decode them (finding 2). Person lookup details
 (`SearchPeople` in the Hardcover client):
@@ -181,23 +183,176 @@ one of `asin`, `isbn_10`, `isbn_13` is required.
 - Because a name must match exactly, "J.R.R. Tolkien" and "J. R. R. Tolkien" are different lookups, and a miss is
   silent apart from the draft warning.
 
-**Row 8, release date.** Audnex is an Audible metadata service, so it only helps for Audible ASINs. Without a date from
+**R8, release date.** Audnex is an Audible metadata service, so it only helps for Audible ASINs. Without a date from
 Audnex the fallback is the year only, and the Hardcover librarian rule (January 1 when only the year is known) is
 exactly what `YYYY-01-01` gives. Slash dates are read US-style (`01/02/2006` is tried before `02/01/2006`); that only
 matters if `publishedDate` is ever used, because Audnex and the year are ISO.
 
-**Row 11, edition format.** The audiobook labels come from `ToEditionExport`, which also produces the mismatch JSON the
+**R11, edition format.** The audiobook labels come from `ToEditionExport`, which also produces the mismatch JSON the
 `edition` CLI imports, so the draft matches what the file flow would have produced. This differs from the Hardcover
 FAQ's advice to describe the edition rather than its source (finding 6).
 
-**Row 17, cover.** ABS's cover endpoint scales the image: `width` defaults to 400, `height` to proportional, and
+**R17, cover.** ABS's cover endpoint scales the image: `width` defaults to 400, `height` to proportional, and
 `format` to `webp` or `jpeg` depending on the request's `Accept` header (`reqSupportsWebp` is true when `Accept` contains
 `image/webp` or equals `*/*`). The creator sends `Accept: image/*`, so ABS answers with a **JPEG about 400 pixels wide**,
 which is acceptable to Hardcover but not large. `?raw=1` returns the original file in whatever format it has (possibly
 WebP, which Hardcover does not support). The creator picks the upload extension from the response's `Content-Type`
 (`jpg`, `png` or `webp`).
 
-## 5. ABS fields that are not mapped
+## 5. What each step must deliver from the crosswalk
+
+Every step in [the plan](needs-review-edition-creation.md) touches some rows. For each step:
+
+- **Delivers** means the step's code implements or changes that behavior. Its tests pin every delivered row, including the
+  edge cases named below, at a real interface (the GraphQL variables sent, the HTTP response, the export JSON) rather than
+  at implementation details.
+- **Verifies** means the step depends on behavior that already exists (from an earlier step or from `develop`), so it needs
+  a test that fails if that behavior changes.
+- The step's PR description names the rows it delivers. If the code ends up behaving differently from a row, the row is
+  corrected in the same commit as the code.
+
+| Step | Delivers | Verifies | Findings to decide |
+|------|----------|----------|--------------------|
+| 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R12 (format helpers) | Audiobook export unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 |
+| 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (cover chain, token scoping) | R5, R6 forms from step 1 | 5, 8 |
+| 3 Draft endpoint | The ABS side: decode, then R1-R17 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
+| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 and R17 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
+| 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
+| 6 Resync | nothing new | R1, R4-R6, R12: the resync finds the edition just created | none |
+| 7 UI | What is editable, shown, hidden and echoed: R2-R14, R17 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
+
+### Step 1: ISBN and export foundations
+
+Code: `internal/isbn`, `internal/models` (`ReadingFormat`, `ReadingFormatID`), `mismatch.AddWithMetadata`, `ToEditionExport`.
+
+- **Delivers R5, R6.** Hyphenated ISBN-13 and ISBN-10 are kept (the old length-only split dropped them); a lowercase `x` check
+  digit is uppercased; spaces, dots, underscores and dash variants are removed; a value that is neither 10 nor 13 characters
+  in shape produces neither field; the export records only the form the item carries, never a derived counterpart;
+  `isbn.Parse` derives a counterpart only for a valid checksum and never for a 979 ISBN-13.
+- **Delivers R10.** An unresolved publisher exports `publisher_id: 0` (it was `1`); a resolved ID is exported, including one
+  resolved late inside `ToEditionExport`.
+- **Delivers R12.** `ReadingFormat()` and `ReadingFormatID` are pinned by a truth table: audio plus an ebook file is an
+  audiobook; an ebook file or `ebookFormat` and no audio is an ebook; the legacy `mediaType: "ebook"` is an ebook; nothing
+  is an audiobook; an unknown format string maps to id 2.
+- **Delivers R11, R13, R14 for an ebook.** The export has `edition_format: Ebook`, `reading_format: ebook`, no audio seconds
+  and no `Unabridged`.
+- **Verifies (audiobook export is unchanged, field for field):** R2-R4 pass-through; the R7 and R9 ID lookups; R8 (Audnex
+  date, region fallback, normalization, year fallback); the R11 audiobook labels (`Audible Audio`, `libro.fm`, empty); R13
+  rounding; R14 `Unabridged` default and the discarded `Audiobookshelf` placeholder; R15 and R16 constants; R17 cover
+  preference (ABS cover, then its image URL, then the Hardcover cover).
+- **Decide:** finding 1 (`abridged`).
+
+### Step 2: Edition creator hardening
+
+Code: `edition.Creator`. This step owns everything sent to Hardcover, so its tests assert the exact variables passed to
+`GraphQLMutation` for each row.
+
+- **R1:** `book_id` is the `bookId` argument; zero is rejected by `Validate`.
+- **R2, R3:** a title is required; the subtitle is omitted when empty.
+- **R4-R6:** sent when set. Duplicate detection runs before `insert_edition`: ASIN, ISBN-13, ISBN-10, then the converted
+  forms, de-duplicated and scoped to the input's reading format. A same-book edition is returned untouched (`Existing`);
+  another book's, or one whose book is unknown, is `ErrEditionBelongsToOtherBook`; the "already exists" insert error falls
+  back to the same lookup.
+- **R7, R9:** authors are contributions with `contribution: null` and at least one is required; narrators are `"Narrator"`;
+  an ebook sends no narrators.
+- **R8:** `release_date` must be `YYYY-MM-DD`.
+- **R10, R15, R16:** sent only when greater than 0.
+- **R11:** the trimmed `edition_format` is sent; empty falls back to `Audiobook` or `Ebook`.
+- **R12:** `reading_format_id` is 2 or 4; an invalid `reading_format` fails validation.
+- **R13, R14:** `audio_seconds` only when greater than 0 and an audiobook; `edition_information` when non-empty.
+- **R17:** the cover chain (download, storage credentials, upload, `insert_image`, `update_edition`); the ABS token goes only
+  to the configured ABS base URL; each failure keeps the edition and sets `ImageError`; the file extension follows the
+  response's `Content-Type`. `SetAudiobookshelfBaseURL` has no production caller until step 4, so the `edition` CLI keeps the
+  legacy host heuristic.
+- **Verifies:** the ISBN forms that step 1's `isbn` package produces for the converted lookups.
+- **Decide:** finding 5 (cover size and format); finding 8 (token scope) cannot be tested offline, so say so in the PR.
+
+### Step 3: Draft endpoint
+
+Code: `audiobookshelf.Client.GetLibraryItem`, `internal/edition/draft`, `PrepareEditionDraft`. This step owns the ABS side and
+the mapping into the previewable draft. Its fixtures are real expanded ABS items (the API docs sample), one audiobook and one
+ebook.
+
+- **ABS decode.** `GetLibraryItem` reads `?expanded=1`; a 404 is a typed not-found. Decide what else the model decodes:
+  `authors[]`, `narrators[]`, `abridged`, `language`, `publishedDate` (findings 1-4).
+- **R1:** the book ID comes from the run record and overrides enrichment; a record without a positive Hardcover book is not
+  eligible. **Identifier requirement:** an item with neither an ASIN nor a parseable ISBN is refused (409) before any
+  Hardcover call.
+- **R2-R4:** passed through.
+- **R5, R6:** the counterpart form is filled only when it can be derived (valid checksum, 978 only); both stay editable.
+- **R7, R9:** names resolve to IDs; warnings for no author matched (create would fail), and for no narrator matched or listed
+  (audiobook only). An ebook draft has no narrators and no narrator warning. Findings 2 and 9.
+- **R8:** Audnex region fallback, normalization and the year fallback; a warning when there is no date.
+- **R10:** a warning when a publisher is named but not found.
+- **R11, R13, R14:** taken from the export: audiobook labels, `Ebook` for an ebook; duration rounded with `int(d + 0.5)`
+  (33854.905 becomes 33855); an ebook has no audio and no `Unabridged`.
+- **R12:** the draft reports `reading_format`.
+- **R15, R16:** constants; finding 3 adds a warning when ABS names a language other than English.
+- **R17:** `CoverURL` is server-controlled: empty when there is no cover or no usable base URL; credentials, query and fragment
+  are stripped; the item ID is path-escaped; the export's Hardcover-cover fallback never reaches the draft.
+- **Verifies:** the step 1 behavior above, seen through the draft (R5, R6, R10-R14), and R12.
+- **Decide:** findings 2, 3, 4, 7 and 9 (draft level); finding 6 is informational.
+
+### Step 4: Create endpoint
+
+Code: `EditionEdits`, `validateEditionInput`, `normalizeEditionIdentifiers`, `CreateEditionFromRunBook`, the POST handler.
+
+- **The editable set is exactly `EditionEdits`** (the API column of section 4). Any other field, including `reading_format`,
+  `book_id` and `image_url`, is rejected (400), and the body must be exactly one JSON object.
+- **R1:** `book_id` from the run record only. **R12:** the reading format comes from the ABS item fetched at create time, so an
+  ebook cannot be created as an audiobook or the reverse.
+- **R2:** trimmed; a blank title is 422. **R4-R6:** the ASIN is trimmed and the ISBNs lose hyphens and spaces; a value of the
+  wrong shape for its slot is 422; at least one of ASIN, ISBN-10, ISBN-13 is required (422); an ABS item with no identifier
+  is 409.
+- **R7, R9:** at most 50 IDs each, all positive. **R10, R13, R15, R16:** not negative. **R11:** at most 100 characters.
+- **R17:** the cover URL is rebuilt from the profile's ABS base URL, never taken from the request; this is where
+  `SetAudiobookshelfBaseURL` gets its first production caller; a cover failure becomes the fixed warning with a 200.
+- **Also:** a duplicate on another book is 409 with the fixed message; a dry run issues no mutation and returns
+  `edition_id: 0`.
+- **Verifies:** R3, R8 and R14 reach the creator unchanged.
+- **Decide:** finding 8 goes in the PR's testing notes; finding 5 as informational.
+
+### Step 5: Sync identifier matching
+
+Code: `findBookInHardcover` and the identifier searches. This step is the read side of the identifier and format rows: an
+edition written by the crosswalk must be found by the sync, which is what takes the book out of Needs review.
+
+- **R4:** an ASIN matches after trimming, with case preserved on both sides.
+- **R5, R6:** the item's ISBN is searched in the form it has first and then its counterpart, each in its own field;
+  lowercase `x` and separators are normalized; a 979 or bad-checksum ISBN has no counterpart search.
+- **R12:** the strict same-format rule (audiobook 2, ebook 4) is kept on every query, including the ASIN query, which has no
+  test yet.
+- **Verifies, with one test per shape the crosswalk can create:** ASIN only; ISBN-10 only; ISBN-13 only; both ISBNs; an
+  ISBN-13 whose ISBN-10 cannot be derived; an ebook. The created edition can hold just one ISBN form (the preview lets the
+  user clear the other), so matching must not depend on both.
+
+### Step 6: Immediate read-status resync
+
+Code: `Service.SyncBook` and the create endpoint's `resync` option. Nothing new is delivered from the crosswalk; the step
+depends on it.
+
+- **R1:** the created edition is on the same Hardcover book as the run record's candidate, so the resync's own lookup finds
+  it and not some other candidate.
+- **R4-R6, R12:** after a create, `findBookInHardcover` finds the new edition for each identifier shape and both formats.
+  Because create requires an identifier, a resync always has one to match on.
+- **Dry run** creates nothing (`edition_id: 0`), so no resync is attempted.
+
+### Step 7: UI
+
+Code: `web/static/app.js`, `index.html`, `styles.css`. This step decides what the person edits, sees, and cannot see.
+
+- **Editable inputs, exactly:** R2 title, R3 subtitle, R4 ASIN, R5 ISBN-13, R6 ISBN-10, R8 release date, R14 edition
+  information.
+- **Read-only:** R7, R9, R10 (the resolved author, narrator and publisher names), R11 edition format, R12 reading format,
+  R13 duration, R17 cover.
+- **Ebook:** hide R9 (narrators) and R13 (duration) and show R12.
+- **Echoed back unedited:** `author_ids`, `narrator_ids`, `publisher_id`, `language_id`, `country_id`, `audio_seconds` and
+  `edition_format` from the draft, so what was previewed is what is created, with no second round of lookups.
+- **Messages:** every draft warning (R7, R8, R9, R10, and finding 3 if added) and the 409 and 422 messages.
+- **Safety:** every ABS-supplied string (title, names, publisher) is escaped.
+- **Decide:** finding 9 (no author matched leaves the user with no way to continue), and finding 3 if the language is shown.
+
+## 6. ABS fields that are not mapped
 
 | ABS field | Why | By design or a gap |
 |-----------|-----|--------------------|
@@ -215,7 +370,7 @@ WebP, which Hardcover does not support). The creator picks the upload extension 
 Hardcover `BookDtoInput` fields the tool never sends: `page_count` (no source), and `image_id` in the insert (it is set
 afterwards by `update_edition`). `EditionInput.locked` is not sent.
 
-## 6. Server-controlled and editable fields
+## 7. Server-controlled and editable fields
 
 | Field | Who decides | Detail |
 |-------|-------------|--------|
@@ -228,7 +383,7 @@ The step 7 UI (planned) shows editable text inputs for title, subtitle, ASIN, IS
 information, and shows the resolved author, narrator and publisher names read-only. So a person whose author name did
 not match on Hardcover cannot fix that in the UI, although the API would accept `author_ids` (finding 9).
 
-## 7. Calls made
+## 8. Calls made
 
 **Draft** (read-only): one ABS item fetch; if there is an ASIN, up to two Audnex requests (region, then `us`, each
 retried up to three times, all sharing one 15 s cap); a publisher lookup (repeated in `ToEditionExport` when the first
@@ -241,7 +396,7 @@ de-duplicated, scoped to the item's reading format); `insert_edition`; then, if 
 credential request, upload, `insert_image`, `update_edition`. A duplicate on the same book is reused untouched; one
 on a different book is refused (409).
 
-## 8. Worked examples
+## 9. Worked examples
 
 IDs below are **placeholders**, not real Hardcover IDs.
 
@@ -314,9 +469,10 @@ ABS excerpt (`isbn` is a checksum-valid sample taken from Hardcover's ISBN guide
 narrator contributions, **no** `audio_seconds`, **no** `edition_information`, `release_date` from Audnex if it knows the
 ASIN (Audnex is Audible-only, so a Kindle ASIN is not expected to resolve, which leaves `2019-01-01`). The duplicate lookups only consider ebook editions.
 
-## 9. Findings and open decisions
+## 10. Findings and open decisions
 
-Each is also an unchecked item under the matching step in the plan document's "Step checklists".
+Each is also an unchecked item under the matching step in the plan document's "Step checklists", and section 5 says
+which step decides it.
 
 1. **`abridged` is ignored** (step 1 export, step 3 draft). Every audiobook draft says `Unabridged`, even when ABS marks it
    abridged. Needs the model field and a decision (`Abridged`, or blank).
