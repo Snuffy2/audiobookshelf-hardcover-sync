@@ -10,7 +10,7 @@ Audiobookshelf (ABS) data ends up in which Hardcover edition field and what is d
 
 | Source | What was read |
 |--------|---------------|
-| Our code | Branch `step_4_needs_review_add_edition` (tip `7ce35cd`, which contains steps 1-3). Functions are cited by name, not line, because the code is not on this branch. |
+| Our code | Branch `step_4_needs_review_add_edition` (which contains steps 1-3). Functions are cited by name, not line, because the code is not on this branch. |
 | ABS API docs | `audiobookshelf/audiobookshelf-api-docs` (`_items.md`, `_schemas.md`): `GET /api/items/{id}`, Library Item Expanded, Book Expanded, Book Metadata Expanded, EBook File, cover endpoint. |
 | ABS server | `advplyr/audiobookshelf` (`master`): `server/models/Book.js` (`oldMetadataToJSON`, `toOldJSONMinified`, `toOldJSONExpanded`), `LibraryItemController.getCover`, `utils.reqSupportsWebp`, `CacheManager`. The server source is authoritative where the docs are older (for example `abridged`). |
 | Hardcover schema | `docs/hardcover-schema.graphql` (same file as `internal/api/hardcover/hardcover-schema.graphql`): `insert_edition`, `EditionInput`, `BookDtoInput`, `ContributionInputType`, `ImageInput`. |
@@ -483,7 +483,7 @@ ASIN (Audnex is Audible-only, so a Kindle ASIN is not expected to resolve, which
 Each is also an unchecked item under the matching step in the plan document's "Step checklists", and section 5 says
 which step decides it.
 
-1. **`abridged` was ignored** (resolved in step 1, f152b08). Every audiobook export said `Unabridged`, even when ABS marked
+1. **`abridged` was ignored** (resolved in step 1). Every audiobook export said `Unabridged`, even when ABS marked
    it abridged. `metadata.abridged` is now decoded and an abridged audiobook exports `Abridged` (R14); the draft gets it
    through the same export path.
 2. **Names are split from a joined string** (step 3). Use the exact `authors[].name` and `narrators[]` arrays from the

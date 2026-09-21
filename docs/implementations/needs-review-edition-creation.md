@@ -1,12 +1,10 @@
 # Implementation Plan: Add an Edition to Hardcover from a `needs_review` Book
 
-**Status: 🚧 IN PROGRESS** (2026-09-21)
+**Status: 🚧 IN PROGRESS**
 
 The feature is delivered as **seven steps**, each its own **upstream** PR (to `drallgood/audiobookshelf-hardcover-sync`)
 that leaves `develop` working and shippable. The former combined branch has been split: steps 1-4 exist as four stacked
-branches, all validated. Step 1 is published as fork PR #24 and as upstream PR #195 (open; the maintainer requested changes on
-2026-09-21 and the fixes are committed locally, not pushed yet); steps 2-4 are local only until the owner asks for their fork
-PRs. Step 5 is built but still needs a rebase onto step 1. Steps 6 and 7 are not started. No upstream PR exists for steps 2-7.
+branches. Steps 5, 6 and 7 follow, and steps 6 and 7 are not started.
 
 **Two stages per step.** `origin` (the fork, `Snuffy2/audiobookshelf-hardcover-sync`) is where each step is developed, tested and
 reviewed by AI (CodeRabbit) through a **fork PR** (`Snuffy2:step_N_needs_review_add_edition` -> a fork branch). Only when a
@@ -23,11 +21,11 @@ step touches.
 
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
-| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (local tip d037602, 21 commits; `origin` is at 091df9d, so the last 2 are not pushed yet) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) (open, base `develop`, changes requested) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; maintainer review fixes committed locally (baa768f, d037602), not pushed; PR bodies, CI re-run and the reply still to do (see its checklist) |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` (tip 1b6f408, 5 commits) | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated; local only, no fork PR yet. See its checklist under "Step checklists" |
-| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` (tip 61a7ac6, 5 commits) | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated; local only, no fork PR yet |
-| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (tip 7ce35cd, 4 commits) | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated; local only, no fork PR yet. Its final tree is identical to the old combined branch's tree |
-| 5 | Sync identifier matching | `step_5_needs_review_add_edition` (tip e03754a) | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching` on 2026-09-20), no fork PR yet. Based on an old tip of the combined branch, so it needs a rebase onto `step_1_needs_review_add_edition` (and #190/#191/#192 are already in step 1's base; see the Step 5 notes) |
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated. See its checklist under "Step checklists" |
+| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated |
+| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated |
+| 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
 | 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | — | 6 | ~500-800, estimated | Not started |
 
@@ -41,7 +39,7 @@ diff. **An upstream PR cannot use a fork-only branch as its base**, so an upstre
 command) only after step N-1 has merged into `drallgood:develop`, with the branch first rebased onto that `develop` so its
 diff is just that step. Step 5 needs only step 1's `internal/isbn`, so its fork PR can be based on step 1 and its upstream PR
 can follow as soon as step 1 has merged, in parallel with steps 2-4. Step 6 needs the create endpoint (4) and the sync
-matching (5) merged, and step 7 needs step 6. Step 6 also needs `develop` at or after a2ad4b4 (#188 changed
+matching (5) merged, and step 7 needs step 6. Step 6 also needs `develop` with #188 merged (it changed
 `internal/sync/service.go`, which `SyncBook` will call into). After step 4 the feature is usable with curl; step 7 is the
 first thing a user sees. Steps 6 and 7 build on the create response shape from step 4, so a change requested in step 4's
 review carries into them. Each step's single CHANGELOG bullet carries its own upstream PR number as `(#NNN)`, added when that
@@ -99,7 +97,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       section 5, at a real interface (the GraphQL variables sent, the HTTP response, the export JSON), not implementation
       details; if the code behaves differently from a row, correct the crosswalk in the same commit as the code.
 
-**Step 1** (fork PR #24 and upstream PR #195 are open; the code is done, see the unchecked items for what is left)
+**Step 1** (fork PR #24, upstream PR #195)
 - [x] Crosswalk scope ([section 5, Step 1](needs-review-edition-field-crosswalk.md#step-1-isbn-and-export-foundations)):
       deliver R5 and R6 (hyphenated ISBN-13 and ISBN-10 kept, lowercase `x`, other separators, a 979 or wrong-shape value,
       no derived counterpart in the export), R10 (unresolved publisher is 0, late-resolved ID exported), R12 (format helpers
@@ -108,50 +106,46 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       normalization and year fallback). Done: `internal/isbn`, `internal/models/reading_format_test.go`,
       `internal/mismatch/reading_format_test.go` and the `mismatch_test.go` cases pin each row at the export boundary.
 - [x] Collapse this step's three CHANGELOG bullets (hyphenated ISBNs, unresolved publisher, ebook export) into one bullet, per
-      the one-bullet-per-PR rule, and push that to fork PR #24. Done; the bullet has no `(#NNN)` until the upstream PR exists.
+      the one-bullet-per-PR rule. The bullet carries `(#195)`, the upstream PR number.
 - [x] Read the CodeRabbit feedback on #24 and address the valid items. F1 (the stale publisher ID in `ToEditionExport`) and
-      both threads on b214d91 (the CHANGELOG ebook wording, the case-insensitive ebook placeholder filter) are fixed and
-      pushed (e2d4c38).
+      both threads about the CHANGELOG ebook wording and the case-insensitive ebook placeholder filter are fixed.
 - [x] The PR body says `isbn.Result.ISBN10()/ISBN13()/Counterpart` have their first production caller in step 2; keep that note.
-- [x] Crosswalk finding 1: decided, done in its own commit (f152b08). ABS `metadata.abridged` is decoded, carried on the
-      mismatch record, and an abridged audiobook exports `edition_information: "Abridged"`; every other audiobook still
-      exports `Unabridged`. It is a behavior change to the audiobook export, so it is called out in the CHANGELOG bullet
-      and must be called out in the PR body. (An earlier commit had narrowed the audiobook rule without being asked; it was
-      reverted in f25b221 because the audiobook export must otherwise stay unchanged.)
-- [x] Update the fork PR #24 body before it went upstream: the crosswalk rows this step delivers and verifies, the refreshed
-      test list, the "Multi-Step Project" block, and no "Nothing changes for audiobook syncing" claim. Done; #195 carries the
-      same body (no issue links, since upstream's default branch is `main` and the base is `develop`).
-- [x] Push the local step 1 commits to fork PR #24. Done up to 091df9d.
-- [x] Upstream PR #195 opened (2026-09-21, on the owner's command) from `Snuffy2:step_1_needs_review_add_edition` to
-      `drallgood:develop`. Its `Test (1.26.x, ubuntu-latest)` check failed once in the "Run linters" step, before any test ran:
-      building `golangci-lint` got `INTERNAL_ERROR` from `sum.golang.org`. The fork's run of the same job on the same commit
-      passed. A contributor cannot re-run it ("Must have admin rights"), so it needs a maintainer's re-run or a new push.
-- [x] Maintainer review on #195 (drallgood, changes requested). Every point verified against current code; dispositions:
+- [x] Crosswalk finding 1: decided and done. ABS `metadata.abridged` is decoded, carried on the mismatch record, and an
+      abridged audiobook exports `edition_information: "Abridged"`; every other audiobook still exports `Unabridged`. It is a
+      behavior change to the audiobook export, so it is called out in the CHANGELOG bullet and in the PR body. (An earlier
+      change had narrowed the audiobook rule without being asked; it was reverted because the audiobook export must otherwise
+      stay unchanged.)
+- [x] The PR description follows the template, names the crosswalk rows this step delivers and verifies, carries the "Multi-Step
+      Project" block, and has no issue links (upstream's default branch is `main` and the base is `develop`).
+- [x] Maintainer review on #195: every point verified against current code; dispositions:
   - **Q1, checksum-invalid ISBNs: decided.** Keep accepting by shape and keep the value in `isbn_10` / `isbn_13`, and report the
     checksum: `isbn.Result.Valid`, and `isbn_10_valid` / `isbn_13_valid` in the export (omitted when that ISBN is empty; the
-    `edition` command ignores them). The policy is documented in the `isbn` package (d037602). Why: Hardcover's docs list
+    `edition` command ignores them). The policy is documented in the `isbn` package. Why: Hardcover's docs list
     `isbn_10_valid` / `isbn_13_valid` on `editions`, which suggests it stores and flags such ISBNs, and step 5 must still find
     an edition by the given value. **Not verified:** whether `insert_edition` accepts a bad checksum, whether a lookup by one
     matches, and whether Audiobookshelf routinely serves them; none of it has been run against the real API. The open part
     (warn or reject on a `false` flag when drafting or creating) is queued under steps 3 and 4.
-  - **Q2, ebook with an audiobook label: fixed** (baa768f). `ToEditionExport` now forces `Ebook` for any ebook record (R11 says
+  - **Q2, ebook with an audiobook label: fixed.** `ToEditionExport` now forces `Ebook` for any ebook record (R11 says
     `Ebook`), with a test over `""`, `Audiobook`, `Audible Audio` and `libro.fm`.
-  - **ABS schema: fixed** (baa768f). `abridged` added beside `explicit` in `bookMetadataBase` in
+  - **ABS schema: fixed.** `abridged` added beside `explicit` in `bookMetadataBase` in
     `internal/api/audiobookshelf/audiobookshelf-openapi.json`. The suggested raw-response fixture change is declined:
     `audiobookshelf_raw_response.json` is a 129-byte debug dump written by the client at runtime, no test reads it, and it has no
     `isbn` or `explicit` either.
-  - **Nits:** the saved-export test now sorts the files (`filepath.Glob` output is already lexical and the names carry a
+  - **Nits:** the saved-export test sorts the files (`filepath.Glob` output is already lexical and the names carry a
     `%03d` prefix, so the flake risk was low); the CHANGELOG bullet has `(#195)`; the PR body said "no audio length" but the
-    export writes `audio_seconds: 0` (corrected in the draft body, not yet applied); `isbn.Parse`, `Result`, `ISBN10()` and
-    `ISBN13()` have no production caller until step 2, as the PR already says.
-- [ ] On the owner's command: push baa768f and d037602 to the fork branch (this updates both #24 and #195), then apply the PR
-      body fixes to #24 and #195 (`audio_seconds: 0`; the `isbn_10_valid` / `isbn_13_valid` sentence; the test list; the
-      "audiobook export otherwise unchanged" claim becomes "adds the two ISBN flags"), reply to the maintainer with the
-      dispositions above, and get the CI re-run. Then read the new CodeRabbit feedback and address the valid items.
-- [ ] Unresolved CodeRabbit thread on 091df9d (case-insensitive audiobook placeholder filter in `ToEditionExport`) was
-      verified and skipped: the filter is `develop`'s own audiobook rule, kept unchanged on purpose (f25b221), its only
-      production writer is the constant `"Audiobookshelf"` it already rejects, and step 3 deletes it with `EditionInfo`. Reply
-      to and resolve the thread when the owner says so; do not change the audiobook rule in step 1.
+    export writes `audio_seconds: 0`; `isbn.Parse`, `Result`, `ISBN10()` and `ISBN13()` have no production caller until
+    step 2, as the PR already says.
+- [ ] Apply the PR body fixes to #24 and #195 (`audio_seconds: 0`; the `isbn_10_valid` / `isbn_13_valid` sentence; the test
+      list; the "audiobook export otherwise unchanged" claim becomes "adds the two ISBN flags"), and reply to the maintainer
+      with the dispositions above. Then read the new CodeRabbit feedback and address the valid items.
+- [ ] One CodeRabbit thread (case-insensitive audiobook placeholder filter in `ToEditionExport`) was verified and skipped: the
+      filter is `develop`'s own audiobook rule, kept unchanged on purpose, its only production writer is the constant
+      `"Audiobookshelf"` it already rejects, and step 3 deletes it with `EditionInfo`. Reply to and resolve the thread when the
+      owner says so; do not change the audiobook rule in step 1.
+- [ ] Rebase steps 2-5 onto step 1 after its review fixes: they changed `internal/mismatch/types.go` (forced `Ebook`,
+      `MarkEbook`, the ISBN flags), `internal/isbn/isbn.go`, the ABS OpenAPI schema and step 1's CHANGELOG bullet (now with
+      `(#195)`), so expect conflicts in those files and in `CHANGELOG.md`; step 3's edit must still leave step 1's bullet
+      untouched.
 
 **Step 2** (`edition` CLI behavior changes)
 - [ ] Crosswalk scope ([section 5, Step 2](needs-review-edition-field-crosswalk.md#step-2-edition-creator-hardening)): this
@@ -168,11 +162,6 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       (honored `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`).
 - [ ] Decide CodeRabbit item F3: the pre-existing `CheckRedirect` in `edition.NewCreator` that copies the `Authorization` header
       to redirects. Either fix it here or open a separate small PR (owner's choice); do not let it drop.
-
-- [ ] Rebase steps 2-4 (and 5) onto step 1's new tip once it is pushed: step 1's review changed `internal/mismatch/types.go`
-      (forced `Ebook`, `MarkEbook`, the ISBN flags), `internal/isbn/isbn.go`, the ABS OpenAPI schema and step 1's CHANGELOG
-      bullet (now with `(#195)`), so expect conflicts in those files and in `CHANGELOG.md`; step 3's edit must still leave
-      step 1's bullet untouched.
 
 **Step 3**
 - [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
@@ -243,7 +232,6 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       reading-format filters) against the current code; re-run all gates.
 - [ ] Add a test that the ASIN query keeps its reading-format filter (currently only the ISBN queries are guarded).
 - [ ] Keep step 5's CHANGELOG to ONE bullet (it has one today) and tighten its sentence about bad-checksum ISBNs.
-- [ ] Reword commit 5190293's message (it still mentions ordering, which was removed), while rebasing.
 - [ ] `mismatch.AddWithMetadata`'s own enrichment searches do not try the converted ISBN form; decide whether to include it or
       leave it out of scope, and note the decision.
 
@@ -396,23 +384,21 @@ Audiobookshelf-to-Hardcover field mapping each step delivers or must verify is i
 - **Step 6 regression guard:** the `StartSync` lock check only ever triggers while a book operation is in flight,
   which only the new endpoint creates. A test proves `StartSync` is unaffected when none is active.
 
-## How the combined branch was split (done, 2026-09-20)
+## How the combined branch was split (done)
 
-The combined branch `feature/edition-from-needs-review-api` (40 commits over `develop`, rebased onto `90b4906`, tip
-a6e9de9) held steps 1-4. Its commits were interleaved fixes and cleanups, so each step's branch was built from the previous
+The combined branch `feature/edition-from-needs-review-api` held steps 1-4. Its commits were interleaved fixes and cleanups, so each step's branch was built from the previous
 one by taking that step's files and hunks, as a few clean commits, then gated: `gofmt`, build, vet, `make test`, lint on
 the Go 1.26.7 toolchain, the JS tests, and every commit builds. An independent validator confirmed all four, that no
 step contains code from a later one, and that `step_4` has **no diff at all** against the old combined branch, so nothing
-was lost. Both `upstream/develop` and `origin/develop` were at `90b4906` at the time.
+was lost.
 
 What happened to the old branch and PR:
 
-- Steps 1-4 were built locally in order; only step 1 was pushed and opened as fork PR #24 (on the owner's command).
 - The old combined branch was renamed with GitHub's branch-rename API and then deleted, locally and on `origin`.
   **The rename closed fork PR #20** (it did not follow the new name, contrary to what this plan had assumed). The owner
   chose to leave #20 closed. Lesson: do not rename the head branch of an open PR expecting it to survive; a closed PR keeps
   its comments, and the CodeRabbit threads on it are re-checked in whichever step's fork PR contains that code.
-- Steps 2, 3 and 4 stay local until the owner asks for their fork PRs; each fork PR is based on the previous step's
+- Fork PRs for steps 2, 3 and 4 are opened only when the owner asks; each is based on the previous step's
   branch. Upstream PRs are created only on the owner's command, one at a time as described under "Stacking and merge
   order": step 1 first; then 2, 3, 4 each after the previous has merged, and step 5 after step 1. Each is rebased onto the
   current upstream `develop` first and carries the "Multi-Step Project" block.
@@ -439,20 +425,15 @@ Where the files actually went (differs slightly from the first plan):
 The follow-ups found while splitting are tracked as checkboxes in "Step checklists" near the top of this document, under the
 step they belong to.
 
-**Current state (2026-09-20):** steps 1-4 are built and validated (step 1 published as fork PR #24; 2-4 local only). Step 5 is
-built and needs its rebase. No upstream PR exists. Steps 6 and 7 do not exist. Each remaining step is started only on the
-owner's go-ahead. Each pushed branch tracks `origin/<same-name>`; nothing is pushed or opened without permission.
+Each remaining step is started only on the owner's go-ahead, and nothing is pushed or opened without permission.
 
 ## Implementation notes for the original combined Slice 1 (now steps 1-4)
 
 These notes were recorded when steps 1-4 were still one slice ("Slice 1"), implemented and validated, then extended. The
-feature-to-step mapping is in "How the combined branch was split". They first described branch tip 374b7b2 (13 commits
-over `develop` a2ad4b4); that branch (last tip a6e9de9, 40 commits over `develop` 90b4906) is now deleted and its content lives in
-steps 1-4; fork PR #20, its head, is closed. The sections below were written against earlier tips (8248c1a and
-before); the commit hashes they cite predate the rebases onto `develop`, so match them by subject rather than by hash.
-Where this differs from the plan above, this section is what shipped.
+feature-to-step mapping is in "How the combined branch was split". The combined branch is deleted and its content lives in
+steps 1-4; fork PR #20, its head, is closed. Where this differs from the plan above, this section is what shipped.
 
-**Cleanup done after the ebook work** (a cleanup loop over the branch, all local): the ebook rule and Hardcover
+**Cleanup done after the ebook work** (a cleanup loop over the branch): the ebook rule and Hardcover
 reading-format ids now live once in `internal/models` (`AudiobookshelfBook.ReadingFormat`, `ReadingFormatID`) instead
 of in the sync service, the draft package and both the Hardcover client and creator; the creator's duplicate-error
 fallback reuses `findExistingEdition` (so it also covers ISBN-10); ISBN-10/13 request normalization shares one helper;
@@ -473,22 +454,19 @@ Hardcover and Audiobookshelf test fakes (service, API and server tests) became o
   are described under "Added after the first validation".
 - **Detached create context.** Creation runs on a context detached from the request (`context.WithoutCancel`) with
   a 2-minute timeout, so a client disconnect cannot leave an edition without its cover.
-- **Cover URL hardening (9d3b3e6).** `draft.CoverURL` strips credentials, query and fragment from the profile's
+- **Cover URL hardening.** `draft.CoverURL` strips credentials, query and fragment from the profile's
   Audiobookshelf base URL before building the cover URL.
-- **`newHardcoverClient` refactor (91d6d29).** The extracted helper's debug log no longer carries `profile_id`.
-- **Edition format fix (240d2fa).** `Creator.createEdition` previously hardcoded `edition_format: "Audiobook"` and
+- **`newHardcoverClient` refactor.** The extracted helper's debug log no longer carries `profile_id`.
+- **Edition format fix.** `Creator.createEdition` previously hardcoded `edition_format: "Audiobook"` and
   ignored `EditionInput.EditionFormat`. It now sends the trimmed requested format and falls back to "Audiobook" when
   empty; `reading_format_id` stays 2. This also changes the behavior of the `edition` CLI. The Hardcover schema shows
   `BookDtoInput.edition_format` is a free-text String.
-- **Cover failure signal (319955d).** Cover upload failures were previously swallowed. `EditionResult` now has an
+- **Cover failure signal.** Cover upload failures were previously swallowed. `EditionResult` now has an
   additive `ImageError` (`image_error,omitempty`, a fixed step label only), and the POST response carries a
   `warnings` array (see Backend 6). The status is still 200 when only the cover failed.
-- **Test seam (12b2c47).** An unexported `newEditionCreator` seam on `MultiUserService` allows service-level tests
+- **Test seam.** An unexported `newEditionCreator` seam on `MultiUserService` allows service-level tests
   proving the ABS token goes only to the ABS cover host, and that removing the service's `hcClient.SetDryRun` makes
   the dry-run test fail.
-- **Docs commits.** 85e610d and 374b7b2 hold the first README, OpenAPI and CHANGELOG changes; later commits (7290c10,
-  94c5de8, cafe76d, 8248c1a) keep them in step with the code. The CHANGELOG entries still lack the `(#NNN)` PR number,
-  which is the upstream PR number of the step that carries them, added when that PR is opened.
 - **Repeat submits.** The in-flight guard only stops concurrent submits. The original limitation (a repeat sequential
   submit creating a duplicate, because the run record stays `needs_review`) is now largely closed by the proactive
   duplicate detection below; what remains is in "Known limitation".
@@ -501,42 +479,42 @@ Hardcover and Audiobookshelf test fakes (service, API and server tests) became o
 
 ### Added after the first validation
 
-Grounded in the code on the branch at that time (8248c1a); the ebook support that followed is in "Ebook items".
+Grounded in the code on the branch at that time; the ebook support that followed is in "Ebook items".
 
 - **Cross-book guard.** `edition.Creator` refuses to adopt an existing edition that belongs to another book or whose
   book cannot be confirmed (`ErrEditionBelongsToOtherBook`); the API answers 409 with a fixed message ("An edition with
   this ASIN or ISBN already exists on Hardcover and could not be confirmed to belong to this book."). A reused
   same-book edition is returned untouched (no cover upload, no mutation), and `EditionResult.Existing` records this
-  (the `edition` CLI prints `"existing": true`). Commits e3de025, 60fd16f, c6a2d65.
+  (the `edition` CLI prints `"existing": true`).
 - **Shutdown.** A dedicated edition wait group means `Shutdown` first cancels running syncs and then drains in-flight
-  creates (f6b79c9); a draft holds no admission gate (it only refuses to start once shutdown or profile deletion has
+  creates; a draft holds no admission gate (it only refuses to start once shutdown or profile deletion has
   begun). Profile deletion still waits for an in-flight create (documented tradeoff).
 - **Response write deadline.** The two routes use `audiobookshelf.RequestTimeout` (30s) + `EditionCreateTimeout` (2m) +
-  15s, which required adding `Unwrap()` to the logger middleware's response writer (6151e70, 71eadba).
-- **Small cleanups.** Blank titles are rejected (422); `Draft.ToInput` was removed as unused (2a1a3d7).
-- **ISBN helpers.** New leaf package `internal/isbn` (f703cb5): `Normalize`, and `Parse` with 978 <-> ISBN-10
+  15s, which required adding `Unwrap()` to the logger middleware's response writer.
+- **Small cleanups.** Blank titles are rejected (422); `Draft.ToInput` was removed as unused.
+- **ISBN helpers.** New leaf package `internal/isbn`: `Normalize`, and `Parse` with 978 <-> ISBN-10
   conversion; the counterpart form is derived only when the input checksum is valid, and a 979 ISBN-13 has no ISBN-10.
-- **Hyphenated-ISBN fix (15e0d05).** The old length-only ISBN split in `mismatch.AddWithMetadata` dropped hyphenated
+- **Hyphenated-ISBN fix.** The old length-only ISBN split in `mismatch.AddWithMetadata` dropped hyphenated
   ISBNs from the mismatch export and the draft. It now uses `internal/isbn`, and the draft also fills the derived
   counterpart form.
-- **Identifier requirement (c156853, fd9510b).** A book whose Audiobookshelf item has neither an ASIN nor a parseable
+- **Identifier requirement.** A book whose Audiobookshelf item has neither an ASIN nor a parseable
   ISBN gets 409 (`ErrEditionNoIdentifier`, fixed message) on both the draft and the create route, before any Hardcover
   call. A create request needs at least one of `asin`, `isbn_10`, `isbn_13` (422), and its ISBNs are normalized and
   shape-checked. Such books can still be `needs_review` through the title/author match but can never be auto-matched,
   so an edition created for them could never help a sync.
-- **Proactive duplicate detection (f5ff579).** Before inserting, the creator looks up an existing edition by ASIN, then
+- **Proactive duplicate detection.** Before inserting, the creator looks up an existing edition by ASIN, then
   ISBN-13, then ISBN-10, then the derived counterpart forms (audiobook format only; up to three extra reads; skipped in
   dry run). The "already exists" insert-error fallback remains as a safety net. `GetEditionByISBN10` was added to
   `hardcover.Client`.
 - **Format and publisher.** `edition_format` is honored by the creator (trimmed, fallback "Audiobook", at most 100
   characters else 422), which also affects the `edition` CLI. The mismatch export's unresolved publisher is 0 instead of
-  1, and a publisher resolved during export is exported (bbfb8f1, 9cd84b0).
+  1, and a publisher resolved during export is exported.
 - **Response shape.** The create response is `{edition_id, dry_run, warnings}`; `warnings` carries one fixed message if
   the cover could not be uploaded (`EditionResult.ImageError` internally).
 
 ### Review of fork PR #20 (CodeRabbit)
 
-- **F1**, publisher ID stale in `ToEditionExport`: fixed (9cd84b0).
+- **F1**, publisher ID stale in `ToEditionExport`: fixed.
 - **F2**, the shutdown wait: fixed (see Shutdown above).
 - **F3**, the pre-existing CLI-only `CheckRedirect` in `edition.NewCreator` copying `Authorization` to redirects:
   skipped for this PR as pre-existing; a candidate for a separate small PR.
@@ -548,10 +526,9 @@ combined branch was split"). The threads are re-checked in whichever step's fork
 
 ## Step 5 implementation notes
 
-Branch `step_5_needs_review_add_edition`, formerly `feature/sync-identifier-matching` (4 commits over the old combined-branch tip 8248c1a: 5190293, 378bbc7, 08492ac,
-e03754a; on `origin` at e03754a, no PR yet). It is about 500 added lines, of which about 335 are tests. **It has not been
+Branch `step_5_needs_review_add_edition`, formerly `feature/sync-identifier-matching`. It is about 500 added lines, of which about 335 are tests. **It has not been
 rebased onto the current combined branch, and the plan now stacks it on step 1 only** (it needs `internal/isbn`), so
-its rebase target is step 1's branch (and `develop` eb50565 with #190). #190 (ebook detection and matching) changed
+its rebase target is step 1's branch (and current `develop`, which has #190). #190 (ebook detection and matching) changed
 the same two files, `internal/sync/service.go` and `internal/api/hardcover/client.go` (it added the reading-format
 context and format-aware ASIN/ISBN filters), so expect conflicts there, and step 1 also touches `service.go` (the
 `book.ReadingFormat()` calls). Re-check the "unchanged by decision" claim below (the reading-format filters) against
@@ -572,7 +549,7 @@ the new code. The reading-format context helper now lives in `internal/models` (
   not changed).
 - **Unchanged by decision.** The strict same-format rule and every reading-format filter (the query text is
   byte-identical), the title/author flow, `processFoundBook`, the ASIN cache and `canonical_id`.
-- **Removed: `order_by: { id: asc }`.** A deterministic-ordering addition was tried and removed (e03754a) because it could
+- **Removed: `order_by: { id: asc }`.** A deterministic-ordering addition was tried and removed because it could
   not be verified against the hosted Hardcover API, and `AGENTS.md` warns that the hosted API disables some schema
   operators; a rejection would fail every ASIN/ISBN lookup.
 - **Behavior changes versus the base**, all rated improvements by the validator: the given form is searched first, then
@@ -585,7 +562,7 @@ the new code. The reading-format context helper now lives in `internal/models` (
   `fix/ebook-detection-and-matching` (someone else's ebook detection work), showed only a CHANGELOG conflict; the code
   auto-merges, builds and passes tests, and its intent is compatible with the strict same-format rule.
 - **Known follow-ups.** An ASIN-query test does not guard the format filter; one CHANGELOG sentence about bad-checksum
-  ISBNs could be tighter; commit 5190293's message still mentions ordering; `mismatch.AddWithMetadata`'s own enrichment
+  ISBNs could be tighter; `mismatch.AddWithMetadata`'s own enrichment
   searches do not try the counterpart form (out of scope).
 - **Not verified:** nothing ran against real Hardcover.
 
