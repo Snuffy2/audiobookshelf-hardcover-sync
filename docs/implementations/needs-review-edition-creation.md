@@ -95,14 +95,11 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       without a cover), `insert_image`, WebP rejection, Hardcover's own duplicate rejection on insert, and live Audnex. Say what is
       untested in each PR's testing notes for steps 2-4, and repeat the live check before the upstream PRs for steps 2-4 if the
       owner wants one.
-- [ ] **Hardcover token scopes.** The key that adds editions needs `read:library`, `write:library`, `read:catalog` and one of
-      `write:catalog:append`, `write:catalog` or `write:catalog:edit` (the last group is what `insert_edition`, `insert_image` and
-      `update_edition` need). The owner reports the library scopes are required too; Hardcover's capability table lists only the
-      `write:catalog*` scopes for those mutations and our create path only queries `books` and `editions`, so confirm the library
-      scopes by trying a key without them. Without a write catalog scope Hardcover answers `403 insufficient_scope` ("Missing scopes:
+- [ ] **Hardcover token scopes.** The key that adds editions needs `read:library`, `write:library`, `read:catalog` and
+      `write:catalog:append`. Without `write:catalog:append` Hardcover answers `403 insufficient_scope` ("Missing scopes:
       write:catalog:append") and nothing is created; this was seen against the real API. The sync service's token (`read:library`,
-      `read:catalog`, `read:lists`, `read:me`, `write:library`) lacks the catalog write scope, and the app creates editions with the
-      profile's Hardcover token, so users must create a key that adds it. Each step documents what it delivers: step 2 in `cmd/edition/README.md`, step 4 in the README
+      `read:catalog`, `read:lists`, `read:me`, `write:library`) lacks it, and the app creates editions with the profile's Hardcover
+      token, so users must create a key that adds it. Each step documents what it delivers: step 2 in `cmd/edition/README.md`, step 4 in the README
       prerequisites, `docs/openapi.yaml` and a clear error for the 403, and step 7 in the UI message and the README note (see
       those checklists).
 - [ ] **Crosswalk:** the PR description names the crosswalk rows (R-numbers) the step delivers and verifies, taken from the
@@ -281,7 +278,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Re-check CodeRabbit item F2 (the shutdown drain of in-flight creates) against this step's code.
 
 - [ ] Token scope for create: the endpoint creates the edition with the profile's Hardcover token, which needs `write:catalog:append`
-      (or `write:catalog` or `write:catalog:edit`) on top of the sync scopes, and existing profiles' tokens will not have it. Map
+      on top of the sync scopes, and existing profiles' tokens will not have it. Map
       Hardcover's `403 insufficient_scope` to a clear, fixed error response (no token, scope list or other remote text), and test it at
       the HTTP boundary with a stub that returns that 403: nothing is created and the call is not retried.
 - [ ] Document the scope where step 4 documents the endpoint: the README Prerequisites (add the write scope to the Hardcover token line,

@@ -127,10 +127,9 @@ Points about the target that shape the mapping:
   supported**, and larger is better (at least 300x450 for the top quality tier). Against the real API with an API token the
   storage-credentials call to `hardcover.app/api/upload/google` answered `401` (a plain HTTP client gets a Cloudflare challenge), so the
   cover step could not complete and the edition was created without it; Hardcover itself attached a cover from the ISBN to an ebook edition.
-- **Permissions** (confirmed): Hardcover's `capabilities.json` lists `insert_edition`, `insert_image` and
-  `update_edition` under the `write:catalog`, `write:catalog:append` and `write:catalog:edit` scopes (any one is enough), and
-  `read:catalog` covers the lookups. A token without a write scope is refused with `403 insufficient_scope` ("Missing scopes:
-  write:catalog:append") and nothing is created; with `write:catalog:append` the insert succeeds. The sync token's scopes
+- **Permissions** (confirmed): creating an edition needs `write:catalog:append`, and `read:catalog` covers the lookups. A token
+  without it is refused with `403 insufficient_scope` ("Missing scopes: write:catalog:append") and nothing is created; with it the
+  insert succeeds. The sync token's scopes
   (`read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`) do not include it, so creating an edition needs a
   second key or an added scope, and the docs for each step say so (see the plan's "Token scopes" items). The owner reports that
   the key also needs `read:library` and `write:library`; the capability table does not list them for these mutations and the create
@@ -138,7 +137,7 @@ Points about the target that shape the mapping:
 - **Not settable on an edition**: description, series, genres and tags are book-level (`BookDtoType`), and there is no
   physical-format field in `BookDtoInput`. There is no external-mappings field either: `EditionInput` is `{ book_id, dto, locked }`
   and `BookDtoInput` holds only edition metadata. External mappings are the separate `book_mappings` table, written by
-  `insert_book_mapping(object: { edition_id, external_id, platform_id })`, which needs `write:catalog:map` (or `write:catalog`), not
+  `insert_book_mapping(object: { edition_id, external_id, platform_id })`, which needs `write:catalog:map`, not
   `write:catalog:append`. Platform 32 is `Audible` and 19 is `amazon`. Our matching does not need one: the ASIN search already
   matches `editions.asin`, and also `book_mappings` with platform `Audible`. Adding a mapping would be a second call and a further
   scope, so it is out of scope for these steps.
@@ -536,7 +535,7 @@ which step decides it.
    stores it as `Audible`. Its draft FAQ says the field should describe the edition and is usually blank.
 7. **Audnex for ebooks** (step 3, minor). An ebook's Kindle ASIN still triggers up to two Audnex calls (sharing one 15 s cap) that are not expected to
    resolve; the draft could skip Audnex for ebooks.
-8. **Token scope** (every step, confirmed). Creating an edition needs `write:catalog:append` (or `write:catalog` / `write:catalog:edit`); see the permissions bullet in section 3 and the plan's token-scope items.
+8. **Token scope** (every step, confirmed). Creating an edition needs `write:catalog:append`; see the permissions bullet in section 3 and the plan's token-scope items.
 9. **Exact-match people and publisher lookups** (steps 3 and 7). A name that differs by a space or a period matches
    nothing; a narrator needs an earlier `Narrator` credit; `canonical_id` is ignored; and no ordering is requested. When
    no author matches, create fails and the step 7 UI has no way to supply one. Decide between a UI path for entering a
