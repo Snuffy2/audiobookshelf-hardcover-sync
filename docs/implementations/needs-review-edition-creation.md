@@ -43,7 +43,7 @@ can follow as soon as step 1 has merged, in parallel with steps 2-4. Step 6 need
 matching (5) merged, and step 7 needs step 6. Step 6 also needs `develop` at or after a2ad4b4 (#188 changed
 `internal/sync/service.go`, which `SyncBook` will call into). After step 4 the feature is usable with curl; step 7 is the
 first thing a user sees. Steps 6 and 7 build on the create response shape from step 4, so a change requested in step 4's
-review carries into them. Each step's CHANGELOG lines carry its own upstream PR number as `(#NNN)`, added when that
+review carries into them. Each step's single CHANGELOG bullet carries its own upstream PR number as `(#NNN)`, added when that
 upstream PR is created; fork PR numbers such as #20 are not that number.
 
 ## Step checklists
@@ -62,20 +62,26 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       asked), then report the disposition of each item.
 - [ ] When a step merges upstream: strike it through in the block below (and leave its text unedited), update this tracker, and
       rebase the next step onto the new upstream `develop`.
+- [ ] **CHANGELOG.md: exactly ONE bullet per PR.** The whole step goes into a single `[Unreleased]` bullet, in the one section
+      (Added, Changed or Fixed) that fits it best, in the repo's style: `**Short title**: what it delivers and any behavior
+      that changes. By @Snuffy2 (#NNN)`. Side effects that would otherwise be extra bullets (a changed default, a fixed
+      bug) are folded into that bullet's text. Never edit or remove an earlier step's bullet.
 - [ ] The CHANGELOG `(#NNN)` is the upstream PR number; add it only when that upstream PR exists.
 - [ ] Nothing here has run against real Hardcover (image upload, `insert_edition`, its duplicate behavior for ISBN/ASIN, and
       the ebook reading format id 4 with the `Ebook` label) or live Audnex. Say so in each PR's testing notes for steps 2-4,
       and do a manual check against a real Hardcover account before the upstream PRs for steps 2-4 if the owner wants one.
 
 **Step 1** (fork PR #24 is open)
+- [ ] Collapse this step's three CHANGELOG bullets (hyphenated ISBNs, unresolved publisher, ebook export) into one bullet, per
+      the one-bullet-per-PR rule, and push that to fork PR #24.
 - [ ] Read the CodeRabbit feedback on #24 and address the valid items (F1, the stale publisher ID in `ToEditionExport`, is
       already fixed in this step).
 - [ ] The PR body says `isbn.Result.ISBN10()/ISBN13()/Counterpart` have their first production caller in step 2; keep that note.
 
 **Step 2** (`edition` CLI behavior changes)
-- [ ] Add CHANGELOG lines for the Audiobookshelf token scoping (`SetAudiobookshelfBaseURL`) and the cover-upload failure
-      signal (`EditionResult.ImageError`, and `Existing` in the `edition` command's JSON output). Neither branch nor the old
-      combined branch has them.
+- [ ] Collapse this step's CHANGELOG bullets into ONE bullet (one-bullet-per-PR rule) that also covers the Audiobookshelf token
+      scoping (`SetAudiobookshelfBaseURL`) and the cover-upload failure signal (`EditionResult.ImageError`, and `Existing` in
+      the `edition` command's JSON output), which no branch had a line for.
 - [ ] The fork PR description says `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4 (`internal/multiuser`), so
       token scoping is tested here but inert for the `edition` CLI until then; and that the `edition` command's behavior changes
       (honored `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`).
@@ -83,8 +89,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       to redirects. Either fix it here or open a separate small PR (owner's choice); do not let it drop.
 
 **Step 3**
-- [ ] Have the CHANGELOG lines carry their final wording where possible, so step 4's CHANGELOG diff is additive instead of
-      reshuffling earlier lines (today step 4 replaces step 3's draft-only entry and folds step 2's ebook line into step 1's).
+- [ ] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
+      the step 1 bullet: step 3 currently rewrites step 1's hyphenated-ISBN line, which the rule forbids.
 - [ ] The PR description says the response write-deadline mechanism (`extendEditionWriteDeadline`, `Unwrap()` in the logger, and
       `multiuser.EditionCreateTimeout`) lives here because a draft makes many paced Hardcover lookups, and that
       `internal/edition/editiontest` includes helpers first used in step 4 (`HoldInsert`, `HoldSearches`, `FailWith`).
@@ -92,8 +98,11 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       so step 4 stays additive; reword them only if it does not make step 4 non-additive.
 
 **Step 4**
-- [ ] The PR description says its CHANGELOG diff also reshuffles a few earlier lines into the single combined entry, and that
-      `CreateEditionFromRunBook` has no caller until the handler commit (consider squashing those two commits).
+- [ ] Its CHANGELOG diff must be ONE new bullet for the create endpoint (one-bullet-per-PR rule) and must not touch earlier
+      steps' bullets; today it replaces step 3's entry and reshuffles steps 1-2's lines, so redo that hunk. This means step 4's
+      tree will no longer equal the old combined branch's tree in `CHANGELOG.md`, which is intended.
+- [ ] The PR description says `CreateEditionFromRunBook` has no caller until the handler commit (consider squashing those two
+      commits).
 - [ ] Re-check CodeRabbit item F2 (the shutdown drain of in-flight creates) against this step's code.
 
 **Step 5** (built; needs work before its fork PR)
@@ -101,7 +110,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       `internal/sync/service.go` and `internal/api/hardcover/client.go`; re-check the "unchanged by decision" claims (the
       reading-format filters) against the current code; re-run all gates.
 - [ ] Add a test that the ASIN query keeps its reading-format filter (currently only the ISBN queries are guarded).
-- [ ] Tighten the CHANGELOG sentence about bad-checksum ISBNs.
+- [ ] Keep step 5's CHANGELOG to ONE bullet (it has one today) and tighten its sentence about bad-checksum ISBNs.
 - [ ] Reword commit 5190293's message (it still mentions ordering, which was removed), while rebasing.
 - [ ] `mismatch.AddWithMetadata`'s own enrichment searches do not try the converted ISBN form; decide whether to include it or
       leave it out of scope, and note the decision.
@@ -265,19 +274,19 @@ Where the files actually went (differs slightly from the first plan):
 - **Step 1:** `internal/isbn/`, `internal/models/reading_format*.go` (helpers and the `AudiobookshelfBook.ReadingFormat`
   method), `internal/mismatch/` (hyphenated ISBN, publisher default and captured ID, ebook export, removal of the unused
   `ToEditionInput`), the reading-format delegation in `internal/api/hardcover/client.go`, the `book.ReadingFormat()` calls
-  in `internal/sync/service.go`, and its CHANGELOG lines.
+  in `internal/sync/service.go`, and its CHANGELOG bullet (to be collapsed to one, see the checklist).
 - **Step 2:** `internal/edition/creator.go` and its tests, `GetEditionByISBN10` in `internal/api/hardcover/client.go`,
-  `cmd/edition/README.md`, and its CHANGELOG lines.
+  `cmd/edition/README.md`, and its CHANGELOG bullet (to be collapsed to one, see the checklist).
 - **Step 3:** `internal/api/audiobookshelf/client.go` (+ test), `internal/edition/draft/`, `internal/edition/editiontest/`
   (the whole shared-fakes package), the draft half of `internal/multiuser/edition.go` and `service.go`
   (`newHardcoverClient`, `admissionErrorLocked`, `checkEditionAdmission`), `GetEditionDraft` and its route, and **the
   response write-deadline mechanism** (`extendEditionWriteDeadline`, `editionWriteDeadline`, `Unwrap()` in
   `internal/logger/logger.go`, and `multiuser.EditionCreateTimeout`), because a draft makes many paced Hardcover lookups and
-  needs the extended deadline too. The draft docs and its CHANGELOG entry.
+  needs the extended deadline too. The draft docs and its CHANGELOG bullet.
 - **Step 4:** the create half of `internal/multiuser/edition.go` and `service.go` (validation, in-flight guard, edition wait
   group and `Shutdown` drain), the POST route and `CreateEdition` handler, the create, cover and shutdown tests, and the
-  create docs. It restores the wording that steps 1-3 had narrowed, so its CHANGELOG diff also reshuffles a few earlier
-  lines into the single combined "Create a Hardcover edition" entry.
+  create docs. It restores the docs wording that steps 1-3 had narrowed. Its CHANGELOG diff currently also reshuffles earlier steps'
+  lines, which the one-bullet-per-PR rule forbids; that is a checklist item to redo.
 
 The follow-ups found while splitting are tracked as checkboxes in "Step checklists" near the top of this document, under the
 step they belong to.
@@ -719,11 +728,9 @@ the same format only, so a repeat submit normally returns the existing edition. 
 ## Docs (each step documents only what it delivers)
 
 - **Steps 1-4:** `README.md` two endpoint rows (draft in step 3, create in step 4, no resync) and a short API note (identifier requirement,
-  ISBN matching, hyphen handling); `docs/openapi.yaml` for both operations; `CHANGELOG.md` `[Unreleased]` -> `### Added`,
-  plus `### Changed`/`### Fixed` lines for the publisher export default, the honored `edition_format`, the hyphenated
-  ISBN fix and the cross-book guard, plus the ebook support (`reading_format`, the mismatch export change, and the
-  `edition` CLI field). Each step adds only the lines for what it delivers: the export fixes in step 1, the creator changes in step 2, and
-  the draft and create endpoints (README, OpenAPI) in steps 3 and 4.
+  ISBN matching, hyphen handling); `docs/openapi.yaml` for both operations. `CHANGELOG.md` gets exactly ONE bullet per step (see
+  the one-bullet-per-PR rule in "Step checklists"); the earlier plan of several Added/Changed/Fixed lines for these steps is
+  replaced by that.
 - **Step 5:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
 - **Step 6:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
 - **Step 7:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
