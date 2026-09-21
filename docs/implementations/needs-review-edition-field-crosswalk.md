@@ -132,9 +132,16 @@ Points about the target that shape the mapping:
   `read:catalog` covers the lookups. A token without a write scope is refused with `403 insufficient_scope` ("Missing scopes:
   write:catalog:append") and nothing is created; with `write:catalog:append` the insert succeeds. The sync token's scopes
   (`read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`) do not include it, so creating an edition needs a
-  second key or an added scope, and the docs for each step say so (see the plan's "Token scopes" items).
+  second key or an added scope, and the docs for each step say so (see the plan's "Token scopes" items). The owner reports that
+  the key also needs `read:library` and `write:library`; the capability table does not list them for these mutations and the create
+  path only reads `books` and `editions`, so that is to be confirmed with a key that lacks them.
 - **Not settable on an edition**: description, series, genres and tags are book-level (`BookDtoType`), and there is no
-  physical-format field in `BookDtoInput`.
+  physical-format field in `BookDtoInput`. There is no external-mappings field either: `EditionInput` is `{ book_id, dto, locked }`
+  and `BookDtoInput` holds only edition metadata. External mappings are the separate `book_mappings` table, written by
+  `insert_book_mapping(object: { edition_id, external_id, platform_id })`, which needs `write:catalog:map` (or `write:catalog`), not
+  `write:catalog:append`. Platform 32 is `Audible` and 19 is `amazon`. Our matching does not need one: the ASIN search already
+  matches `editions.asin`, and also `book_mappings` with platform `Audible`. Adding a mapping would be a second call and a further
+  scope, so it is out of scope for these steps.
 
 ## 4. The crosswalk
 
