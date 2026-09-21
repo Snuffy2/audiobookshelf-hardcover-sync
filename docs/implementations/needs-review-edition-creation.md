@@ -86,12 +86,23 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       that changes. By @Snuffy2 (#NNN)`. Side effects that would otherwise be extra bullets (a changed default, a fixed
       bug) are folded into that bullet's text. Never edit or remove an earlier step's bullet.
 - [ ] The CHANGELOG `(#NNN)` is the upstream PR number; add it only when that upstream PR exists.
-- [ ] Nothing here has run against real Hardcover (image upload, `insert_edition`, its duplicate behavior for ISBN/ASIN, and
-      the ebook reading format id 4 with the `Ebook` label) or live Audnex. Say so in each PR's testing notes for steps 2-4,
-      and do a manual check against a real Hardcover account before the upstream PRs for steps 2-4 if the owner wants one.
-      Also unchecked: that an ordinary Hardcover token may call `insert_edition` and `insert_image` (Hardcover's
-      capabilities file lists them under `write:catalog*` scopes), and that `language_id` 1 and `country_id` 1 are English
-      and the United States (see the crosswalk).
+- [ ] Live-API status, checked on a librarian-deletable test book with a token that has `read:catalog` and `write:catalog:append`:
+      `insert_edition` works for an audiobook and for an ebook (reading format 4, label `Ebook`); duplicate detection finds an
+      existing audiobook edition by ASIN and reuses it; a bad-checksum ISBN is accepted and stored flagged invalid; hyphens are
+      stripped on write; a valid ISBN-10 alone also stores the derived ISBN-13; Hardcover normalizes the format label (`Audible
+      Audio` was stored as `Audible`); `language_id` 1 and `country_id` 1 are English and the United States. **Not working or
+      untested:** the cover upload (`hardcover.app/api/upload/google` answered 401 to an API token, so the edition was created
+      without a cover), `insert_image`, WebP rejection, Hardcover's own duplicate rejection on insert, and live Audnex. Say what is
+      untested in each PR's testing notes for steps 2-4, and repeat the live check before the upstream PRs for steps 2-4 if the
+      owner wants one.
+- [ ] **Hardcover token scopes.** Creating an edition needs a token with one of `write:catalog:append`, `write:catalog` or
+      `write:catalog:edit` (for `insert_edition`, `insert_image` and `update_edition`), plus `read:catalog` for the lookups. Without a
+      write scope Hardcover answers `403 insufficient_scope` ("Missing scopes: write:catalog:append") and nothing is created; this
+      was seen against the real API. The sync service's token (`read:library`, `read:catalog`, `read:lists`, `read:me`,
+      `write:library`) does not have it, and the app creates editions with the profile's Hardcover token, so users must create a
+      key with the extra scope. Each step documents what it delivers: step 2 in `cmd/edition/README.md`, step 4 in the README
+      prerequisites, `docs/openapi.yaml` and a clear error for the 403, and step 7 in the UI message and the README note (see
+      those checklists).
 - [ ] **Crosswalk:** the PR description names the crosswalk rows (R-numbers) the step delivers and verifies, taken from the
       "Crosswalk scope by step" table above; the step's tests cover each delivered row's edge cases from the crosswalk's
       section 5, at a real interface (the GraphQL variables sent, the HTTP response, the export JSON), not implementation
@@ -125,8 +136,9 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
     **Confirmed against the hosted API** with read-only queries (the maintainer asked): the two fields exist on `editions`, they
     are `null` for an empty ISBN, they matched `internal/isbn`'s checksum on all 27 sampled values, and an exact lookup matches
     only the stored, hyphen-free value (details in the crosswalk's R5 and R6 field note). The checked-in schema snapshot does not
-    list the fields. **Not tested:** whether `insert_edition` accepts a bad checksum, whether Hardcover strips hyphens on write,
-    and how often Audiobookshelf serves a bad checksum. The open part (warn or reject on a `false` flag when drafting or
+    list the fields. A write to a test book also confirmed that `insert_edition` accepts a bad-checksum ISBN-13 and stores it
+    flagged `false`, and that Hardcover strips hyphens on write. **Not tested:** how often Audiobookshelf serves a bad
+    checksum. The open part (warn or reject on a `false` flag when drafting or
     creating) is queued under steps 3 and 4.
   - **Q2, ebook with an audiobook label: fixed.** `ToEditionExport` now forces `Ebook` for any ebook record (R11 says
     `Ebook`), with a test over `""`, `Audiobook`, `Audible Audio` and `libro.fm`.
@@ -177,9 +189,10 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       (`internal/multiuser`), so token scoping is tested here but inert for the `edition` and `image-tool` commands, which keep the
       legacy "URL contains `audiobookshelf`" heuristic, until then; the `edition` command's behavior changes (honored
       `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`); the redirect
-      and cover-rule changes also affect `image-tool`; the crosswalk rows delivered (R1-R17 on the Hardcover side); and that
-      nothing has run against real Hardcover (including whether it strips hyphens from an ISBN itself, `insert_edition`
-      scopes, and its real cover limits).
+      and cover-rule changes also affect `image-tool`; the crosswalk rows delivered (R1-R17 on the Hardcover side); the
+      token scopes the `edition` command needs (`read:catalog` and `write:catalog:append`); and the live-API status from "Every
+      step": it ran against a test book except the cover upload, which Hardcover rejected with a 401 for an API token, and its
+      real cover limits are unknown.
 - [ ] Known limits to state in the PR, all decided as acceptable for this step: duplicate lookups treat any lookup error as "not
       found" (`develop` already did this for the ASIN lookup, without a cross-book check); a dry run skips the lookups, so it
       does not report a would-be cross-book conflict; the same-book check compares book IDs literally, so a merged or canonical
@@ -188,6 +201,18 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Step 1's CHANGELOG bullet says the `edition` command does not read `reading_format` yet, which step 2 makes false. The
       one-bullet rule forbids editing an earlier step's bullet, so decide before step 2 goes upstream: amend step 1's bullet, or
       accept the mismatch and say so in the step 2 PR.
+- [x] `cmd/edition/README.md` documents the token scopes (`read:catalog` and `write:catalog:append`, with a link that pre-selects
+      them), the `403 insufficient_scope` error, and that the cover step is best effort.
+- [ ] Decide the cover upload. The creator asks `hardcover.app/api/upload/google` for storage credentials with browser-style headers
+      and the API token; against the real API that answered `401` (a plain HTTP client gets a Cloudflare challenge). The endpoint is
+      not part of the documented GraphQL API, so with an API token the cover step cannot be relied on: the edition is still created and
+      `image_error` says so, and Hardcover attached a cover itself from the ISBN on the ebook edition. Options: keep it best effort
+      (current, documented), check whether `insert_image` accepts an external image URL (a write that has not been tried), or drop the
+      cover upload. Decide before step 4, whose create response promises a `warnings` entry for a failed cover.
+- [ ] `cmd/edition/README.md` says the token is set as the `HARDCOVER_TOKEN` environment variable, but the command loads
+      `config.yaml` with `config.LoadFromFile`, which ignores the environment: with only the variable set, every request failed with
+      "Token cannot be blank", and the file must exist. Fix the README (the token is `hardcover.token` in `config.yaml`) or make the
+      command honor the variable; the owner decides. `LoadFromFile` also logs the first 500 bytes of the file at debug level.
 
 **Step 3**
 - [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
@@ -223,12 +248,16 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       JSON field disappears from a file users see (check `BookMismatch`'s `edition_information` in the status API first).
 - [ ] ISBN checksum flags from step 1: the export carries `isbn_10_valid` / `isbn_13_valid`. Decide what the draft does with a
       `false` one (a warning next to the ISBN field is the smallest change that loses nothing) and expose the flag in the draft;
-      check with a real Hardcover token first whether `insert_edition` accepts a bad checksum: the flags and their behavior on
-      read are confirmed (see the crosswalk), but no write has been tried. The raw `isbn` stays on the record, so the value is
-      never lost.
+      `insert_edition` accepts a bad checksum (confirmed with a write to a test book), so a `false` flag is a warning, not a blocker.
+      The raw `isbn` stays on the record, so the value is never lost.
 - [ ] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
       `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
       or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
+
+- [ ] Token scopes for the draft: the draft only reads (the ABS item and Hardcover lookups), so it should need only the read scopes the
+      sync token already has; confirm that against the real API and say in the endpoint docs that previewing needs no write scope. A
+      preview's `edition_format` can differ from what Hardcover stores, because it normalizes known labels on write (`Audible Audio` was
+      stored as `Audible`).
 
 **Step 4**
 - [ ] Crosswalk scope ([section 5, Step 4](needs-review-edition-field-crosswalk.md#step-4-create-endpoint)): the editable
@@ -249,11 +278,20 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       commits).
 - [ ] Re-check CodeRabbit item F2 (the shutdown drain of in-flight creates) against this step's code.
 
+- [ ] Token scope for create: the endpoint creates the edition with the profile's Hardcover token, which needs `write:catalog:append`
+      (or `write:catalog` or `write:catalog:edit`) on top of the sync scopes, and existing profiles' tokens will not have it. Map
+      Hardcover's `403 insufficient_scope` to a clear, fixed error response (no token, scope list or other remote text), and test it at
+      the HTTP boundary with a stub that returns that 403: nothing is created and the call is not retried.
+- [ ] Document the scope where step 4 documents the endpoint: the README Prerequisites (add the write scope to the Hardcover token line,
+      with the pre-selecting link `https://hardcover.app/account/api/keys/new?scope=read%3Acatalog+write%3Acatalog%3Aappend`), the API
+      note, `docs/openapi.yaml` (the 403 response for create, and that the draft needs no write scope) and the one CHANGELOG bullet.
+
 **Step 5** (built; needs work before its fork PR)
 - [ ] Crosswalk scope ([section 5, Step 5](needs-review-edition-field-crosswalk.md#step-5-sync-identifier-matching)): the
       sync must find every edition shape the crosswalk can create, so add one matching test each for: ASIN only; ISBN-10
-      only; ISBN-13 only; both ISBNs; an ISBN-13 with no derivable ISBN-10; an ebook (R4-R6, R12). The created edition can
-      hold just one ISBN form, so matching must not depend on both. This includes the ASIN reading-format test below.
+      only; ISBN-13 only; both ISBNs; an ISBN-13 with no derivable ISBN-10; an ebook (R4-R6, R12). Hardcover derives the other
+      ISBN form when the given ISBN is valid (an ISBN-10-only insert also stored the matching ISBN-13, flagged valid; a bad-checksum
+      ISBN-13 got no ISBN-10), but matching must still not depend on both forms being present. This includes the ASIN reading-format test below.
 - [ ] Rebase `step_5_needs_review_add_edition` onto `step_1_needs_review_add_edition`; expect conflicts with #190 in
       `internal/sync/service.go` and `internal/api/hardcover/client.go`; re-check the "unchanged by decision" claims (the
       reading-format filters) against the current code; re-run all gates.
@@ -285,6 +323,11 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] Crosswalk finding 9: when no Hardcover author matches, create fails (an author is required) and the preview has no way
       to supply one. Decide between letting the user enter or search a Hardcover author, or showing a clear "cannot create
       an edition for this book" state instead of an enabled Create button.
+
+- [ ] Token scope in the UI and its docs: when create fails for a missing scope, show a clear message that the profile's Hardcover token
+      cannot add editions, name `write:catalog:append`, and say how to create a key with it and update the profile token (link to
+      `https://hardcover.app/account/api/keys/new?scope=read%3Acatalog+write%3Acatalog%3Aappend`); test the message; put the same note in
+      the user-facing README section.
 
 **Known, unrelated**
 - [ ] `TestProcessBookSnapshotKeepsEnrichedSecondLookupFailure` is flaky on the second run of `-count>=2` (shared
@@ -487,7 +530,7 @@ Hardcover and Audiobookshelf test fakes (service, API and server tests) became o
 - **Edition format fix.** `Creator.createEdition` previously hardcoded `edition_format: "Audiobook"` and
   ignored `EditionInput.EditionFormat`. It now sends the trimmed requested format and falls back to "Audiobook" when
   empty; `reading_format_id` stays 2. This also changes the behavior of the `edition` CLI. The Hardcover schema shows
-  `BookDtoInput.edition_format` is a free-text String.
+  `BookDtoInput.edition_format` is a String, but Hardcover normalizes known labels on write (`Audible Audio` was stored as `Audible`).
 - **Cover failure signal.** Cover upload failures were previously swallowed. `EditionResult` now has an
   additive `ImageError` (`image_error,omitempty`, a fixed step label only), and the POST response carries a
   `warnings` array (see Backend 6). The status is still 200 when only the cover failed.
@@ -501,8 +544,8 @@ Hardcover and Audiobookshelf test fakes (service, API and server tests) became o
   `make lint` passes only with the CI-matching Go 1.26.7 toolchain first on `PATH`; the default Go 1.27.1 cannot
   typecheck the repo with the pinned golangci-lint. A blind adversarial review returned PASSED and the claim audit
   returned CLEAR after three iterations; the create-side requirements added afterwards were validated PASS again.
-- **Not exercised:** nothing ran against real Hardcover (image upload, `insert_edition`, its duplicate handling) or
-  live Audnex.
+- **Not exercised at the time:** nothing ran against real Hardcover or live Audnex. A later live run on a test book covered
+  `insert_edition`, duplicate detection and the formats; the cover upload was rejected (see "Every step").
 
 ### Added after the first validation
 
@@ -661,10 +704,9 @@ What steps 1-4 do now (creator in step 2, export in step 1, draft in step 3, cre
   (ebook and audiobook fields, format-scoped lookups, invalid format), the mismatch export, the draft, and the API
   (ebook draft and create, a request that tries to set `reading_format`).
 
-Still not verified against live Hardcover: that `insert_edition` accepts `reading_format_id: 4` with the `Ebook`
-edition format label, and that its ISBN/ASIN duplicate behavior for ebooks matches the audiobook case. The format
-filters on the lookups are covered only through fakes. Kindle ASINs for ebooks are not checked against Audible-only
-lookups.
+Verified live: `insert_edition` accepts `reading_format_id: 4` with the `Ebook` edition format label and stores it as sent. Still
+not verified: the duplicate behavior for ebooks (only the audiobook case was re-run), the format filters on the lookups beyond
+that, and Kindle ASINs for ebooks against Audible-only lookups.
 
 For the step 7 UI: show the draft's `reading_format` in the preview so the user can see whether an audiobook or an
 ebook edition will be created, and hide the narrator and duration fields for an ebook.
@@ -896,6 +938,9 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
   the one-bullet-per-PR rule in "Step checklists"); the earlier plan of several Added/Changed/Fixed lines for these steps is
   replaced by that.
 - **Step 5:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
+- **Token scope (steps 2, 4, 7):** step 2 documents the scopes in `cmd/edition/README.md`; step 4 adds the write scope to the README
+  Prerequisites, the API note and `docs/openapi.yaml` (the 403 response) and covers it in its one CHANGELOG bullet; step 7 documents it
+  in the user-facing note and the UI message. The draft (step 3) needs no write scope.
 - **Step 6:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
 - **Step 7:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
   read-status resync, dry-run behavior, the Known limitation); CHANGELOG entry.
@@ -916,3 +961,7 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
    automated verification — I will state that explicitly in each handoff.
 6. Commit locally on the step's branch; report that nothing
    was pushed.
+7. Live-API checks (optional, on the owner's command): use a scratch book whose editions the owner can delete, and a Hardcover key with
+   `read:catalog` and `write:catalog:append`. Create only what is needed, keep every id so it can be deleted, and never print or commit the
+   token. The `edition` command reads its token only from `config.yaml`, so keep that file outside any repository, delete it afterwards, and put
+   the token below the first 500 bytes because the loader logs that much at debug level.

@@ -110,24 +110,29 @@ Points about the target that shape the mapping:
   contribution). The tool itself requires `book_id`, a title and at least one author (`EditionInput.Validate`), and our
   create endpoint also requires an ASIN or ISBN so a later sync can match the edition.
 - **`reading_format_id`**: 1 Physical, 2 Audio, 3 Both, 4 Ebook (Hardcover field docs). The tool sends 2 or 4.
-- **`edition_format`** is free text. Hardcover's Editing FAQ (a draft page) says it elaborates on the edition (for
+- **`edition_format`** is a string that Hardcover normalizes on write (`Audible Audio` was stored as `Audible`). Hardcover's Editing FAQ (a draft page) says it elaborates on the edition (for
   example "Full cast audiobook"), describes the edition rather than where it was obtained, and is usually left blank.
   `reading_format_id` is the required field on Hardcover's own form.
 - **`release_date`** is a `date` scalar: `YYYY-MM-DD`. Hardcover's Edition Standards say to use January 1 of the year
   when only the year is known.
 - **`language_id`, `country_id`, `publisher_id`** are foreign keys (`languages`, `countries`, `publishers`), not names.
   `languages` has `language`, `code2`, `code3`.
-- **Identifiers**: Hardcover's docs say it strips hyphens from ISBNs itself (a write behavior, not tested). `isbn_10_valid` /
+- **Identifiers**: Hardcover strips hyphens from ISBNs on write (confirmed: a hyphenated ISBN-13 was stored without them). `isbn_10_valid` /
   `isbn_13_valid` are computed on their side; they exist on the hosted API's `editions` (see the R5 and R6 field note for what
   was confirmed). Their ISBN guide warns that adding or removing `978` does not give a valid number, because the check digit
   must be recalculated (`internal/isbn` does recalculate it).
 - **Cover**: `image_id` is set on a *second* call. The tool uploads the file to Hardcover's storage
   (`POST https://hardcover.app/api/upload/google`, then a multipart POST to the returned URL), calls `insert_image`,
   then `update_edition(id, {dto: {image_id}})`. Hardcover's Edition Standards: PNG and JPEG work best, **WebP is not
-  supported**, and larger is better (at least 300x450 for the top quality tier).
-- **Permissions** (unverified): Hardcover's `capabilities.json` lists `insert_edition`, `insert_image` and
-  `update_edition` under the `write:catalog`, `write:catalog:append` and `write:catalog:edit` scopes. Whether an
-  ordinary user token carries one of them has not been checked.
+  supported**, and larger is better (at least 300x450 for the top quality tier). Against the real API with an API token the
+  storage-credentials call to `hardcover.app/api/upload/google` answered `401` (a plain HTTP client gets a Cloudflare challenge), so the
+  cover step could not complete and the edition was created without it; Hardcover itself attached a cover from the ISBN to an ebook edition.
+- **Permissions** (confirmed): Hardcover's `capabilities.json` lists `insert_edition`, `insert_image` and
+  `update_edition` under the `write:catalog`, `write:catalog:append` and `write:catalog:edit` scopes (any one is enough), and
+  `read:catalog` covers the lookups. A token without a write scope is refused with `403 insufficient_scope` ("Missing scopes:
+  write:catalog:append") and nothing is created; with `write:catalog:append` the insert succeeds. The sync token's scopes
+  (`read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`) do not include it, so creating an edition needs a
+  second key or an added scope, and the docs for each step say so (see the plan's "Token scopes" items).
 - **Not settable on an edition**: description, series, genres and tags are book-level (`BookDtoType`), and there is no
   physical-format field in `BookDtoInput`.
 
@@ -150,7 +155,7 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The result is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. `metadata.publishedDate` is not read. Create requires `YYYY-MM-DD`. | 2, 3, 7 | UI, API |
 | R9 | `contributions[]`, `"Narrator"` | `metadata.narratorName` | Same split as R7. Lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook draft passes no narrator. No match is a warning; the edition is created without a narrator. | 1, 2, 3, 4, 7 | API |
 | R10 | `publisher_id` | `metadata.publisher` | Looked up by **exact, case-sensitive** publisher name. Not found gives `0`, which is omitted (warning). Never defaults to a guessed ID (was `1` before step 1). | 1, 2, 3, 4 | API |
-| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: always `Ebook`, replacing any label the record carries. Trimmed, at most 100 characters. | 1, 2, 3, 4 | API |
+| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: always `Ebook`, replacing any label the record carries. Trimmed, at most 100 characters. Hardcover normalizes the stored label: `Audible Audio` was stored as `Audible` (`Ebook` is unchanged). | 1, 2, 3, 4 | API |
 | R12 | `reading_format_id` | `mediaType`, `ebookFile`, `ebookFormat`, `duration`, `numTracks` | `IsEbook()` gives 4, otherwise 2. Recomputed from ABS at create time; the request cannot set it (an extra `reading_format` field is rejected with 400). | 1, 2, 3, 4, 5, 7 | server |
 | R13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Sent only when greater than 0 and the item is an audiobook. | 1, 2, 3, 4, 7 | API |
 | R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
@@ -180,8 +185,11 @@ their existence rests on the hosted API and its docs, not on this repository):
 - Some 979 ISBN-13 editions carry an ISBN-10 of their own, entered directly; we never derive one for a 979, and an ISBN-10
   search still finds them.
 
-**Not tested:** whether `insert_edition` accepts a bad-checksum ISBN (that needs a write), whether Hardcover really strips
-hyphens on write, the `isbns_match` field, and how often Audiobookshelf serves a bad checksum. Whether a `false` flag is a
+Confirmed by writes to a test book: `insert_edition` accepts a bad-checksum ISBN-13 and stores it, without hyphens, flagged
+`isbn_13_valid: false` (no ISBN-10 was derived). Given only a valid ISBN-10, Hardcover also stored the matching ISBN-13, flagged valid,
+which is the value `internal/isbn` derives, so a created edition can hold both forms.
+
+**Not tested:** the `isbns_match` field, and how often Audiobookshelf serves a bad checksum. Whether a `false` flag is a
 warning or a rejection in the draft and create endpoints is open (see the step 3 and step 4 checklists). On create, each field is
 re-normalized and must have the right length for its slot (`isbn_10 must be a valid 10-character ISBN`), and at least
 one of `asin`, `isbn_10`, `isbn_13` is required.
@@ -293,7 +301,7 @@ Code: `edition.Creator`. This step owns everything sent to Hardcover, so its tes
   non-https hop of a request that started on https, and not to a different domain on redirect. `SetAudiobookshelfBaseURL` has no production caller until step 4, so the `edition` CLI keeps the
   legacy host heuristic.
 - **Verifies:** the ISBN forms that step 1's `isbn` package produces for the converted lookups.
-- **Decided:** finding 5 (cover size and format), see the findings list; finding 8 (token scope) cannot be tested offline, so say so
+- **Decided:** finding 5 (cover size and format), see the findings list; finding 8 (token scope) is confirmed against the real API but cannot be tested offline, so say so
   in the PR.
 
 ### Step 3: Draft endpoint
@@ -339,7 +347,7 @@ Code: `EditionEdits`, `validateEditionInput`, `normalizeEditionIdentifiers`, `Cr
 - **Also:** a duplicate on another book is 409 with the fixed message; a dry run issues no mutation and returns
   `edition_id: 0`.
 - **Verifies:** R3, R8 and R14 reach the creator unchanged.
-- **Decide:** finding 8 goes in the PR's testing notes; finding 5 as informational.
+- **Decide:** finding 8 (the required scope) goes in the PR's testing notes and the endpoint docs; finding 5 as informational.
 
 ### Step 5: Sync identifier matching
 
@@ -352,8 +360,9 @@ edition written by the crosswalk must be found by the sync, which is what takes 
 - **R12:** the strict same-format rule (audiobook 2, ebook 4) is kept on every query, including the ASIN query, which has no
   test yet.
 - **Verifies, with one test per shape the crosswalk can create:** ASIN only; ISBN-10 only; ISBN-13 only; both ISBNs; an
-  ISBN-13 whose ISBN-10 cannot be derived; an ebook. The created edition can hold just one ISBN form (the preview lets the
-  user clear the other), so matching must not depend on both.
+  ISBN-13 whose ISBN-10 cannot be derived; an ebook. The preview lets the user clear either ISBN, and Hardcover
+  derives the other form only when the given ISBN is valid (observed live), so an edition can end up with one form or both and
+  matching must not depend on both.
 
 ### Step 6: Immediate read-status resync
 
@@ -510,17 +519,17 @@ which step decides it.
    expanded item instead of splitting `authorName` and `narratorName` on commas.
 3. **`language` is ignored** (step 3). A non-English item is created as language 1. Minimum: a draft warning when ABS gives
    a language other than English. Better: look the language up in Hardcover's `languages` table. `language_id 1` and
-   `country_id 1` are assumed to be English and the United States and have not been checked against Hardcover.
+   `country_id 1` are English and the United States (checked against Hardcover).
 4. **`publishedDate` is unused** (step 3, minor). It could be tried before the year-only fallback.
 5. **Cover** (decided in step 2). The default is a 400 px JPEG; Hardcover prefers larger images and rejects WebP. `?raw=1` would
    return the original but in any format. The creator now applies Hardcover's documented rules: PNG and JPEG only, decided from
    the bytes, at most 15 MiB (the largest size Hardcover documents; it documents no hard maximum), dimensions not enforced.
    Not verified against the real API.
-6. **`edition_format` from an ASIN** (informational). `Audible Audio` is kept for parity with the mismatch export. Hardcover's
-   draft FAQ says the field should describe the edition and is usually blank.
+6. **`edition_format` from an ASIN** (informational). `Audible Audio` is kept for parity with the mismatch export, but Hardcover
+   stores it as `Audible`. Its draft FAQ says the field should describe the edition and is usually blank.
 7. **Audnex for ebooks** (step 3, minor). An ebook's Kindle ASIN still triggers up to two Audnex calls (sharing one 15 s cap) that are not expected to
    resolve; the draft could skip Audnex for ebooks.
-8. **Token scope** (every step, unverified). See the permissions bullet in section 3.
+8. **Token scope** (every step, confirmed). Creating an edition needs `write:catalog:append` (or `write:catalog` / `write:catalog:edit`); see the permissions bullet in section 3 and the plan's token-scope items.
 9. **Exact-match people and publisher lookups** (steps 3 and 7). A name that differs by a space or a period matches
    nothing; a narrator needs an earlier `Narrator` credit; `canonical_id` is ignored; and no ordering is requested. When
    no author matches, create fails and the step 7 UI has no way to supply one. Decide between a UI path for entering a
