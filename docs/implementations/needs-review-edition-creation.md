@@ -3,16 +3,16 @@
 **Status: 🚧 IN PROGRESS** (2026-09-20)
 
 The feature is delivered as **seven steps**, each its own **upstream** PR (to `drallgood/audiobookshelf-hardcover-sync`)
-that leaves `develop` working and shippable. All the code for steps 1-5 exists and is validated, but steps 1-4 still
-sit together on one combined branch that was judged too large to review, so it is to be split (see "How the combined
-branch is split"). Steps 6 and 7 are not started. No upstream PR exists yet, and nothing has been split.
+that leaves `develop` working and shippable. The former combined branch has been split: steps 1-4 exist as four stacked
+branches, all validated. Step 1 is published as fork PR #24; steps 2-4 are local only until the owner asks for their fork
+PRs. Step 5 is built but still needs a rebase onto step 1. Steps 6 and 7 are not started. No upstream PR exists yet.
 
 **Two stages per step.** `origin` (the fork, `Snuffy2/audiobookshelf-hardcover-sync`) is where each step is developed, tested and
 reviewed by AI (CodeRabbit) through a **fork PR** (`Snuffy2:step_N_needs_review_add_edition` -> a fork branch). Only when a
 step is ready for the maintainers to consider and merge is an **upstream PR** created
 (`Snuffy2:step_N_needs_review_add_edition` -> `drallgood:develop`), and only on the owner's explicit command; nothing
-here is ever opened upstream on its own. Fork PR #20 (`feature/edition-from-needs-review-api` -> `Snuffy2:develop`) is
-the fork stage for the combined steps 1-4 as they stand today.
+here is ever opened upstream on its own. Fork PR #20 (the old combined branch) is closed and stays closed; its branch is
+deleted (see "How the combined branch was split").
 
 ## Step Tracker
 
@@ -22,17 +22,17 @@ step touches.
 
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
-| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | — | — | `develop` | ~840 (~360 tests), measured | Code exists on the combined branch; not split out yet |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,000 (~650 tests), measured | Code exists on the combined branch; not split out yet |
-| 3 | Read-only draft endpoint | `step_3_needs_review_add_edition` | — | — | 1, 2 | ~1,500, estimated | Code exists on the combined branch; not split out yet |
-| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (not created yet; today the code sits in the combined branch `feature/edition-from-needs-review-api`) | [#20](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/20) (open, base `develop`; covers steps 1-4 together today, body stale) | — | 3 | ~2,000, estimated | **The combined branch is not step 4 by itself**: it holds the code of steps 1-4, so it has to be split. Step 4 is rebuilt on top of step 3 as a new branch (see "How the combined branch is split"). Fork PR #20 still points at the combined branch (see "How the combined branch is split") |
-| 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching`, locally and on origin, on 2026-09-20), no PR yet; based on an old tip of the combined branch, so it needs a rebase (see the Step 5 notes) |
+| 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (tip 30f7e78, 5 commits) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | — | `develop` | ~513 (254 prod, 259 tests), measured | Built, validated, pushed to `origin`; fork PR #24 open |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` (tip 1b6f408, 5 commits) | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated; local only, no fork PR yet. See "Follow-ups found while splitting" for its PR description and CHANGELOG |
+| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` (tip 61a7ac6, 5 commits) | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated; local only, no fork PR yet |
+| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (tip 7ce35cd, 4 commits) | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated; local only, no fork PR yet. Its final tree is identical to the old combined branch's tree |
+| 5 | Sync identifier matching | `step_5_needs_review_add_edition` (tip e03754a) | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching` on 2026-09-20), no fork PR yet. Based on an old tip of the combined branch, so it needs a rebase onto `step_1_needs_review_add_edition` (and #190/#191/#192 are already in step 1's base; see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
 | 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | — | 6 | ~500-800, estimated | Not started |
 
-**Branch names** are `step_N_needs_review_add_edition` for step N (1-7). The combined branch that holds steps 1-4 today,
-`feature/edition-from-needs-review-api`, is not any single step: the step branches are new branches built from it (see
-"How the combined branch is split"), and it is deleted only once they are all built, with the owner's go-ahead.
+**Branch names** are `step_N_needs_review_add_edition` for step N (1-7). The old combined branch
+(`feature/edition-from-needs-review-api`, later renamed `legacy_combined_needs_review_add_edition`) no longer exists: it was
+deleted locally and on `origin` once steps 1-4 were built.
 
 Stacking and merge order: 1, 2, 3, 4 merge upstream in that order. On the fork, step branches are *stacked* (step N is built
 on step N-1) and each step's fork PR uses the previous step's branch as its base, so the AI review sees only that step's
@@ -116,7 +116,7 @@ now seven steps. Nothing is user-visible until step 7, so no half-finished butto
   duplicate-error fallback via the same lookup, the cover `ImageError`, `EditionInput.ReadingFormat` (ebook: reading
   format 4, `Ebook` label, no narrators or audio length, format-scoped lookups), `GetEditionByISBN10`, and the
   `edition` CLI's optional `reading_format`. It changes what the `edition` CLI does, so this is its own PR.
-- **Step 3 - Draft endpoint** (`step_3_needs_review_add_edition`, stacked on 2). `GET .../edition-draft`:
+- **Step 3 - Draft endpoint** (`step_3_needs_review_add_edition`, stacked on 2). `GET .../edition-draft` (with the response write-deadline mechanism and `Unwrap()` on the logger's response wrapper, since a draft makes many paced lookups):
   `audiobookshelf.Client.GetLibraryItem`, the `internal/edition/draft` package (reusing `AddWithMetadata` ->
   `ToEditionExport`), `MultiUserService.PrepareEditionDraft` with eligibility (needs_review, numeric Hardcover book,
   ebook or audiobook, identifier requirement), the `newHardcoverClient` extraction, admission checks, the handler
@@ -125,7 +125,7 @@ now seven steps. Nothing is user-visible until step 7, so no half-finished butto
 - **Step 4 - Create endpoint** (`step_4_needs_review_add_edition`, stacked on 3).
   `POST .../edition`: `CreateEditionFromRunBook`, request validation and normalization, the in-flight guard, the
   dedicated edition wait group so `Shutdown` cancels syncs before draining creates, the detached 2-minute create
-  context, the response write deadline (with `Unwrap()` on the logger's response wrapper), the create handler and
+  context, the create handler and
   route, and the write-deadline, shutdown and cover tests, README, OpenAPI and CHANGELOG. It has neither resync nor
   the full-sync lock: creating an edition touches neither the profile state file nor the sync caches.
 - **Step 5 - Sync identifier matching** (`step_5_needs_review_add_edition`, stacked on step 1 only). An existing
@@ -164,67 +164,68 @@ now seven steps. Nothing is user-visible until step 7, so no half-finished butto
 - **Step 6 regression guard:** the `StartSync` lock check only ever triggers while a book operation is in flight,
   which only the new endpoint creates. A test proves `StartSync` is unaffected when none is active.
 
-## How the combined branch is split
+## How the combined branch was split (done, 2026-09-20)
 
-Nothing below has been done; it needs the owner's go-ahead. The combined branch `feature/edition-from-needs-review-api`
-(tip edf4893, 40 commits over `develop` eb50565, pushed) holds steps 1-4. Its 40 commits
-are interleaved fixes and cleanups, so cherry-picking by commit would not separate the layers. Instead each step's
-branch is built from `develop` (stacked on the previous step) by taking that step's files from the combined branch,
-committed as a few clean commits, then run through the full gates.
+The combined branch `feature/edition-from-needs-review-api` (40 commits over `develop`, rebased onto `90b4906`, tip
+a6e9de9) held steps 1-4. Its commits were interleaved fixes and cleanups, so each step's branch was built from the previous
+one by taking that step's files and hunks, as a few clean commits, then gated: `gofmt`, build, vet, `make test`, lint on
+the Go 1.26.7 toolchain, the JS tests, and every commit builds. An independent validator confirmed all four, that no
+step contains code from a later one, and that `step_4` has **no diff at all** against the old combined branch, so nothing
+was lost. Both `upstream/develop` and `origin/develop` were at `90b4906` at the time.
 
-Order of operations:
+What happened to the old branch and PR:
 
-1. Build the step 1, 2 and 3 branches (`step_1_...`, `step_2_...`, `step_3_...`), each stacked on the previous one on
-   the fork and gated. They are new branches; the combined branch is not touched.
-2. Build the step 4 branch on top of step 3: take the create-endpoint half of the combined branch's files on top of the
-   step 3 branch, as a few clean commits, and gate it. Its final tree equals the combined branch's tree, so nothing is
-   lost; only the history differs, and against step 3 its diff is just the create endpoint. Step 5's branch is
-   rebased onto step 1 and #190 separately.
-3. Open the fork PRs (on the owner's request), each based on the previous step's branch, and let CodeRabbit review them.
-4. Fork PR #20 belongs to the combined branch. To keep its conversation, it can be moved onto step 4: the combined branch
-   is force-pushed (with a pinned lease) to the rebuilt step 4 history, the PR's base is changed to step 3's branch, and
-   the branch is renamed to `step_4_needs_review_add_edition` with GitHub's rename API (which keeps the PR); inline
-   comments on moved lines show as outdated. The alternative is a fresh fork PR for step 4 and closing #20. Either way
-   needs the owner's go-ahead, and the combined branch is deleted only after all seven step branches exist.
-5. Upstream PRs are created only on the owner's command, one at a time as described under "Stacking and merge order":
-   step 1 first; then 2, 3, 4 each after the previous has merged, and step 5 after step 1. Each is rebased onto the
-   current upstream `develop` first and carries the "Multi-Step Project" block.
+- Steps 1-4 were built locally in order; only step 1 was pushed and opened as fork PR #24 (on the owner's command).
+- The old combined branch was renamed with GitHub's branch-rename API and then deleted, locally and on `origin`.
+  **The rename closed fork PR #20** (it did not follow the new name, contrary to what this plan had assumed). The owner
+  chose to leave #20 closed. Lesson: do not rename the head branch of an open PR expecting it to survive; a closed PR keeps
+  its comments, and the CodeRabbit threads on it are re-checked in whichever step's fork PR contains that code.
+- Steps 2, 3 and 4 stay local until the owner asks for their fork PRs; each fork PR is based on the previous step's
+  branch. Upstream PRs are created only on the owner's command, one at a time as described under "Stacking and merge
+  order": step 1 first; then 2, 3, 4 each after the previous has merged, and step 5 after step 1. Each is rebased onto the
+  current upstream `develop` first and carries the "Multi-Step Project" block.
 
-The two CodeRabbit threads on #20 are about code that lands in specific steps, so they are looked at again in whichever
-step's fork PR contains that code. Deleting or force-pushing any published branch needs the owner's explicit go-ahead.
+Where the files actually went (differs slightly from the first plan):
 
-Where the files go:
+- **Step 1:** `internal/isbn/`, `internal/models/reading_format*.go` (helpers and the `AudiobookshelfBook.ReadingFormat`
+  method), `internal/mismatch/` (hyphenated ISBN, publisher default and captured ID, ebook export, removal of the unused
+  `ToEditionInput`), the reading-format delegation in `internal/api/hardcover/client.go`, the `book.ReadingFormat()` calls
+  in `internal/sync/service.go`, and its CHANGELOG lines.
+- **Step 2:** `internal/edition/creator.go` and its tests, `GetEditionByISBN10` in `internal/api/hardcover/client.go`,
+  `cmd/edition/README.md`, and its CHANGELOG lines.
+- **Step 3:** `internal/api/audiobookshelf/client.go` (+ test), `internal/edition/draft/`, `internal/edition/editiontest/`
+  (the whole shared-fakes package), the draft half of `internal/multiuser/edition.go` and `service.go`
+  (`newHardcoverClient`, `admissionErrorLocked`, `checkEditionAdmission`), `GetEditionDraft` and its route, and **the
+  response write-deadline mechanism** (`extendEditionWriteDeadline`, `editionWriteDeadline`, `Unwrap()` in
+  `internal/logger/logger.go`, and `multiuser.EditionCreateTimeout`), because a draft makes many paced Hardcover lookups and
+  needs the extended deadline too. The draft docs and its CHANGELOG entry.
+- **Step 4:** the create half of `internal/multiuser/edition.go` and `service.go` (validation, in-flight guard, edition wait
+  group and `Shutdown` drain), the POST route and `CreateEdition` handler, the create, cover and shutdown tests, and the
+  create docs. It restores the wording that steps 1-3 had narrowed, so its CHANGELOG diff also reshuffles a few earlier
+  lines into the single combined "Create a Hardcover edition" entry.
 
-- **Step 1:** `internal/isbn/`, `internal/models/reading_format.go` and its test, the `AudiobookshelfBook.ReadingFormat`
-  method, `internal/mismatch/` (export fixes and tests), the reading-format delegation in
-  `internal/api/hardcover/client.go`, the `book.ReadingFormat()` calls in `internal/sync/service.go`, and the
-  matching CHANGELOG lines.
-- **Step 2:** `internal/edition/creator.go` and its tests (`creator_test.go`, `creator_reuse_test.go`,
-  `creator_cover_test.go`, `creator_token_test.go`, `creator_test_helpers.go`), `cmd/edition/README.md`, and the
-  matching CHANGELOG lines.
-- **Step 3:** `internal/api/audiobookshelf/client.go` (+ test), `internal/edition/draft/`, `internal/edition/editiontest/`,
-  the draft half of `internal/multiuser/edition.go` (`PrepareEditionDraft`, `resolveEditionTarget`, item checks) and
-  `internal/multiuser/service.go` (`newHardcoverClient`, the admission helpers), `GetEditionDraft` and its route, the
-  draft tests, and the draft parts of README and OpenAPI.
-- **Step 4:** the create half of `internal/multiuser/edition.go`, the edition wait group and `Shutdown` drain in
-  `service.go`, `Unwrap()` in `internal/logger/logger.go`, `CreateEdition` and its route, the create, cover, shutdown
-  and write-deadline tests, and the create parts of README and OpenAPI.
+Follow-ups found while splitting (not yet done):
 
-The mixed files (`multiuser/edition.go`, `service.go`, `handlers_edition.go` and their tests, README, OpenAPI,
-CHANGELOG) are the fiddly part: each has a draft half and a create half that must be separated by hand. Step 5's
-existing branch is separately rebased onto step 1 and #190.
+- **Step 2 PR description:** `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4 (`internal/multiuser`),
+  so the Audiobookshelf token-scoping fix is tested but inert for the `edition` CLI until then. Say so in step 2's fork PR
+  description.
+- **Step 2 CHANGELOG:** no branch, including the old combined one, has a line for the token scoping or the cover-upload
+  `ImageError`. Add lines in step 2.
+- **Step 4 CHANGELOG churn:** step 4's diff reshuffles earlier CHANGELOG lines (the final text equals the old branch's).
+  Consider having steps 1-3 carry final wording where possible so step 4's diff is purely additive.
+- **Step 5:** rebase onto `step_1_needs_review_add_edition` next.
+- **Subject lines:** a few commits in steps 3 and 4 have subject-only messages; fine, but thin.
 
-**Current state (2026-09-20):** steps 1-5 are implemented and validated. No upstream PR exists. Fork PR #20 is open with
-steps 1-4 together; the step 5 branch is on `origin` (the fork) with no fork PR yet; steps 6 and 7 do not exist. Each remaining step is started only on the
-owner's go-ahead. Each branch tracks `origin/<same-name>` via `git config branch.<name>.remote/merge`; nothing is
-pushed without permission.
+**Current state (2026-09-20):** steps 1-4 are built and validated (step 1 published as fork PR #24; 2-4 local only). Step 5 is
+built and needs its rebase. No upstream PR exists. Steps 6 and 7 do not exist. Each remaining step is started only on the
+owner's go-ahead. Each pushed branch tracks `origin/<same-name>`; nothing is pushed or opened without permission.
 
 ## Implementation notes for the original combined Slice 1 (now steps 1-4)
 
 These notes were recorded when steps 1-4 were still one slice ("Slice 1"), implemented and validated, then extended. The
-feature-to-step mapping is in "How the combined branch is split". They first described branch tip 374b7b2 (13 commits
-over `develop` a2ad4b4); the branch is now at edf4893 (40 commits over `develop` eb50565, which includes #190, pushed)
-and is the head of fork PR #20. The sections below were written against earlier tips (8248c1a and
+feature-to-step mapping is in "How the combined branch was split". They first described branch tip 374b7b2 (13 commits
+over `develop` a2ad4b4); that branch (last tip a6e9de9, 40 commits over `develop` 90b4906) is now deleted and its content lives in
+steps 1-4; fork PR #20, its head, is closed. The sections below were written against earlier tips (8248c1a and
 before); the commit hashes they cite predate the rebases onto `develop`, so match them by subject rather than by hash.
 Where this differs from the plan above, this section is what shipped.
 
@@ -318,7 +319,9 @@ Grounded in the code on the branch at that time (8248c1a); the ebook support tha
   skipped for this PR as pre-existing; a candidate for a separate small PR.
 - **F4**, docstring-coverage check: skipped (no repo rule; lint is clean).
 
-The review threads were not yet replied to or resolved when this was written.
+The review threads were not yet replied to or resolved when this was written, and PR #20 has since been closed (see "How the
+combined branch was split"). The threads are re-checked in whichever step's fork PR contains the code they refer to: F1 in step 1
+(mismatch export), F2 in step 4 (shutdown), F3 in step 2 (creator/CLI).
 
 ## Step 5 implementation notes
 
@@ -388,6 +391,8 @@ Decisions made by the owner and where they ended up.
     created only on the owner's explicit command, once the step is ready for the maintainers. An upstream PR cannot be
     based on a fork-only branch, so fork PRs stack on the previous step's branch but upstream PRs open one at a time after
     the previous step merged, rebased onto upstream `develop`. The CHANGELOG `(#NNN)` is the upstream PR number.
+14. **The combined branch is retired.** Steps 1-4 were split out, the old branch deleted, and fork PR #20 left closed (the
+    rename that retired it closed the PR; see "How the combined branch was split").
 
 ## Ebook items: ebook editions (resolved, steps 1-4)
 
