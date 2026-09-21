@@ -23,7 +23,7 @@ step touches.
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` (tip 30f7e78, 5 commits) | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) (open, base `develop`) | — | `develop` | ~513 (254 prod, 259 tests), measured | Built, validated, pushed to `origin`; fork PR #24 open |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` (tip 1b6f408, 5 commits) | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated; local only, no fork PR yet. See "Follow-ups found while splitting" for its PR description and CHANGELOG |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` (tip 1b6f408, 5 commits) | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated; local only, no fork PR yet. See its checklist under "Step checklists" |
 | 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` (tip 61a7ac6, 5 commits) | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated; local only, no fork PR yet |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` (tip 7ce35cd, 4 commits) | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated; local only, no fork PR yet. Its final tree is identical to the old combined branch's tree |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` (tip e03754a) | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; branch on `origin` (renamed from `feature/sync-identifier-matching` on 2026-09-20), no fork PR yet. Based on an old tip of the combined branch, so it needs a rebase onto `step_1_needs_review_add_edition` (and #190/#191/#192 are already in step 1's base; see the Step 5 notes) |
@@ -45,6 +45,81 @@ matching (5) merged, and step 7 needs step 6. Step 6 also needs `develop` at or 
 first thing a user sees. Steps 6 and 7 build on the create response shape from step 4, so a change requested in step 4's
 review carries into them. Each step's CHANGELOG lines carry its own upstream PR number as `(#NNN)`, added when that
 upstream PR is created; fork PR numbers such as #20 are not that number.
+
+## Step checklists
+
+**These checklists are the follow-up list. Anything not written here will not happen.** Before preparing a step's PR (fork
+or upstream), open this section, do or consciously drop every unchecked item under that step, and tick it here. When a new
+follow-up turns up during the work, add it here under the right step at once (in the same commit as the change that found
+it), rather than only in a report or a reply. Keep the tracker table's Status column in step with these lists.
+
+**Every step (fork PR and upstream PR)**
+- [ ] Before opening: `gofmt`, `go build`, `go vet`, `make test`, `make lint` (Go 1.26.7 toolchain), `node --test web/app.test.js`
+      all pass, and the branch is rebased onto the latest `develop`. Only open a PR on the owner's command.
+- [ ] The PR description follows `AGENTS.md` and `.github/pull_request_template.md`, has no issue links (fork PR, and the
+      upstream base check), no attribution lines, and carries the "Multi-Step Project" block with this step marked `(this PR)`.
+- [ ] After a fork PR is opened, read the CodeRabbit and other review feedback and address every valid item (do not wait to be
+      asked), then report the disposition of each item.
+- [ ] When a step merges upstream: strike it through in the block below (and leave its text unedited), update this tracker, and
+      rebase the next step onto the new upstream `develop`.
+- [ ] The CHANGELOG `(#NNN)` is the upstream PR number; add it only when that upstream PR exists.
+- [ ] Nothing here has run against real Hardcover (image upload, `insert_edition`, its duplicate behavior for ISBN/ASIN, and
+      the ebook reading format id 4 with the `Ebook` label) or live Audnex. Say so in each PR's testing notes for steps 2-4,
+      and do a manual check against a real Hardcover account before the upstream PRs for steps 2-4 if the owner wants one.
+
+**Step 1** (fork PR #24 is open)
+- [ ] Read the CodeRabbit feedback on #24 and address the valid items (F1, the stale publisher ID in `ToEditionExport`, is
+      already fixed in this step).
+- [ ] The PR body says `isbn.Result.ISBN10()/ISBN13()/Counterpart` have their first production caller in step 2; keep that note.
+
+**Step 2** (`edition` CLI behavior changes)
+- [ ] Add CHANGELOG lines for the Audiobookshelf token scoping (`SetAudiobookshelfBaseURL`) and the cover-upload failure
+      signal (`EditionResult.ImageError`, and `Existing` in the `edition` command's JSON output). Neither branch nor the old
+      combined branch has them.
+- [ ] The fork PR description says `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4 (`internal/multiuser`), so
+      token scoping is tested here but inert for the `edition` CLI until then; and that the `edition` command's behavior changes
+      (honored `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`).
+- [ ] Decide CodeRabbit item F3: the pre-existing `CheckRedirect` in `edition.NewCreator` that copies the `Authorization` header
+      to redirects. Either fix it here or open a separate small PR (owner's choice); do not let it drop.
+
+**Step 3**
+- [ ] Have the CHANGELOG lines carry their final wording where possible, so step 4's CHANGELOG diff is additive instead of
+      reshuffling earlier lines (today step 4 replaces step 3's draft-only entry and folds step 2's ebook line into step 1's).
+- [ ] The PR description says the response write-deadline mechanism (`extendEditionWriteDeadline`, `Unwrap()` in the logger, and
+      `multiuser.EditionCreateTimeout`) lives here because a draft makes many paced Hardcover lookups, and that
+      `internal/edition/editiontest` includes helpers first used in step 4 (`HoldInsert`, `HoldSearches`, `FailWith`).
+- [ ] Some comments keep create wording (`editionWriteDeadline`, `editionRequestIDs`, the `newHeldCreateFixture` test helper name)
+      so step 4 stays additive; reword them only if it does not make step 4 non-additive.
+
+**Step 4**
+- [ ] The PR description says its CHANGELOG diff also reshuffles a few earlier lines into the single combined entry, and that
+      `CreateEditionFromRunBook` has no caller until the handler commit (consider squashing those two commits).
+- [ ] Re-check CodeRabbit item F2 (the shutdown drain of in-flight creates) against this step's code.
+
+**Step 5** (built; needs work before its fork PR)
+- [ ] Rebase `step_5_needs_review_add_edition` onto `step_1_needs_review_add_edition`; expect conflicts with #190 in
+      `internal/sync/service.go` and `internal/api/hardcover/client.go`; re-check the "unchanged by decision" claims (the
+      reading-format filters) against the current code; re-run all gates.
+- [ ] Add a test that the ASIN query keeps its reading-format filter (currently only the ISBN queries are guarded).
+- [ ] Tighten the CHANGELOG sentence about bad-checksum ISBNs.
+- [ ] Reword commit 5190293's message (it still mentions ordering, which was removed), while rebasing.
+- [ ] `mismatch.AddWithMetadata`'s own enrichment searches do not try the converted ISBN form; decide whether to include it or
+      leave it out of scope, and note the decision.
+
+**Step 6** (not started; concurrency-sensitive)
+- [ ] All items in the plan sections "Backend 3-4" and the Step 6 tests: `Service.SyncBook`, `bookOps` exclusivity, opt-in
+      `resync`, dry-run skip, `-race` tests, and the regression test that `StartSync` is unaffected when no book operation runs.
+
+**Step 7** (not started)
+- [ ] All items in the "Frontend" section and its tests, plus: show the draft's `reading_format` and hide narrator and
+      duration fields for an ebook; render the 409 (no identifier, existing edition not confirmed) and 422 messages; the
+      user-facing README note and the Known limitation text.
+- [ ] Verify in the browser pane (button only on eligible needs_review records, modal, resync result, error and dry-run paths,
+      the modal surviving a status poll).
+
+**Known, unrelated**
+- [ ] `TestProcessBookSnapshotKeepsEnrichedSecondLookupFailure` is flaky on the second run of `-count>=2` (shared
+      `/tmp/test-cache`); it also fails on `develop`. Not caused by this feature; consider a separate fix.
 
 ## Step summary for PR descriptions
 
@@ -204,17 +279,8 @@ Where the files actually went (differs slightly from the first plan):
   create docs. It restores the wording that steps 1-3 had narrowed, so its CHANGELOG diff also reshuffles a few earlier
   lines into the single combined "Create a Hardcover edition" entry.
 
-Follow-ups found while splitting (not yet done):
-
-- **Step 2 PR description:** `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4 (`internal/multiuser`),
-  so the Audiobookshelf token-scoping fix is tested but inert for the `edition` CLI until then. Say so in step 2's fork PR
-  description.
-- **Step 2 CHANGELOG:** no branch, including the old combined one, has a line for the token scoping or the cover-upload
-  `ImageError`. Add lines in step 2.
-- **Step 4 CHANGELOG churn:** step 4's diff reshuffles earlier CHANGELOG lines (the final text equals the old branch's).
-  Consider having steps 1-3 carry final wording where possible so step 4's diff is purely additive.
-- **Step 5:** rebase onto `step_1_needs_review_add_edition` next.
-- **Subject lines:** a few commits in steps 3 and 4 have subject-only messages; fine, but thin.
+The follow-ups found while splitting are tracked as checkboxes in "Step checklists" near the top of this document, under the
+step they belong to.
 
 **Current state (2026-09-20):** steps 1-4 are built and validated (step 1 published as fork PR #24; 2-4 local only). Step 5 is
 built and needs its rebase. No upstream PR exists. Steps 6 and 7 do not exist. Each remaining step is started only on the
