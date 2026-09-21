@@ -22,7 +22,7 @@ step touches.
 | Step | Scope | Branch | Fork PR | Upstream PR | Depends on | Size | Status |
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
-| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~912 (266 prod, 646 tests), measured | Built and validated. See its checklist under "Step checklists" |
+| 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, cover format and size limits, cover warning, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
 | 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
@@ -142,26 +142,49 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       filter is `develop`'s own audiobook rule, kept unchanged on purpose, its only production writer is the constant
       `"Audiobookshelf"` it already rejects, and step 3 deletes it with `EditionInfo`. Reply to and resolve the thread when the
       owner says so; do not change the audiobook rule in step 1.
-- [ ] Rebase steps 2-5 onto step 1 after its review fixes: they changed `internal/mismatch/types.go` (forced `Ebook`,
-      `MarkEbook`, the ISBN flags), `internal/isbn/isbn.go`, the ABS OpenAPI schema and step 1's CHANGELOG bullet (now with
-      `(#195)`), so expect conflicts in those files and in `CHANGELOG.md`; step 3's edit must still leave step 1's bullet
-      untouched.
+- [ ] Rebase steps 3-5 onto step 1 after its review fixes (step 2 is done, and it rebased without conflicts): they changed
+      `internal/mismatch/types.go` (forced `Ebook`, `MarkEbook`, the ISBN flags), `internal/isbn/isbn.go`, the ABS OpenAPI
+      schema and step 1's CHANGELOG bullet (now with `(#195)`), so expect conflicts in those files and in `CHANGELOG.md`; step
+      3's edit must still leave step 1's bullet untouched. Steps 3 and 4 also stack on step 2, so rebase them onto it.
 
 **Step 2** (`edition` CLI behavior changes)
-- [ ] Crosswalk scope ([section 5, Step 2](needs-review-edition-field-crosswalk.md#step-2-edition-creator-hardening)): this
-      step owns everything sent to Hardcover, so assert the exact `GraphQLMutation` variables for R1-R16 (omitted-when-empty,
-      greater-than-0-only, format fallbacks, `reading_format_id` 2 or 4, narrators and audio dropped for an ebook, date must
-      be `YYYY-MM-DD`), the duplicate detection for R4-R6 (order, format scoping, same-book reuse, cross-book refusal), and
-      the R17 cover chain (token only to the configured ABS host, `ImageError`, extension from `Content-Type`); verify the
-      ISBN forms from step 1. Findings 5 and 8.
-- [ ] Collapse this step's CHANGELOG bullets into ONE bullet (one-bullet-per-PR rule) that also covers the Audiobookshelf token
-      scoping (`SetAudiobookshelfBaseURL`) and the cover-upload failure signal (`EditionResult.ImageError`, and `Existing` in
-      the `edition` command's JSON output), which no branch had a line for.
-- [ ] The fork PR description says `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4 (`internal/multiuser`), so
-      token scoping is tested here but inert for the `edition` CLI until then; and that the `edition` command's behavior changes
-      (honored `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`).
-- [ ] Decide CodeRabbit item F3: the pre-existing `CheckRedirect` in `edition.NewCreator` that copies the `Authorization` header
-      to redirects. Either fix it here or open a separate small PR (owner's choice); do not let it drop.
+- [x] Crosswalk scope ([section 5, Step 2](needs-review-edition-field-crosswalk.md#step-2-edition-creator-hardening)): the tests assert
+      the exact `GraphQLMutation` variables for R1-R16 (omitted-when-empty, greater-than-0-only, contribution order, format
+      fallbacks, `reading_format_id` 2 or 4, narrators and audio dropped for an ebook, date must be `YYYY-MM-DD`), the
+      duplicate detection for R4-R6 (order, format scoping, same-book reuse, cross-book refusal, dry run), and the R17 cover
+      chain (token scoping including redirects, `ImageError`, format from the downloaded bytes, size limit). The ISBN forms
+      from step 1 are verified. Findings 5 and 8: 5 is decided (below); 8 cannot be tested offline, so say so in the PR.
+- [x] One CHANGELOG bullet for the step (one-bullet-per-PR rule) that also covers the Audiobookshelf token scoping
+      (`SetAudiobookshelfBaseURL`), the redirect behavior change, the cover rules and the cover-upload failure signal
+      (`EditionResult.ImageError`, and `Existing` in the `edition` command's JSON output). It has no `(#NNN)` until the upstream PR
+      exists.
+- [x] CodeRabbit item F3, decided: fix it here. `edition.NewCreator`'s `CheckRedirect` no longer copies the `Authorization` header
+      onto redirects, and drops it on any non-https hop of a request that started on https. `net/http` still forwards it to
+      subdomains and other ports of the same host, so the claim is "a different domain", not "any other host". The client is
+      shared by the `edition` and `image-tool` commands, so both change. Tests cover a cross-host redirect, scheme chains and the
+      10-redirect limit, and the Hardcover credentials header is pinned by a test.
+- [x] Finding 5, decided: the cover download follows Hardcover's documented rules (Edition Standards). Only PNG and JPEG are
+      uploaded, decided from the file's bytes rather than the response `Content-Type`; WebP is not supported by Hardcover, so
+      it is rejected. The download is capped at 15 MiB, the largest size Hardcover documents ("If you want to upload a 15mb file,
+      go for it"); it documents no hard maximum. Dimensions are not enforced (300x450 is only a recommendation). A rejected
+      cover keeps the edition and sets a fixed `ImageError` label. **Not verified:** Hardcover's real server-side limits.
+- [x] `GetEditionByISBN10` has a test at the GraphQL boundary (the `isbn_10` field, the reading-format filter, the returned
+      book ID).
+- [ ] The fork PR description says: `Creator.SetAudiobookshelfBaseURL` has no production caller until step 4
+      (`internal/multiuser`), so token scoping is tested here but inert for the `edition` and `image-tool` commands, which keep the
+      legacy "URL contains `audiobookshelf`" heuristic, until then; the `edition` command's behavior changes (honored
+      `edition_format`, duplicate and cross-book detection, `existing` in its output, optional `reading_format`); the redirect
+      and cover-rule changes also affect `image-tool`; the crosswalk rows delivered (R1-R17 on the Hardcover side); and that
+      nothing has run against real Hardcover (including whether it strips hyphens from an ISBN itself, `insert_edition`
+      scopes, and its real cover limits).
+- [ ] Known limits to state in the PR, all decided as acceptable for this step: duplicate lookups treat any lookup error as "not
+      found" (`develop` already did this for the ASIN lookup, without a cross-book check); a dry run skips the lookups, so it
+      does not report a would-be cross-book conflict; the same-book check compares book IDs literally, so a merged or canonical
+      book ID is refused (fails closed); the ISBN lookups take the first hit only; lookups use normalized ISBNs and a trimmed
+      ASIN but the insert sends them as given, which step 4's create-side normalization owns.
+- [ ] Step 1's CHANGELOG bullet says the `edition` command does not read `reading_format` yet, which step 2 makes false. The
+      one-bullet rule forbids editing an earlier step's bullet, so decide before step 2 goes upstream: amend step 1's bullet, or
+      accept the mismatch and say so in the step 2 PR.
 
 **Step 3**
 - [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns

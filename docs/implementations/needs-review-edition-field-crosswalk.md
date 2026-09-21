@@ -155,7 +155,7 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
 | R15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 2, 3, 4 | API |
 | R16 | `country_id` | none | Constant `1` (assumed United States). | 2, 3, 4 | API |
-| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Any failure is a warning; the edition stays. | 2, 3, 4, 7 | server |
+| R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Only a PNG or JPEG of at most 15 MiB is uploaded (decided from the downloaded bytes). Any failure is a warning; the edition stays. | 2, 3, 4, 7 | server |
 | R18 | `page_count` | none | Not sent. ABS has no page count. | n/a | n/a |
 
 ### Field notes
@@ -197,10 +197,12 @@ FAQ's advice to describe the edition rather than its source (finding 6).
 
 **R17, cover.** ABS's cover endpoint scales the image: `width` defaults to 400, `height` to proportional, and
 `format` to `webp` or `jpeg` depending on the request's `Accept` header (`reqSupportsWebp` is true when `Accept` contains
-`image/webp` or equals `*/*`). The creator sends `Accept: image/*`, so ABS answers with a **JPEG about 400 pixels wide**,
+`image/webp` or equals `*/*`). The creator sends `Accept: image/jpeg, image/png`, so ABS answers with a **JPEG about 400 pixels wide**,
 which is acceptable to Hardcover but not large. `?raw=1` returns the original file in whatever format it has (possibly
-WebP, which Hardcover does not support). The creator picks the upload extension from the response's `Content-Type`
-(`jpg`, `png` or `webp`).
+WebP, which Hardcover does not support). The creator follows Hardcover's Edition Standards (PNG and JPEG work best, WebP is
+not supported, larger is better, no hard size maximum documented; a 15 MB file is named as fine): it decides the format from
+the downloaded bytes, uploads only PNG (`png`) or JPEG (`jpg`), refuses a download over 15 MiB, and keeps the edition, with a
+fixed `ImageError`, when it rejects a cover.
 
 ## 5. What each step must deliver from the crosswalk
 
@@ -270,11 +272,13 @@ Code: `edition.Creator`. This step owns everything sent to Hardcover, so its tes
 - **R12:** `reading_format_id` is 2 or 4; an invalid `reading_format` fails validation.
 - **R13, R14:** `audio_seconds` only when greater than 0 and an audiobook; `edition_information` when non-empty.
 - **R17:** the cover chain (download, storage credentials, upload, `insert_image`, `update_edition`); the ABS token goes only
-  to the configured ABS base URL; each failure keeps the edition and sets `ImageError`; the file extension follows the
-  response's `Content-Type`. `SetAudiobookshelfBaseURL` has no production caller until step 4, so the `edition` CLI keeps the
+  to the configured ABS base URL; each failure keeps the edition and sets `ImageError`; only a PNG or JPEG, decided from the
+  downloaded bytes, is uploaded (extension `png` or `jpg`), and a download over 15 MiB is refused; the token is never sent on a
+  non-https hop of a request that started on https, and not to a different domain on redirect. `SetAudiobookshelfBaseURL` has no production caller until step 4, so the `edition` CLI keeps the
   legacy host heuristic.
 - **Verifies:** the ISBN forms that step 1's `isbn` package produces for the converted lookups.
-- **Decide:** finding 5 (cover size and format); finding 8 (token scope) cannot be tested offline, so say so in the PR.
+- **Decided:** finding 5 (cover size and format), see the findings list; finding 8 (token scope) cannot be tested offline, so say so
+  in the PR.
 
 ### Step 3: Draft endpoint
 
@@ -492,8 +496,10 @@ which step decides it.
    a language other than English. Better: look the language up in Hardcover's `languages` table. `language_id 1` and
    `country_id 1` are assumed to be English and the United States and have not been checked against Hardcover.
 4. **`publishedDate` is unused** (step 3, minor). It could be tried before the year-only fallback.
-5. **Cover** (informational). The default is a 400 px JPEG; Hardcover prefers larger images and rejects WebP. `?raw=1` would
-   return the original but in any format. No change proposed; the owner decides.
+5. **Cover** (decided in step 2). The default is a 400 px JPEG; Hardcover prefers larger images and rejects WebP. `?raw=1` would
+   return the original but in any format. The creator now applies Hardcover's documented rules: PNG and JPEG only, decided from
+   the bytes, at most 15 MiB (the largest size Hardcover documents; it documents no hard maximum), dimensions not enforced.
+   Not verified against the real API.
 6. **`edition_format` from an ASIN** (informational). `Audible Audio` is kept for parity with the mismatch export. Hardcover's
    draft FAQ says the field should describe the edition and is usually blank.
 7. **Audnex for ebooks** (step 3, minor). An ebook's Kindle ASIN still triggers up to two Audnex calls (sharing one 15 s cap) that are not expected to
