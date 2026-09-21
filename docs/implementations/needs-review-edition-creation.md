@@ -99,7 +99,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       `write:catalog:append`. Without `write:catalog:append` Hardcover answers `403 insufficient_scope` ("Missing scopes:
       write:catalog:append") and nothing is created; this was seen against the real API. The sync service's token (`read:library`,
       `read:catalog`, `read:lists`, `read:me`, `write:library`) lacks it, and the app creates editions with the profile's Hardcover
-      token, so users must create a key that adds it. Each step documents what it delivers: step 2 in `cmd/edition/README.md`, step 4 in the README
+      token, so users must create a key that adds it. The app hides the add-edition action unless a pre-flight check confirms the scope (steps
+      4 and 7). Each step documents what it delivers: step 2 in `cmd/edition/README.md`, step 4 in the README
       prerequisites, `docs/openapi.yaml` and a clear error for the 403, and step 7 in the UI message and the README note (see
       those checklists).
 - [ ] **Crosswalk:** the PR description names the crosswalk rows (R-numbers) the step delivers and verifies, taken from the
@@ -281,9 +282,28 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       on top of the sync scopes, and existing profiles' tokens will not have it. Map
       Hardcover's `403 insufficient_scope` to a clear, fixed error response (no token, scope list or other remote text), and test it at
       the HTTP boundary with a stub that returns that 403: nothing is created and the call is not retried.
+- [ ] **Scope gate (pre-flight check).** A token's scopes cannot be read (no introspection endpoint, opaque tokens, no schema field), so
+      add a check that learns them safely, and expose it so the UI shows the add-edition action only when the profile's token can create
+      editions.
+      - The check calls Hardcover's edition insert with a book id that cannot exist (`-1`) and an otherwise minimal body, so it never
+        creates anything. HTTP 200 (a "Couldn't find Book" error) means the token has the scope; `403 insufficient_scope` means it does
+        not, and the response's `scope` field names the missing one. Both sides were confirmed against the real API, and the scope is
+        checked before the arguments. Any other outcome (network error, timeout, 401, 429, 5xx) is "unverified", never "allowed".
+      - Route: `GET /api/profiles/{id}/edition-capability`, with the same authorization as create (viewers 403, foreign profiles 404).
+        Response `data`: `{can_create: boolean, missing_scope?: string, reason?: "unverified"}`. `can_create` is true only when the check
+        succeeded. In dry-run mode the client blocks every Hardcover mutation, so the check cannot run: report `can_create: true`, since
+        a dry-run create changes nothing.
+      - Cache the result per profile in memory (a few minutes for a definite answer, seconds or none for "unverified", so a glitch is
+        retried on the next load) and invalidate it when the profile's Hardcover token changes. Go through the client's rate limiter, and
+        make one call per profile, not per book.
+      - Keep the create-time mapping of `403 insufficient_scope` above as the backstop for a key that changes after the check.
+      - Tests at the HTTP boundary with a stub Hardcover server: 200 with a validation error gives true; 403 `insufficient_scope` gives
+        false with the missing scope; 401, 429, 5xx and a timeout give false with `reason: "unverified"`; dry run gives true without a
+        request; the request always carries the impossible book id and never a real one; a second call within the TTL makes no request; a
+        token change makes a new one; viewers are refused.
 - [ ] Document the scope where step 4 documents the endpoint: the README Prerequisites (add the write scope to the Hardcover token line,
-      with the pre-selecting link `https://hardcover.app/account/api/keys/new?scope=read%3Acatalog+write%3Acatalog%3Aappend`), the API
-      note, `docs/openapi.yaml` (the 403 response for create, and that the draft needs no write scope) and the one CHANGELOG bullet.
+      with a link that pre-selects the scopes once the correct key URL is confirmed), the API note, `docs/openapi.yaml` (the 403 response for
+      create, the capability route and its response, and that the draft needs no write scope) and the one CHANGELOG bullet.
 
 **Step 5** (built; needs work before its fork PR)
 - [ ] Crosswalk scope ([section 5, Step 5](needs-review-edition-field-crosswalk.md#step-5-sync-identifier-matching)): the
@@ -323,10 +343,13 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       to supply one. Decide between letting the user enter or search a Hardcover author, or showing a clear "cannot create
       an edition for this book" state instead of an enabled Create button.
 
-- [ ] Token scope in the UI and its docs: when create fails for a missing scope, show a clear message that the profile's Hardcover token
-      cannot add editions, name `write:catalog:append`, and say how to create a key with it and update the profile token (link to
-      `https://hardcover.app/account/api/keys/new?scope=read%3Acatalog+write%3Acatalog%3Aappend`); test the message; put the same note in
-      the user-facing README section.
+- [ ] **Scope gate in the UI.** Fetch `GET /api/profiles/{id}/edition-capability` once per profile (not per record) and show the **Add
+      edition to Hardcover** button or link only when it returns `can_create: true`, in addition to the existing conditions (a
+      `needs_review` record with a Hardcover candidate and an identifier, and not a viewer). When it returns `false` or is unverified, render
+      no button. Refetch when the profile's Hardcover token is updated, and when the page reloads after an unverified answer. If create
+      still returns the scope error (the key changed after the check), show the fixed error message. Tests in `web/app.test.js`: no button for
+      `false`, for unverified and for viewers; a button for `true`; one capability request per profile however many records render. Put the
+      scope requirement in the user-facing README section.
 
 **Known, unrelated**
 - [ ] `TestProcessBookSnapshotKeepsEnrichedSecondLookupFailure` is flaky on the second run of `-count>=2` (shared
@@ -827,6 +850,7 @@ written onto a public edition — is fixed in place (see Backend 2).
 
 6. **[Steps 3 and 4; `resync` field and response block added in step 6] HTTP handlers + routes** — new `internal/api/handlers_edition.go`, routes in
    `internal/server/server.go` under `apiMux` (auth middleware already wraps `/api/`):
+   - `GET  /api/profiles/{id}/edition-capability` (step 4; the pre-flight scope gate, see the step 4 checklist)
    - `GET  /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft`
    - `POST /api/profiles/{id}/runs/{runID}/books/{bookID}/edition`
      body: editable scalars, ID lists; from step 6, an optional `resync` (default `false`, opt-in).
@@ -938,8 +962,8 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
   replaced by that.
 - **Step 5:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
 - **Token scope (steps 2, 4, 7):** step 2 documents the scopes in `cmd/edition/README.md`; step 4 adds the write scope to the README
-  Prerequisites, the API note and `docs/openapi.yaml` (the 403 response) and covers it in its one CHANGELOG bullet; step 7 documents it
-  in the user-facing note and the UI message. The draft (step 3) needs no write scope.
+  Prerequisites, the API note and `docs/openapi.yaml` (the 403 response and the capability route) and covers it in its one CHANGELOG
+  bullet; step 7 documents it in the user-facing note, and the button is hidden unless the capability check passes. The draft (step 3) needs no write scope.
 - **Step 6:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
 - **Step 7:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
   read-status resync, dry-run behavior, the Known limitation); CHANGELOG entry.

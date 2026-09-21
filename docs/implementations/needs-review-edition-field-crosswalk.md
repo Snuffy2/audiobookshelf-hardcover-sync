@@ -131,7 +131,11 @@ Points about the target that shape the mapping:
   without it is refused with `403 insufficient_scope` ("Missing scopes: write:catalog:append") and nothing is created; with it the
   insert succeeds. The sync token's scopes
   (`read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`) do not include it, so creating an edition needs a
-  second key or an added scope, and the docs for each step say so (see the plan's "Token scopes" items). The owner reports that
+  second key or an added scope, and the docs for each step say so (see the plan's "Token scopes" items). A token's scopes cannot be
+  read (no introspection endpoint, opaque tokens, no schema field). A pre-flight edition insert with a book id that cannot exist
+  tells the cases apart without creating anything: HTTP 200 with a "Couldn't find Book" error when the scope is present, `403
+  insufficient_scope` with a `scope` field naming the missing scope when it is not (both confirmed against the real API). Step 4
+  builds the gate on it and step 7 uses it to show the add-edition action. The owner reports that
   the key also needs `read:library` and `write:library`; the capability table does not list them for these mutations and the create
   path only reads `books` and `editions`, so that is to be confirmed with a key that lacks them.
 - **Not settable on an edition**: description, series, genres and tags are book-level (`BookDtoType`), and there is no
