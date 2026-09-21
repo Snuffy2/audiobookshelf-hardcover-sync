@@ -2,12 +2,29 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/multiuser"
 )
+
+// maxEditionRequestBytes caps the create-edition request body.
+const maxEditionRequestBytes = 64 << 10
+
+// editionWriteDeadline is how long the response of an edition request may take
+// to be written, measured from when the handler starts. The server's default
+// write timeout is far shorter than an edition create, so without this a slow
+// request would finish its work but the client would see a closed connection
+// and retry into a duplicate. A create first fetches the Audiobookshelf item
+// (at most audiobookshelf.RequestTimeout) and only then starts its own
+// multiuser.EditionCreateTimeout, so the bound is both plus a margin for the
+// work around them.
+const editionWriteDeadline = audiobookshelf.RequestTimeout + multiuser.EditionCreateTimeout + 15*time.Second
 
 // GetEditionDraft handles
 // GET /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft.
@@ -27,6 +44,55 @@ func (h *Handler) GetEditionDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeSuccessResponse(w, draft)
+}
+
+// CreateEdition handles
+// POST /api/profiles/{id}/runs/{runID}/books/{bookID}/edition.
+//
+// The body carries only the editable edition fields. Unknown fields, including
+// book_id and image_url, are rejected so a request cannot retarget the edition
+// or choose the image URL that receives the Audiobookshelf token.
+func (h *Handler) CreateEdition(w http.ResponseWriter, r *http.Request) {
+	profileID, runID, bookID, ok := h.editionRequestIDs(w, r)
+	if !ok {
+		return
+	}
+
+	var edits multiuser.EditionEdits
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEditionRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&edits); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			h.writeErrorResponse(w, http.StatusBadRequest, "Request body too large")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// The body must be exactly one JSON object.
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	h.extendEditionWriteDeadline(w)
+	created, err := h.multiUserService.CreateEditionFromRunBook(r.Context(), profileID, runID, bookID, edits)
+	if err != nil {
+		h.writeEditionError(w, "create edition", profileID, err)
+		return
+	}
+	h.writeSuccessResponse(w, created)
+}
+
+// extendEditionWriteDeadline lifts the server's write timeout for this response
+// to editionWriteDeadline. It is best effort: a ResponseWriter that cannot set a
+// deadline keeps the server default, which only matters for requests that run
+// longer than that default.
+func (h *Handler) extendEditionWriteDeadline(w http.ResponseWriter) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(editionWriteDeadline)); err != nil {
+		h.log.Debug(fmt.Sprintf("Could not extend the write deadline for an edition request: %s", err.Error()))
+	}
 }
 
 // editionRequestIDs validates the path identifiers and authorizes the caller
@@ -50,6 +116,7 @@ func (h *Handler) editionRequestIDs(w http.ResponseWriter, r *http.Request) (pro
 // internal failures are logged and reported generically so remote details and
 // credentials never reach the client.
 func (h *Handler) writeEditionError(w http.ResponseWriter, action, profileID string, err error) {
+	var validation *multiuser.EditionValidationError
 	var upstream *multiuser.EditionUpstreamError
 	errors.As(err, &upstream)
 	switch {
@@ -61,12 +128,18 @@ func (h *Handler) writeEditionError(w http.ResponseWriter, action, profileID str
 		h.writeErrorResponse(w, http.StatusNotFound, "Audiobookshelf item not found")
 	case errors.Is(err, multiuser.ErrEditionNotEligible):
 		h.writeErrorResponse(w, http.StatusConflict, "Only needs-review books that matched a Hardcover book can get a new edition")
+	case errors.Is(err, multiuser.ErrEditionConflict):
+		h.writeErrorResponse(w, http.StatusConflict, "An edition with this ASIN or ISBN already exists on Hardcover and could not be confirmed to belong to this book.")
 	case errors.Is(err, multiuser.ErrEditionNoIdentifier):
 		h.writeErrorResponse(w, http.StatusConflict, "This book has no ASIN or ISBN in Audiobookshelf, so an edition created for it could not be matched by a sync. Add an ASIN or ISBN in Audiobookshelf first.")
+	case errors.Is(err, multiuser.ErrEditionInProgress):
+		h.writeErrorResponse(w, http.StatusConflict, "An edition is already being created for this book")
 	case errors.Is(err, multiuser.ErrProfileDeleting):
 		h.writeErrorResponse(w, http.StatusConflict, "Sync profile is being deleted")
 	case errors.Is(err, multiuser.ErrServiceShuttingDown):
 		h.writeErrorResponse(w, http.StatusServiceUnavailable, "Service is shutting down")
+	case errors.As(err, &validation):
+		h.writeErrorResponse(w, http.StatusUnprocessableEntity, validation.Error())
 	case upstream == nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
 		// The request context ended; the client is no longer waiting for an
 		// upstream failure response, so avoid logging it as one.

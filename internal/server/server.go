@@ -76,6 +76,7 @@ func New(addr string, multiUserService *multiuser.MultiUserService, authService 
 	apiMux.HandleFunc("DELETE /api/profiles/{id}/sync", s.apiHandler.CancelSync)
 	apiMux.HandleFunc("GET /api/profiles/{id}/runs/{runID}/details", s.apiHandler.GetRunDetails)
 	apiMux.HandleFunc("GET /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft", s.apiHandler.GetEditionDraft)
+	apiMux.HandleFunc("POST /api/profiles/{id}/runs/{runID}/books/{bookID}/edition", s.apiHandler.CreateEdition)
 
 	// Mount profile API routes under /api with auth middleware. Keep the /api
 	// prefix in the mux patterns: StripPrefix would operate on URL.Path after

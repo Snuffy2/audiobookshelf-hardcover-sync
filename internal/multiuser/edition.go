@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -217,7 +218,7 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		BookID:        target.hardcoverBookID,
 		Title:         edits.Title,
 		Subtitle:      edits.Subtitle,
-		ImageURL:      draft.CoverURL(target.profile.AudiobookshelfURL, *item),
+		ImageURL:      editionCoverURL(target.profile.AudiobookshelfURL, *item),
 		ISBN10:        edits.ISBN10,
 		ISBN13:        edits.ISBN13,
 		ASIN:          edits.ASIN,
@@ -262,6 +263,22 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		created.Warnings = append(created.Warnings, editionCoverWarning)
 	}
 	return created, nil
+}
+
+// editionCoverURL returns the server-controlled Audiobookshelf cover URL for
+// an item, or "" when the item has no cover or no usable base URL.
+func editionCoverURL(absBaseURL string, absBook models.AudiobookshelfBook) string {
+	if absBook.ID == "" || absBook.Media.CoverPath == "" {
+		return ""
+	}
+	base, err := url.Parse(strings.TrimSpace(absBaseURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return ""
+	}
+	base.User = nil
+	base.RawQuery = ""
+	base.Fragment = ""
+	return fmt.Sprintf("%s/api/items/%s/cover", strings.TrimRight(base.String(), "/"), url.PathEscape(absBook.ID))
 }
 
 // editionCreator builds the creator for one create request, using

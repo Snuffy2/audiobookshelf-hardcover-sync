@@ -1,6 +1,6 @@
-// Package editiontest provides an Audiobookshelf HTTP fake and a minimal
-// Hardcover request counter for tests of the read-only edition draft flow.
-// It imports no project package and is only meant to be imported by tests.
+// Package editiontest provides Audiobookshelf and Hardcover HTTP fakes for
+// tests of the edition draft and create flows. It imports no project package
+// and is only meant to be imported by tests.
 package editiontest
 
 import (
@@ -10,36 +10,230 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
-// HardcoverRequestCounter records any HTTP request sent to the configured
-// Hardcover endpoint. It intentionally provides no GraphQL behavior: draft
-// tests use it only to verify that previewing sends no request.
-type HardcoverRequestCounter struct {
-	*httptest.Server
-	mu       sync.Mutex
-	requests int
+// ExistingEdition is an edition already on Hardcover, found by ASIN or ISBN.
+type ExistingEdition struct {
+	EditionID     int
+	BookID        int
+	ReadingFormat int
 }
 
-// NewHardcoverRequestCounter starts a request counter closed with the test.
-func NewHardcoverRequestCounter(t *testing.T) *HardcoverRequestCounter {
+func (e ExistingEdition) inFormat(variables map[string]interface{}) bool {
+	format := e.ReadingFormat
+	if format == 0 {
+		format = 2
+	}
+	requested, _ := variables["format_id"].(float64)
+	return format == int(requested)
+}
+
+// HardcoverFake stands in for the Hardcover GraphQL endpoint for draft and
+// create tests.
+type HardcoverFake struct {
+	*httptest.Server
+
+	Authors  map[string]int
+	ASINs    map[string]ExistingEdition
+	ISBNs    map[string]ExistingEdition
+	FailWith string
+
+	Entered       chan struct{}
+	ReadEntered   chan struct{}
+	SearchEntered chan struct{}
+
+	mu          sync.Mutex
+	mutations   []map[string]interface{}
+	writes      []string
+	requests    int
+	holdInsert  chan struct{}
+	holdReads   chan struct{}
+	holdSearch  chan struct{}
+	delayAll    time.Duration
+	delayInsert time.Duration
+}
+
+// HardcoverRequestCounter remains the draft tests' descriptive name while
+// sharing the richer fake needed by create tests.
+type HardcoverRequestCounter = HardcoverFake
+
+// NewHardcoverFake starts a Hardcover fake closed with the test.
+func NewHardcoverFake(t *testing.T) *HardcoverFake {
 	t.Helper()
-	counter := &HardcoverRequestCounter{}
-	counter.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		counter.mu.Lock()
-		counter.requests++
-		counter.mu.Unlock()
-		http.Error(w, "unexpected Hardcover request during edition draft", http.StatusInternalServerError)
-	}))
-	t.Cleanup(counter.Close)
-	return counter
+	fake := &HardcoverFake{
+		Authors:       map[string]int{},
+		ASINs:         map[string]ExistingEdition{},
+		ISBNs:         map[string]ExistingEdition{},
+		Entered:       make(chan struct{}, 8),
+		ReadEntered:   make(chan struct{}, 64),
+		SearchEntered: make(chan struct{}, 8),
+	}
+	fake.Server = httptest.NewServer(http.HandlerFunc(fake.serve))
+	t.Cleanup(fake.Close)
+	return fake
+}
+
+// NewHardcoverRequestCounter starts the shared fake closed with the test.
+func NewHardcoverRequestCounter(t *testing.T) *HardcoverRequestCounter {
+	return NewHardcoverFake(t)
+}
+
+// RecordedMutations returns variables from every insert_edition request.
+func (f *HardcoverFake) RecordedMutations() []map[string]interface{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]interface{}(nil), f.mutations...)
+}
+
+// RecordedWrites returns every mutation document received.
+func (f *HardcoverFake) RecordedWrites() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.writes...)
 }
 
 // RequestCount returns the number of requests received, of any kind.
-func (c *HardcoverRequestCounter) RequestCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.requests
+func (f *HardcoverFake) RequestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
+}
+
+func (f *HardcoverFake) HoldInsert(ch chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdInsert = ch
+}
+
+func (f *HardcoverFake) HoldReads(ch chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdReads = ch
+}
+
+func (f *HardcoverFake) HoldSearches(ch chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdSearch = ch
+}
+
+func (f *HardcoverFake) ReleaseHolds() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, hold := range []*chan struct{}{&f.holdInsert, &f.holdReads, &f.holdSearch} {
+		if *hold != nil {
+			close(*hold)
+			*hold = nil
+		}
+	}
+}
+
+func (f *HardcoverFake) SetDelays(all, insert time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayAll, f.delayInsert = all, insert
+}
+
+func (f *HardcoverFake) serve(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Query     string                 `json:"query"`
+		Variables map[string]interface{} `json:"variables"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	respond := func(data map[string]interface{}) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": data})
+	}
+
+	f.mu.Lock()
+	f.requests++
+	delayAll, delayInsert := f.delayAll, f.delayInsert
+	holdInsert, holdReads, holdSearch := f.holdInsert, f.holdReads, f.holdSearch
+	isMutation := strings.HasPrefix(strings.TrimSpace(request.Query), "mutation")
+	if isMutation {
+		f.writes = append(f.writes, request.Query)
+	}
+	f.mu.Unlock()
+
+	if !isMutation && holdReads != nil {
+		f.ReadEntered <- struct{}{}
+		select {
+		case <-holdReads:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	time.Sleep(delayAll)
+
+	switch {
+	case strings.Contains(request.Query, "insert_edition"):
+		f.mu.Lock()
+		f.mutations = append(f.mutations, request.Variables)
+		failWith := f.FailWith
+		f.mu.Unlock()
+		f.Entered <- struct{}{}
+		if holdInsert != nil {
+			<-holdInsert
+		}
+		time.Sleep(delayInsert)
+		if failWith != "" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"errors": []map[string]string{{"message": failWith}}})
+			return
+		}
+		respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
+	case strings.Contains(request.Query, "insert_image"):
+		respond(map[string]interface{}{"insert_image": map[string]interface{}{"id": 55}})
+	case strings.Contains(request.Query, "update_edition"):
+		respond(map[string]interface{}{"update_edition": map[string]interface{}{"id": 777, "errors": []string{}}})
+	case strings.Contains(request.Query, "BookByISBN"):
+		isbn, _ := request.Variables["isbn"].(string)
+		respond(map[string]interface{}{"books": f.existingBooks(f.ISBNs[isbn], request.Variables, "isbn_13", isbn)})
+	case strings.Contains(request.Query, "BookByASIN"):
+		asin, _ := request.Variables["asin"].(string)
+		respond(map[string]interface{}{"books": f.existingBooks(f.ASINs[asin], request.Variables, "asin", asin)})
+	case strings.Contains(request.Query, "query GetEdition("):
+		editionID, _ := request.Variables["editionId"].(float64)
+		editions := []interface{}{}
+		for asin, found := range f.ASINs {
+			if float64(found.EditionID) == editionID {
+				editions = append(editions, map[string]interface{}{"id": found.EditionID, "book_id": found.BookID, "asin": asin})
+			}
+		}
+		respond(map[string]interface{}{"editions": editions})
+	case strings.Contains(request.Query, "SearchPeopleDirect") || strings.Contains(request.Query, "SearchNarrators"):
+		name, _ := request.Variables["name"].(string)
+		people := []map[string]interface{}{}
+		if id, ok := f.Authors[name]; ok {
+			people = append(people, map[string]interface{}{"id": id, "name": name, "books_count": 3})
+		}
+		respond(map[string]interface{}{"authors": people})
+	default:
+		if holdSearch != nil {
+			f.SearchEntered <- struct{}{}
+			select {
+			case <-holdSearch:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		respond(map[string]interface{}{
+			"search":     map[string]interface{}{"error": "", "results": map[string]interface{}{"hits": []interface{}{}}},
+			"publishers": []interface{}{}, "editions": []interface{}{}, "books": []interface{}{},
+		})
+	}
+}
+
+func (f *HardcoverFake) existingBooks(found ExistingEdition, variables map[string]interface{}, field, value string) []interface{} {
+	if found.EditionID == 0 || !found.inFormat(variables) {
+		return []interface{}{}
+	}
+	return []interface{}{map[string]interface{}{
+		"id": found.BookID, "title": "Existing",
+		"editions": []interface{}{map[string]interface{}{"id": found.EditionID, field: value}},
+	}}
 }
 
 // AudiobookshelfFake serves /api/items/{id} for a fixed set of items and the
