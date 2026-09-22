@@ -25,23 +25,26 @@ call are marked **(assumed)** or **(unverified)**.
 ABS  GET /api/items/{id}?expanded=1                    audiobookshelf.Client.GetLibraryItem            (step 3)
   |
   v  draft.New(...)                                                                                     (step 3)
-mismatch.Collector.AddWithMetadata(...)   Audnex release date (ASIN), publisher-name lookup,        (step 1)
-  |                                       ISBN split, defaults (language 1, country 1)
+mismatch local preparation (hc=nil)       Audnex release date (ASIN), ISBN split,                   (steps 1, 3)
+  |                                       defaults (language 1, country 1), exact ABS names
   v
-BookMismatch.ToEditionExport(...)         author and narrator ID lookups, edition_format,           (step 1)
-  |                                       edition_information, audio_seconds, cover preference
+BookMismatch.ToEditionExport(..., nil)    edition_format, edition_information, audio_seconds         (steps 1, 3)
   v
-draft.Draft  ->  GET .../edition-draft    editable preview, plus display names and warnings          (step 3)
+draft.Draft  ->  GET .../edition-draft    editable preview, ABS names and local warnings; no HC call  (step 3)
   |
   v  user edits, then POST .../edition
+ABS refetch + Hardcover resolution        exact author/narrator/publisher lookup                     (step 4)
+  |
+  v
 multiuser.validateEditionInput            trim title, normalize ISBNs, require an identifier         (step 4)
-  |                                       and an author, bound the ID lists
+  |                                       and a resolved author; validate server-derived values
   v
 edition.Creator.CreateEdition             duplicate lookups, insert_edition (no cover upload)          (step 2)
 ```
 
-One field never comes from the client: `book_id` (from the run record's `hardcover_book_id`). The reading format is also
-decided on the server, from the ABS item fetched again at create time. The app sets no cover and uploads none (see R17).
+The client supplies only the editable preview scalars. `book_id` comes from the run record's `hardcover_book_id`; reading
+format, exact people/publisher names, their Hardcover IDs, duration, language/country and edition format are server-derived
+from the ABS item fetched again at create time. The app sets no cover and uploads none (see R17).
 
 ## 2. Source: what ABS returns
 
@@ -151,7 +154,7 @@ Points about the target that shape the mapping:
 Row IDs (`R1` to `R18`) are stable: other documents refer to them, so a new row is appended and an existing row is never
 renumbered. "Steps" lists every step that delivers part of the row (implements or changes it); section 5 says what each
 step delivers and what it only has to verify. **UI** means the field appears as an editable input in the step 7 preview;
-**API** means the POST body accepts it (`EditionEdits`); **server** means the client cannot set it.
+**API** means the POST body accepts it; **server** means the client cannot set it.
 
 | Row | Hardcover field | ABS source | Transformation and logic | Steps | Edit |
 |---|-----------------|------------|--------------------------|------|------|
@@ -161,16 +164,16 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R4 | `asin` | `metadata.asin` | Trimmed only. No case or shape check. Also triggers the Audnex lookup (R8) and sets `edition_format` (R11). | 2, 3, 4, 5, 7 | UI, API |
 | R5 | `isbn_13` | `metadata.isbn` | Normalized (separators removed, trailing `x` uppercased), classified by shape. 13 digits goes here; a 10-character value goes to R6. The draft then fills the *other* form when it can be derived. The export also carries `isbn_10_valid` / `isbn_13_valid`: whether the exported ISBN's own check digit is correct (omitted when that ISBN is empty). A bad-checksum ISBN is still exported. | 1, 2, 3, 4, 5, 7 | UI, API |
 | R6 | `isbn_10` | `metadata.isbn` | As R5. The ISBN-10 to ISBN-13 conversion adds `978` and recalculates the check digit; a 979 ISBN-13 has no ISBN-10. A counterpart is derived only when the input's own checksum is valid. | 1, 2, 3, 4, 5, 7 | UI, API |
-| R7 | `contributions[]`, author (`contribution: null`) | `metadata.authorName` | Split on `,`, each name trimmed, empty names dropped. Each name is looked up on Hardcover by **exact, case-sensitive name** among active authors; the first row returned is used. IDs are de-duplicated and keep ABS order. No match on any name means zero authors, which is a draft warning and a create failure. | 2, 3, 4, 7 | API |
+| R7 | `contributions[]`, author (`contribution: null`) | expanded `metadata.authors[].name`, with `authorName` fallback | The draft carries exact trimmed ABS names without a Hardcover call. After create confirmation, each name is looked up on Hardcover by **exact, case-sensitive name** among active authors; the first row returned is used. IDs are de-duplicated and keep ABS order. No source author is a draft warning; no Hardcover match is a create-time 422. | 2, 3, 4, 7 | server |
 | R8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The result is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. `metadata.publishedDate` is not read. Create requires `YYYY-MM-DD`. | 2, 3, 7 | UI, API |
-| R9 | `contributions[]`, `"Narrator"` | `metadata.narratorName` | Same split as R7. Lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook draft passes no narrator. No match is a warning; the edition is created without a narrator. | 1, 2, 3, 4, 7 | API |
-| R10 | `publisher_id` | `metadata.publisher` | Looked up by **exact, case-sensitive** publisher name. Not found gives `0`, which is omitted (warning). Never defaults to a guessed ID (was `1` before step 1). | 1, 2, 3, 4 | API |
-| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: always `Ebook`, replacing any label the record carries. Trimmed, at most 100 characters. Hardcover normalizes the stored label: `Audible Audio` was stored as `Audible` (`Ebook` is unchanged). | 1, 2, 3, 4 | API |
+| R9 | `contributions[]`, `"Narrator"` | expanded `metadata.narrators[]`, with `narratorName` fallback | The draft carries exact trimmed ABS names without a Hardcover call. On create, lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook has no narrators. A create-time miss is non-fatal, omits the narrator and returns a fixed warning. | 1, 2, 3, 4, 7 | server |
+| R10 | `publisher_id` | `metadata.publisher` | The draft carries the exact ABS name only. On create it is looked up by **exact, case-sensitive** publisher name. Not found gives `0`, is omitted, and returns a fixed warning. Never defaults to a guessed ID (was `1` before step 1). | 1, 2, 3, 4, 7 | server |
+| R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: always `Ebook`, replacing any label the record carries. Recomputed from the ABS item at create time, trimmed, at most 100 characters. Hardcover normalizes the stored label: `Audible Audio` was stored as `Audible` (`Ebook` is unchanged). | 1, 2, 3, 4, 7 | server |
 | R12 | `reading_format_id` | `mediaType`, `ebookFile`, `ebookFormat`, `duration`, `numTracks` | `IsEbook()` gives 4, otherwise 2. Recomputed from ABS at create time; the request cannot set it (an extra `reading_format` field is rejected with 400). | 1, 2, 3, 4, 5, 7 | server |
-| R13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Sent only when greater than 0 and the item is an audiobook. | 1, 2, 3, 4, 7 | API |
+| R13 | `audio_seconds` | `media.duration` | `int(duration + 0.5)`. Recomputed from the ABS item at create time and sent only when greater than 0 and the item is an audiobook. | 1, 2, 3, 4, 7 | server |
 | R14 | `edition_information` | `metadata.abridged` | Audiobook: `Abridged` when ABS marks it abridged, else `Unabridged`. Ebook: empty (omitted). The mismatch record's own placeholder `Audiobookshelf` is discarded; a real value on the record would win (no production code sets one, so `BookMismatch.EditionInfo` is slated for removal, see the plan's step 3 checklist). | 1, 2, 3, 7 | UI, API |
-| R15 | `language_id` | none (`metadata.language` is ignored) | Constant `1` (assumed English). | 2, 3, 4 | API |
-| R16 | `country_id` | none | Constant `1` (assumed United States). | 2, 3, 4 | API |
+| R15 | `language_id` | none (`metadata.language` is used only for a preview warning) | Server-derived constant `1` (assumed English). | 2, 3, 4 | server |
+| R16 | `country_id` | none | Server-derived constant `1` (assumed United States). | 2, 3, 4 | server |
 | R17 | cover: `insert_image`, then `update_edition {image_id}` | `media.coverPath` (existence only) | **Not used for now: nothing uploads a cover.** The creator keeps the flow but switched off (`EnableCoverUpload`, called by nothing), so `image_url` is neither fetched nor uploaded and `ImageError` says so. If it is switched on: URL is `<ABS base>/api/items/<id>/cover`, credentials, query and fragment stripped; empty when the item has no cover. The creator downloads it (ABS bearer token only when the host matches the profile's ABS URL), uploads it to Hardcover, creates the image record, and attaches it. Only a PNG or JPEG of at most 15 MiB is uploaded (decided from the downloaded bytes). Any failure is a warning; the edition stays. | 2 | server |
 | R18 | `page_count` | none | Not sent. ABS has no page count. | n/a | n/a |
 
@@ -199,15 +202,15 @@ Confirmed by writes to a test book: `insert_edition` accepts a bad-checksum ISBN
 `isbn_13_valid: false` (no ISBN-10 was derived). Given only a valid ISBN-10, Hardcover also stored the matching ISBN-13, flagged valid,
 which is the value `internal/isbn` derives, so a created edition can hold both forms.
 
-**Not tested:** the `isbns_match` field, and how often Audiobookshelf serves a bad checksum. Whether a `false` flag is a
-warning or a rejection in the draft and create endpoints is open (see the step 3 and step 4 checklists). On create, each field is
+**Not tested:** the `isbns_match` field, and how often Audiobookshelf serves a bad checksum. The draft exposes the flag and
+warns when it is false; whether create accepts or rejects it remains open (see the step 4 checklist). On create, each field is
 re-normalized and must have the right length for its slot (`isbn_10 must be a valid 10-character ISBN`), and at least
 one of `asin`, `isbn_10`, `isbn_13` is required.
 
 **R7 and R9, people.** ABS's `authorName` is `authors.map(name).join(', ')`, so a single author called
 `"John Smith, Jr."` is indistinguishable from two authors once joined. The expanded item carries the exact
-`authors[].name` and `narrators[]`, but the model does not decode them (finding 2). Person lookup details
-(`SearchPeople` in the Hardcover client):
+`authors[].name` and `narrators[]`; step 3 decodes and carries those exact values, with the joined strings only as a legacy
+fallback (finding 2). Person lookup uses `SearchPeople` in the Hardcover client only after create confirmation:
 
 - The query is `authors(where: {state: {_eq: "active"}, name: {_eq: $name}})` (plus, for narrators, `contributions:
   {contribution: {_eq: "Narrator"}}`), limit 5, **no `order_by`**. `people.go` says it takes "the top result by book
@@ -217,8 +220,8 @@ one of `asin`, `isbn_10`, `isbn_13` is required.
   (no earlier `Narrator` credit) is never matched.
 - A name made only of digits is first tried as a Hardcover person ID, then as a name.
 - Results are cached for the life of the process, keyed by type and lower-cased name.
-- Because a name must match exactly, "J.R.R. Tolkien" and "J. R. R. Tolkien" are different lookups, and a miss is
-  silent apart from the draft warning.
+- Because a name must match exactly, "J.R.R. Tolkien" and "J. R. R. Tolkien" are different lookups. A required-author
+  miss is a create-time 422; optional narrator/publisher misses become fixed create-response warnings.
 
 **R8, release date.** Audnex is an Audible metadata service, so it only helps for Audible ASINs. Without a date from
 Audnex the fallback is the year only, and the Hardcover librarian rule (January 1 when only the year is known) is
@@ -254,8 +257,8 @@ Every step in [the plan](needs-review-edition-creation.md) touches some rows. Fo
 |------|----------|----------|--------------------|
 | 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
 | 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (the creator's cover chain and token scoping; the app does not use it) | R5, R6 forms from step 1 | 5, 8 |
-| 3 Draft endpoint | The ABS side: decode, then R1-R16 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
-| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
+| 3 Draft endpoint | The ABS/Audnex side: decode and preview R1-R6, R8, R11-R16; carry exact R7/R9/R10 names without resolving IDs; identifier requirement | R5, R6, R11-R14 export behavior; R12 | 2, 3, 4, 7 (6 is informational) |
+| 4 Create endpoint | The editable set, validation and normalization plus every Hardcover operation: resolve R7/R9/R10, duplicate-check and insert R1-R16; R11-R13/R15/R16 derived on the server | R3, R8 and R14 pass through unchanged; exact expanded names from step 3's ABS model | 5, 8, 9 |
 | 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
 | 6 Resync | nothing new | R1, R4-R6, R12: the resync finds the edition just created | none |
 | 7 UI | What is editable, shown, hidden and echoed: R2-R14 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
@@ -323,40 +326,51 @@ ebook.
 
 - **ABS decode.** `GetLibraryItem` reads `?expanded=1`; a 404 is a typed not-found. Decide what else the model decodes:
   `authors[]`, `narrators[]`, `language`, `publishedDate` (findings 2-4; `abridged` is already decoded by step 1).
-- **R1:** the book ID comes from the run record and overrides enrichment; a record without a positive Hardcover book is not
-  eligible. **Identifier requirement:** an item with neither an ASIN nor a parseable ISBN is refused (409) before any
-  Hardcover call.
+- **R1:** the target book ID comes from the run record; a record without a positive Hardcover book is not eligible. This
+  value identifies where a later create will write and does not cause a draft-time Hardcover call. **Identifier
+  requirement:** an item with neither an ASIN nor a parseable ISBN is refused (409).
 - **R2-R4:** passed through.
 - **R5, R6:** the counterpart form is filled only when it can be derived (valid checksum, 978 only); both stay editable.
-- **R7, R9:** names resolve to IDs; warnings for no author matched (create would fail), and for no narrator matched or listed
-  (audiobook only). An ebook draft has no narrators and no narrator warning. Findings 2 and 9.
+- **R7, R9:** carry exact expanded ABS names, including commas within a name, with the joined legacy fields only as a
+  fallback. No Hardcover IDs are present. A missing source author is a local warning; an ebook draft has no narrators and
+  no narrator warning. Finding 2 is handled here; Hardcover matching in finding 9 moves to step 4.
 - **R8:** Audnex region fallback, normalization and the year fallback; a warning when there is no date.
-- **R10:** a warning when a publisher is named but not found.
+- **R10:** carry the publisher name without resolving it. There is no draft warning about whether Hardcover has a match.
 - **R11, R13, R14:** taken from the export: audiobook labels, `Ebook` for an ebook; duration rounded with `int(d + 0.5)`
   (33854.905 becomes 33855); an ebook has no audio and no `Unabridged`.
 - **R12:** the draft reports `reading_format`.
 - **R15, R16:** constants; finding 3 adds a warning when ABS names a language other than English.
 - **R17:** not used: the draft carries no cover URL.
-- **Verifies:** the step 1 behavior above, seen through the draft (R5, R6, R10-R14), and R12.
-- **Decide:** findings 2, 3, 4, 7 and 9 (draft level); finding 6 is informational.
+- **Verifies:** the step 1 local/export behavior above, seen through the draft (R5, R6, R11-R14), and R12.
+- **Decide:** findings 2, 3, 4 and 7; finding 6 is informational. Finding 9 is create-time work.
+- **External-call boundary:** one ABS item fetch and optional Audnex enrichment only. Tests prove that draft preparation
+  does not construct a Hardcover client or issue any Hardcover request.
 
 ### Step 4: Create endpoint
 
-Code: `EditionEdits`, `validateEditionInput`, `normalizeEditionIdentifiers`, `CreateEditionFromRunBook`, the POST handler.
+Code: the editable request DTO, create-time metadata resolver, `validateEditionInput`, `normalizeEditionIdentifiers`,
+`CreateEditionFromRunBook`, the POST handler.
 
-- **The editable set is exactly `EditionEdits`** (the API column of section 4). Any other field, including `reading_format`,
-  `book_id` and `image_url`, is rejected (400), and the body must be exactly one JSON object.
+- **The editable set is exactly** title, subtitle, ASIN, ISBN-10, ISBN-13, release date and edition information (the API
+  column of section 4). Any other field, including names, Hardcover IDs, `edition_format`, `audio_seconds`,
+  `language_id`, `country_id`, `reading_format`, `book_id` and `image_url`, is rejected (400), and the body must be
+  exactly one JSON object.
 - **R1:** `book_id` from the run record only. **R12:** the reading format comes from the ABS item fetched at create time, so an
   ebook cannot be created as an audiobook or the reverse.
 - **R2:** trimmed; a blank title is 422. **R4-R6:** the ASIN is trimmed and the ISBNs lose hyphens and spaces; a value of the
   wrong shape for its slot is 422; at least one of ASIN, ISBN-10, ISBN-13 is required (422); an ABS item with no identifier
   is 409.
-- **R7, R9:** at most 50 IDs each, all positive. **R10, R13, R15, R16:** not negative. **R11:** at most 100 characters.
+- **R7, R9, R10:** refetch the expanded ABS item and resolve its exact names on Hardcover only after confirmation.
+  Author IDs are required; no author match is 422. Narrator and publisher misses are non-fatal, omitted, and returned as
+  fixed warnings. Transport, GraphQL, rate-limit or timeout failures are sanitized 502 responses and no insert occurs.
+  Resolved author/narrator lists remain bounded to 50 positive IDs. **R11, R13, R15, R16:** recomputed from the ABS item
+  and validated server-side; the client cannot override them.
 - **R17:** not used: create sets no `image_url` (a request that sends one is 400), uploads no cover and returns no cover warning.
 - **Also:** a duplicate on another book is 409 with the fixed message; a dry run issues no mutation and returns
   `edition_id: 0`.
 - **Verifies:** R3, R8 and R14 reach the creator unchanged.
-- **Decide:** finding 8 (the required scope) goes in the PR's testing notes and the endpoint docs; finding 5 as informational.
+- **Decide:** finding 8 (the required scope) goes in the PR's testing notes and endpoint docs; finding 9 is handled at
+  create time; finding 5 is informational.
 
 ### Step 5: Sync identifier matching
 
@@ -390,12 +404,13 @@ Code: `web/static/app.js`, `index.html`, `styles.css`. This step decides what th
 
 - **Editable inputs, exactly:** R2 title, R3 subtitle, R4 ASIN, R5 ISBN-13, R6 ISBN-10, R8 release date, R14 edition
   information.
-- **Read-only:** R7, R9, R10 (the resolved author, narrator and publisher names), R11 edition format, R12 reading format,
+- **Read-only:** R7, R9, R10 (the Audiobookshelf author, narrator and publisher names; not pre-resolved on Hardcover), R11 edition format, R12 reading format,
   R13 duration.
 - **Ebook:** hide R9 (narrators) and R13 (duration) and show R12.
-- **Echoed back unedited:** `author_ids`, `narrator_ids`, `publisher_id`, `language_id`, `country_id`, `audio_seconds` and
-  `edition_format` from the draft, so what was previewed is what is created, with no second round of lookups.
-- **Messages:** every draft warning (R7, R8, R9, R10, and finding 3 if added) and the 409 and 422 messages.
+- **Submitted:** only the editable scalars. The UI never receives or sends Hardcover author, narrator or publisher IDs;
+  create refetches the ABS item and resolves them after confirmation.
+- **Messages:** every local draft warning, every fixed create-time optional-resolution warning, and the 409, 422 and
+  sanitized 502 messages.
 - **Safety:** every ABS-supplied string (title, names, publisher) is escaped.
 - **Decide:** finding 9 (no author matched leaves the user with no way to continue), and finding 3 if the language is shown.
 
@@ -423,25 +438,24 @@ afterwards by `update_edition`). `EditionInput.locked` is not sent.
 |-------|-------------|--------|
 | `book_id` | server | Run record; the request cannot retarget the edition. |
 | cover URL | none | Not used: the app sets no `image_url` and uploads no cover (see R17). |
-| `reading_format_id`, reading-format-dependent fields | server | `item.ReadingFormat()` on the item fetched at create time. |
-| Everything else in `EditionEdits` | the client, validated | `title`, `subtitle`, `asin`, `isbn_10`, `isbn_13`, `release_date`, `edition_information`, `edition_format`, `audio_seconds`, `language_id`, `country_id`, `author_ids`, `narrator_ids`, `publisher_id`. At most 50 author and 50 narrator IDs, all positive; publisher, language, country and audio length not negative. |
+| `reading_format_id`, `edition_format`, `audio_seconds`, `language_id`, `country_id` | server | Derived from the expanded ABS item fetched at create time. |
+| `author_ids`, `narrator_ids`, `publisher_id` | server | Exact ABS names resolved through Hardcover after confirmation; never accepted from the client. |
+| Editable request fields | client, validated | `title`, `subtitle`, `asin`, `isbn_10`, `isbn_13`, `release_date`, `edition_information`. |
 
 The step 7 UI (planned) shows editable text inputs for title, subtitle, ASIN, ISBN-10, ISBN-13, release date and edition
-information, and shows the resolved author, narrator and publisher names read-only. So a person whose author name did
-not match on Hardcover cannot fix that in the UI, although the API would accept `author_ids` (finding 9).
+information, and shows the ABS author, narrator and publisher names read-only. A person whose author name does not match
+on Hardcover learns that only when create returns its fixed 422 and cannot override IDs through this API (finding 9).
 
 ## 8. Calls made
 
-**Draft** (read-only): one ABS item fetch; if there is an ASIN, up to two Audnex requests (region, then `us`, each
-retried up to three times, all sharing one 15 s cap); a publisher lookup (repeated in `ToEditionExport` when the first
-found nothing); a handful of Hardcover reads from `AddWithMetadata`'s candidate
-enrichment (ISBN or ASIN lookup, then a title and author search with up to five detail reads), whose results the draft
-mostly discards; one lookup per author name and per narrator name. Lookups are cached per process.
+**Draft** (read-only): one ABS item fetch; if there is an audiobook ASIN, up to two Audnex region attempts sharing the
+bounded Audnex policy. It makes **zero Hardcover requests** and constructs no Hardcover client.
 
-**Create**: one ABS item fetch; up to three duplicate lookups (ASIN, ISBN-13, ISBN-10 and the converted forms,
-de-duplicated, scoped to the item's reading format); `insert_edition`; then, if there is a cover, download, storage
-credential request, upload, `insert_image`, `update_edition`. A duplicate on the same book is reused untouched; one
-on a different book is refused (409).
+**Create**: one expanded ABS item fetch; one lookup per exact author and narrator name plus a publisher lookup; duplicate
+lookups by ASIN, ISBN-13, ISBN-10 and converted forms (de-duplicated and scoped to the item's reading format); then
+`insert_edition`. The app makes no cover calls. A duplicate on the same book is reused untouched; one on a different
+book is refused (409). All Hardcover work uses the profile's rate-limited client and the create operation's single
+bounded context.
 
 ## 9. Worked examples
 
@@ -469,8 +483,9 @@ ABS (from the API docs sample, shortened):
 }
 ```
 
-Hardcover `insert_edition` variables, assuming Hardcover knows the three names exactly, and Audnex returns no date (with
-a date, `release_date` is that date instead of `2008-01-01`):
+After the user confirms, create resolves the three ABS names and produces these Hardcover `insert_edition` variables,
+assuming Hardcover knows the names exactly and Audnex returned no date (with a date, `release_date` is that date instead
+of `2008-01-01`):
 
 ```json
 {
@@ -539,8 +554,8 @@ which step decides it.
 7. **Audnex for ebooks** (step 3, minor). An ebook's Kindle ASIN still triggers up to two Audnex calls (sharing one 15 s cap) that are not expected to
    resolve; the draft could skip Audnex for ebooks.
 8. **Token scope** (every step, confirmed). Creating an edition needs `write:catalog:append`; see the permissions bullet in section 3 and the plan's token-scope items.
-9. **Exact-match people and publisher lookups** (steps 3 and 7). A name that differs by a space or a period matches
+9. **Exact-match people and publisher lookups** (steps 4 and 7). A name that differs by a space or a period matches
    nothing; a narrator needs an earlier `Narrator` credit; `canonical_id` is ignored; and no ordering is requested. When
-   no author matches, create fails and the step 7 UI has no way to supply one. Decide between a UI path for entering a
+   no author matches, create returns 422 and the step 7 UI has no way to supply one. Decide between a UI path for entering a
    Hardcover author ID or search, a clear "cannot create" state, or a looser lookup (an unverified query, because the
-   hosted API disables some operators; see `AGENTS.md`).
+   hosted API disables some operators; see `AGENTS.md`). Do not move this lookup back into the draft.

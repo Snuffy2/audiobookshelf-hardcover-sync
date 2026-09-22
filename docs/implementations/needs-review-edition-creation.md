@@ -13,6 +13,11 @@ step is ready for the maintainers to consider and merge is an **upstream PR** cr
 here is ever opened upstream on its own. Fork PR #20 (the old combined branch) is closed and stays closed; its branch is
 deleted (see "How the combined branch was split").
 
+**Hardcover call boundary (decision 17).** Opening an edition draft uses Audiobookshelf and, for audiobook ASIN release
+metadata, Audnex only. It neither constructs a Hardcover client nor sends a Hardcover request. After the user confirms,
+the create path refetches the expanded ABS item, resolves author/narrator/publisher names, checks duplicates and inserts
+through Hardcover. The separate Step 4 capability probe remains a create-scope gate; it is not part of draft preparation.
+
 ## Step Tracker
 
 Update this table as each step lands. Each step must leave `develop` working and shippable on its own. Sizes are
@@ -23,8 +28,8 @@ step touches.
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, the cover upload code kept but switched off, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
-| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | [#27](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/27) | — | 1, 2 | ~3,165 (~1,034 prod and docs, ~2,131 tests), measured | Built and validated; PR-description follow-up remains below |
-| 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated |
+| 3 | Read-only ABS/Audnex draft endpoint; no Hardcover calls | `step_3_needs_review_add_edition` | [#27](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/27) | — | 1, 2 | Remeasure after the no-Hardcover adjustment | Requires adjustment and revalidation; remove draft-time Hardcover work |
+| 4 | Create endpoint, create-time Hardcover resolution, guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | Remeasure after the no-Hardcover adjustment | Requires adjustment and revalidation |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
 | 7 | UI: button, preview modal, resync checkbox | `step_7_needs_review_add_edition` | — | — | 6 | ~500-800, estimated | Not started |
@@ -59,8 +64,8 @@ carries the matching item, and its PR description names the rows it delivers.
 |------|----------|----------|------------------------------|
 | 1 ISBN and export foundations | R5, R6 (ISBN split); R10 (unresolved publisher is 0); R11, R13, R14 for ebook exports; R14 `Abridged` for an audiobook; R12 (format helpers) | Audiobook export otherwise unchanged: R2-R4, R7-R9, R11, R13-R17 | 1 (decided and done) |
 | 2 Edition creator | The Hardcover side of every row: R1-R16 (the `dto`, duplicate detection), R17 (the creator's cover chain, switched off so no cover request is made, and token scoping; nothing uploads a cover) | R5, R6 forms from step 1 | 5, 8 |
-| 3 Draft endpoint | The ABS side: decode, then R1-R16 as they appear in the draft; identifier requirement | R5, R6, R10-R14 export behavior; R12 | 2, 3, 4, 7, 9 (6 is informational) |
-| 4 Create endpoint | The editable set, validation and normalization: R1, R2, R4-R7, R9-R13, R15, R16; R12 derived on the server | R3, R8, R14 pass through unchanged | 8 (PR testing notes), 5 |
+| 3 Draft endpoint | The ABS/Audnex side: decode and map R1-R6, R8, R11-R16 into a preview; carry exact R7/R9/R10 names for later resolution; identifier requirement | R5, R6, R11-R14 export behavior; R12 | 2, 3, 4, 7 (6 is informational) |
+| 4 Create endpoint | The editable set, validation and normalization plus all Hardcover work: resolve R7, R9 and R10 names to IDs, perform duplicate lookups, and insert R1-R16; R12 derived on the server | R3, R8 and R14 pass through unchanged; exact expanded names from step 3's ABS model | 5, 8, 9 |
 | 5 Sync matching | R4, R5, R6, R12 as matching: the sync finds what the crosswalk creates | none | none |
 | 6 Resync | nothing new | R1, R4-R6, R12: the resync finds the edition just created | none |
 | 7 UI | What is editable, shown, hidden and echoed: R2-R14 | Escaping of every ABS-supplied string | 9 (UI part), 3 if language is shown |
@@ -224,20 +229,23 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       command honor the variable; the owner decides. `LoadFromFile` also logs the first 500 bytes of the file at debug level.
 
 **Step 3** (fork PR #27)
-- [x] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
+- [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
       the ABS side and the mapping into the draft. Decode the ABS item (`GetLibraryItem`, expanded, 404 typed) and decide
       what else the model reads (findings 2-4; `abridged`, finding 1, is already decoded by step 1); build fixtures from a real expanded item, one audiobook and one ebook; pin
       R1 (book ID from the run record, identifier requirement), R5 and R6 (counterpart only when derivable), R7 and R9
-      (warnings, no narrator for an ebook), R8 (Audnex fallback, year fallback, warning), R10 (warning), R11, R13 and R14
+      (exact ABS names without IDs; missing-source warnings; no narrator for an ebook), R8 (Audnex fallback, year fallback,
+      warning), R10 (publisher name without resolution), R11, R13 and R14
       (rounding, ebook), R12 (`reading_format`), R15 and R16 (R17 is not used: the draft carries no cover URL); verify step 1's
       export behavior through the draft.
 - [x] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
       the step 1 bullet. The earlier branch rewrote step 1's hyphenated-ISBN line; the final diff leaves it untouched.
-- [ ] The PR description says the response write-deadline mechanism (`extendEditionWriteDeadline`, `Unwrap()` in the logger, and
-      `multiuser.EditionDraftTimeout`) lives here because a draft makes many paced Hardcover lookups, and that
-      `internal/edition/editiontest` includes helpers first used in step 4 (`HoldInsert`, `HoldSearches`, `FailWith`).
-- [x] Some comments keep create wording (`editionWriteDeadline`, `editionRequestIDs`, the `newHeldCreateFixture` test helper name)
-      so step 4 stays additive; reword them only if it does not make step 4 non-additive.
+- [ ] Remove every Hardcover dependency from the draft path. `PrepareEditionDraft` must not construct a Hardcover client;
+      `draft.New` must not accept one; and opening a draft must issue zero Hardcover HTTP requests. Move
+      `newHardcoverClient`, Hardcover test fakes, and the response write-deadline mechanism
+      (`extendEditionWriteDeadline`, `editionWriteDeadline`, and the logger response writer's `Unwrap`) to step 4, where
+      create-time resolution and insertion need them. Keep only a request-scoped ABS/Audnex timeout in step 3.
+- [ ] Remove step-4-only deadline/request identifiers, comments and held-Hardcover helpers from step 3; introduce them on
+      step 4 instead so the draft PR remains standalone and contains no dormant Hardcover surface.
 - [x] Crosswalk findings, decide each and either do it in this step or record it as out of scope: (2) use the exact
       `authors[].name` and `narrators[]` arrays from the expanded item instead of splitting `authorName` and `narratorName`
       on commas; (3) do not silently create a non-English item as language 1 (at least warn in the draft when ABS
@@ -259,29 +267,42 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       `false` one (a warning next to the ISBN field is the smallest change that loses nothing) and expose the flag in the draft;
       `insert_edition` accepts a bad checksum (confirmed with a write to a test book), so a `false` flag is a warning, not a blocker.
       The raw `isbn` stays on the record, so the value is never lost.
-- [x] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
-      `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
-      or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
-
-- [x] Bound the complete draft request to two minutes so its sanitized error response can be written before the extended
-      165-second HTTP deadline. Hardcover metadata lookup failures and draft-budget expiry return `502`; caller cancellation
-      still propagates. Tests cover the deadline, exact expanded person names (including commas), legacy joined-name fallback,
-      and non-English and mixed-language warnings.
-
-- [x] Token scopes for the draft: the draft only reads (the ABS item and Hardcover lookups), so it needs only the read scopes the
-      sync token already has. Live author, narrator and publisher searches all succeeded with the limited-scope Hardcover token;
-      no mutation was sent and the full-scope token was not used. The endpoint docs say previewing needs no write scope. A
-      preview's `edition_format` can differ from what Hardcover stores, because it normalizes known labels on write (`Audible Audio` was
-      stored as `Audible`).
+- [ ] Crosswalk finding 9 moves to step 4. The draft carries the exact expanded ABS author and narrator names, including
+      commas within a name, and the publisher name, but neither resolves nor warns about Hardcover matches. It may warn only
+      about local/source facts such as a missing ABS author, missing date, non-English metadata, or a checksum-invalid ISBN.
+- [ ] Replace the two-minute Hardcover-oriented draft budget and `502` lookup behavior with a bound appropriate to the ABS
+      item fetch and optional Audnex enrichment. Caller cancellation still propagates. Tests cover timeout/cancellation,
+      exact expanded person names, legacy joined-name fallback, non-English and mixed-language warnings, and prove at the
+      HTTP boundary that a draft makes no Hardcover request.
+- [ ] The draft requires no Hardcover scope or token use at all. Update README, OpenAPI, CHANGELOG and PR wording to say
+      previewing reads Audiobookshelf metadata and may call Audnex for an audiobook ASIN, but never calls Hardcover. Remove
+      the Step 3 live read-scope confirmation; the already-recorded author, narrator and publisher live searches become
+      Step 4 create-resolution evidence. A preview's `edition_format` can differ from what Hardcover later stores because
+      Hardcover normalizes known labels on create (`Audible Audio` was stored as `Audible`).
 
 **Step 4**
 - [ ] Crosswalk scope ([section 5, Step 4](needs-review-edition-field-crosswalk.md#step-4-create-endpoint)): the editable
-      set is exactly `EditionEdits` (any other field, including `reading_format`, `book_id` and `image_url`, is 400); test
+      set is exactly title, subtitle, ASIN, ISBN-10, ISBN-13, release date and edition information (any other field,
+      including names, Hardcover IDs, `reading_format`, `book_id` and `image_url`, is 400); test
       R1 (run record only), R12 (from the item fetched at create time), R2 (trim, blank is 422), R4-R6 (ASIN trim, ISBN
-      normalization, wrong shape 422, an identifier required, an item without one 409), R7 and R9 (at most 50, positive),
-      R10, R13, R15, R16 (not negative) and R11 (at most 100); R17 is not used: `image_url` is rejected and no cover is uploaded, so
+      normalization, wrong shape 422, an identifier required, an item without one 409), R7/R9/R10 (strict
+      create-time name resolution and safe optional misses), R13/R15/R16 (server-derived and not negative), and R11
+      (server-derived, at most 100); R17 is not used: `image_url` is rejected and no cover is uploaded, so
       `SetAudiobookshelfBaseURL` stays without a production caller; verify R3, R8 and R14 reach the creator unchanged.
       State finding 8 in the PR's testing notes.
+- [ ] Resolve Hardcover metadata only after POST confirmation. Fetch the expanded ABS item again, resolve its exact author,
+      narrator and publisher names through the profile's rate-limited Hardcover client, then build the `EditionInput` and
+      call the unchanged step 2 creator. A transport, GraphQL, rate-limit or timeout failure returns the sanitized upstream
+      error before insertion. No author match is 422 because an author contribution is required; no narrator or publisher
+      match is non-fatal, omits that contribution/field, and is returned as a fixed create-response warning.
+- [ ] The create request contains only user-editable scalar fields (plus step 6's optional `resync`). It does not accept or
+      echo `author_ids`, `narrator_ids` or `publisher_id` from the draft/client. Reading format, duration, language/country,
+      edition format and exact people/publisher names are server-derived from the ABS item fetched at create time. Tests
+      prove a client cannot substitute IDs or names and that the target Hardcover `book_id` still comes only from the run
+      record.
+- [ ] Move the live limited-token author/narrator/publisher searches, the per-request Hardcover limiter note, the extended
+      response write deadline and the complete two-minute Hardcover operation budget from step 3 to this step. The timeout
+      covers resolution, duplicate detection and insertion together and still leaves time to write a sanitized response.
 - [ ] Its CHANGELOG diff must be ONE new bullet for the create endpoint (one-bullet-per-PR rule) and must not touch earlier
       steps' bullets; today it replaces step 3's entry and reshuffles steps 1-2's lines, so redo that hunk. This means step 4's
       tree will no longer equal the old combined branch's tree in `CHANGELOG.md`, which is intended.
@@ -318,7 +339,7 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
         token change makes a new one; viewers are refused.
 - [ ] Document the scope where step 4 documents the endpoint: the README Prerequisites (add the write scope to the Hardcover token line,
       with a link that pre-selects the scopes once the correct key URL is confirmed), the API note, `docs/openapi.yaml` (the 403 response for
-      create, the capability route and its response, and that the draft needs no write scope) and the one CHANGELOG bullet.
+      create, the capability route and its response, and that the draft makes no Hardcover request) and the one CHANGELOG bullet.
 
 **Step 5** (built; needs work before its fork PR)
 - [ ] Crosswalk scope ([section 5, Step 5](needs-review-edition-field-crosswalk.md#step-5-sync-identifier-matching)): the
@@ -345,18 +366,18 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 **Step 7** (not started)
 - [ ] Crosswalk scope ([section 5, Step 7](needs-review-edition-field-crosswalk.md#step-7-ui)): editable inputs are exactly
       R2 title, R3 subtitle, R4 ASIN, R5 ISBN-13, R6 ISBN-10, R8 release date, R14 edition information; read-only are R7, R9,
-      R10 (resolved names), R11, R12 and R13; an ebook hides R9 and R13 and shows R12; `author_ids`, `narrator_ids`,
-      `publisher_id`, `language_id`, `country_id`, `audio_seconds` and `edition_format` are echoed from the draft unedited;
-      every draft warning and the 409 and 422 messages are shown; every ABS-supplied string is escaped. Findings 9 and, if
-      the language is shown, 3.
+      R10 (ABS names, not pre-resolved Hardcover records), R11, R12 and R13; an ebook hides R9 and R13 and shows R12.
+      The UI sends only the editable scalars; it never receives or submits Hardcover author, narrator or publisher IDs.
+      Every draft warning, create-response warning, and the 409 and 422 messages are shown; every ABS-supplied string is
+      escaped. Findings 9 and, if the language is shown, 3.
 - [ ] All items in the "Frontend" section and its tests, plus: show the draft's `reading_format` and hide narrator and
       duration fields for an ebook; render the 409 (no identifier, existing edition not confirmed) and 422 messages; the
       user-facing README note and the Known limitation text.
 - [ ] Verify in the browser pane (button only on eligible needs_review records, modal, resync result, error and dry-run paths,
       the modal surviving a status poll).
-- [ ] Crosswalk finding 9: when no Hardcover author matches, create fails (an author is required) and the preview has no way
-      to supply one. Decide between letting the user enter or search a Hardcover author, or showing a clear "cannot create
-      an edition for this book" state instead of an enabled Create button.
+- [ ] Crosswalk finding 9: a missing Hardcover author match is now discovered only after create is submitted (an author is
+      required). Show the fixed 422 clearly and decide between a later UI for entering/searching a Hardcover author or
+      retaining retry-after-metadata-correction behavior. Do not reintroduce a Hardcover call while opening the preview.
 
 - [ ] **Scope gate in the UI.** Fetch `GET /api/profiles/{id}/edition-capability` once per profile (not per record) and show the **Add
       edition to Hardcover** button or link only when it returns `can_create: true`, in addition to the existing conditions (a
@@ -390,9 +411,9 @@ The block to paste (with `(this PR)` moved to the PR's own step and merged steps
 
 2. Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, keep the cover upload code but switched off, and create ebook editions.
 
-3. Edition draft endpoint: Add a read-only endpoint that drafts a new Hardcover edition from a needs-review book's Audiobookshelf item, with author, narrator, and publisher resolved.
+3. Edition draft endpoint: Add a read-only endpoint that previews a new edition from a needs-review book's Audiobookshelf metadata without calling Hardcover.
 
-4. Edition create endpoint: Add the endpoint that creates the drafted edition on Hardcover, with request validation, a per-book in-flight guard, shutdown draining, and dry-run support.
+4. Edition create endpoint: Resolve the Audiobookshelf author, narrator, and publisher on Hardcover only after confirmation, then create the edition with request validation, a per-book in-flight guard, shutdown draining, and dry-run support.
 
 5. Sync identifier matching: Match an existing edition by ASIN, ISBN-13, or ISBN-10 (either form) during sync so the book no longer lands in Needs review.
 
@@ -442,19 +463,21 @@ Audiobookshelf-to-Hardcover field mapping each step delivers or must verify is i
   in `ImageError`, nothing is fetched or uploaded), `EditionInput.ReadingFormat` (ebook: reading
   format 4, `Ebook` label, no narrators or audio length, format-scoped lookups), `GetEditionByISBN10`, and the
   `edition` CLI's optional `reading_format`. It changes what the `edition` CLI does, so this is its own PR.
-- **Step 3 - Draft endpoint** (`step_3_needs_review_add_edition`, stacked on 2). `GET .../edition-draft` (with the response write-deadline mechanism and `Unwrap()` on the logger's response wrapper, since a draft makes many paced lookups):
-  `audiobookshelf.Client.GetLibraryItem`, the `internal/edition/draft` package (reusing `AddWithMetadata` ->
-  `ToEditionExport`), `MultiUserService.PrepareEditionDraft` with eligibility (needs_review, numeric Hardcover book,
-  ebook or audiobook, identifier requirement), the `newHardcoverClient` extraction, admission checks, the handler
-  and route, the shared `internal/edition/editiontest` fakes, README and OpenAPI for the draft, and CHANGELOG.
-  A read-only endpoint that works on its own and is exercisable with curl. The field-by-field mapping from the
+- **Step 3 - Draft endpoint** (`step_3_needs_review_add_edition`, stacked on 2). `GET .../edition-draft`:
+  `audiobookshelf.Client.GetLibraryItem`, the `internal/edition/draft` package (reusing the local/Audnex portions of
+  `AddWithMetadata` -> `ToEditionExport` with no Hardcover client), `MultiUserService.PrepareEditionDraft` with
+  eligibility (needs_review, numeric target Hardcover book recorded by the prior sync, ebook or audiobook, identifier
+  requirement), admission checks, the handler and route, ABS/Audnex test fakes, README and OpenAPI for the draft, and
+  CHANGELOG. It returns ABS names and locally derived fields, never Hardcover IDs, and a test proves that opening it
+  makes zero Hardcover requests. A read-only endpoint that works on its own and is exercisable with curl. The field-by-field mapping from the
   Audiobookshelf item to the Hardcover edition is in
   [needs-review-edition-field-crosswalk.md](needs-review-edition-field-crosswalk.md).
 - **Step 4 - Create endpoint** (`step_4_needs_review_add_edition`, stacked on 3).
-  `POST .../edition`: `CreateEditionFromRunBook`, request validation and normalization, the in-flight guard, the
+  `POST .../edition`: `CreateEditionFromRunBook`, an expanded ABS refetch followed by rate-limited Hardcover
+  author/narrator/publisher resolution, request validation and normalization, the in-flight guard, the
   dedicated edition wait group so `Shutdown` cancels syncs before draining creates, the detached 2-minute create
-  context, the create handler and
-  route, and the write-deadline, shutdown and cover tests, README, OpenAPI and CHANGELOG. It has neither resync nor
+  context, `newHardcoverClient`, the create handler and route, the extended write-deadline, Hardcover-resolution,
+  shutdown and cover tests, README, OpenAPI and CHANGELOG. It has neither resync nor
   the full-sync lock: creating an edition touches neither the profile state file nor the sync caches.
 - **Step 5 - Sync identifier matching** (`step_5_needs_review_add_edition`, stacked on step 1 only). An existing
   edition with the same ASIN, ISBN-13 or ISBN-10 must be matched by the sync instead of ending up under Needs
@@ -484,7 +507,7 @@ Audiobookshelf-to-Hardcover field mapping each step delivers or must verify is i
   1's export changes (publisher default, hyphenated ISBN, ebook items exported as ebook editions); step 2's
   `edition.Creator` changes, which the `edition` CLI shares (`edition_format`, duplicate and cross-book detection,
   `reading_format`); and step 5's identifier search (an edition stored under the other ISBN form is now matched). The
-  `newHardcoverClient` extraction from `performSync` (step 3) is a pure behavior-preserving refactor, covered by the
+  `newHardcoverClient` extraction from `performSync` (step 4) is a pure behavior-preserving refactor, covered by the
   existing multiuser tests. Each change is isolated in its own commit and called out in its PR description.
 - **Additive API evolution:** the `resync` request field is **opt-in (default `false`)** so step 6 does not change
   what a step 4 caller gets; the response's `resync` block is additive. The step 7 UI sends `resync: true` from its
@@ -520,14 +543,14 @@ Where the files actually went (differs slightly from the first plan):
 - **Step 2:** `internal/edition/creator.go` and its tests, `GetEditionByISBN10` in `internal/api/hardcover/client.go`,
   `cmd/edition/README.md`, and its CHANGELOG bullet (to be collapsed to one, see the checklist).
 - **Step 3:** `internal/api/audiobookshelf/client.go` (+ test), `internal/edition/draft/`, `internal/edition/editiontest/`
-  (the whole shared-fakes package), the draft half of `internal/multiuser/edition.go` and `service.go`
-  (`newHardcoverClient`, `admissionErrorLocked`, `checkEditionAdmission`), `GetEditionDraft` and its route, and **the
-  response write-deadline mechanism** (`extendEditionWriteDeadline`, `editionWriteDeadline`, `Unwrap()` in
-  `internal/logger/logger.go`, and `multiuser.EditionCreateTimeout`), because a draft makes many paced Hardcover lookups and
-  needs the extended deadline too. The draft docs and its CHANGELOG bullet.
-- **Step 4:** the create half of `internal/multiuser/edition.go` and `service.go` (validation, in-flight guard, edition wait
-  group and `Shutdown` drain), the POST route and `CreateEdition` handler, the create, cover and shutdown tests, and the
-  create docs. It restores the docs wording that steps 1-3 had narrowed. Its CHANGELOG diff currently also reshuffles earlier steps'
+  (only the ABS/Audnex fakes needed by the draft), the draft half of `internal/multiuser/edition.go` and `service.go`
+  (`admissionErrorLocked`, `checkEditionAdmission`), `GetEditionDraft` and its route, and the draft docs and CHANGELOG
+  bullet. It does not contain `newHardcoverClient`, Hardcover fakes, or the extended response write-deadline mechanism.
+- **Step 4:** `newHardcoverClient`; the response write-deadline mechanism (`extendEditionWriteDeadline`,
+  `editionWriteDeadline`, `Unwrap()` in `internal/logger/logger.go`, and `multiuser.EditionCreateTimeout`); the create
+  half of `internal/multiuser/edition.go` and `service.go` (create-time Hardcover metadata resolution, validation,
+  in-flight guard, edition wait group and `Shutdown` drain); the POST route and `CreateEdition` handler; the create,
+  resolution, cover and shutdown tests; and the create docs. It restores the docs wording that steps 1-3 had narrowed. Its CHANGELOG diff currently also reshuffles earlier steps'
   lines, which the one-bullet-per-PR rule forbids; that is a checklist item to redo.
 
 The follow-ups found while splitting are tracked as checkboxes in "Step checklists" near the top of this document, under the
@@ -542,6 +565,13 @@ feature-to-step mapping is in "How the combined branch was split". The combined 
 steps 1-4; fork PR #20, its head, is closed. Where this differs from the plan above, this section is what shipped. Decision log 16 (no cover upload from the app) supersedes
 anything below about a draft cover URL, a cover warning on create, or the app using the ABS token scoping.
 
+**Decision 17 supersedes the original draft-resolution design below:** Hardcover is used only after the user confirms
+create. Step 3 may fetch the ABS item and use Audnex for audiobook release metadata, but it must not construct a Hardcover
+client or issue a Hardcover request. Step 4 refetches the expanded ABS item, resolves author/narrator/publisher names,
+performs duplicate detection and inserts the edition. Any historical note below that says the draft resolves Hardcover
+IDs, needs Hardcover read scope, shares the Hardcover limiter, or needs the extended create deadline describes the
+superseded implementation and is not a current requirement.
+
 **Cleanup done after the ebook work** (a cleanup loop over the branch): the ebook rule and Hardcover
 reading-format ids now live once in `internal/models` (`AudiobookshelfBook.ReadingFormat`, `ReadingFormatID`) instead
 of in the sync service, the draft package and both the Hardcover client and creator; the creator's duplicate-error
@@ -550,22 +580,20 @@ the unused `mismatch.ToEditionInput` and its `EditionCreatorInput` type were rem
 Hardcover and Audiobookshelf test fakes (service, API and server tests) became one package,
 `internal/edition/editiontest`.
 
-- **Draft sub-package.** The draft builder is `internal/edition/draft/draft.go` (`draft.New`, `draft.Draft`,
-  `draft.CoverURL`), not `internal/edition/draft.go` / `edition.NewDraft`. It is a sub-package because `edition` ->
-  `mismatch` -> `api/hardcover` -> `edition` would be an import cycle.
-- **Extra request validation** (`validateEditionInput` in `internal/multiuser/edition.go`, failures return 422):
-  author and narrator ID lists are at most 50 entries each and every ID must be positive; publisher, language,
-  country and audio length must not be negative; `edition_format` is limited to 100 runes after trimming
-  ("edition format must be at most 100 characters").
+- **Draft sub-package.** The draft builder is `internal/edition/draft/draft.go` (`draft.New`, `draft.Draft`), not
+  `internal/edition/draft.go` / `edition.NewDraft`. It reuses local mismatch/export mapping without a Hardcover client.
+- **Extra validation** (`validateEditionInput` in `internal/multiuser/edition.go`, failures return 422): the request
+  accepts only the editable scalars. After server-side resolution, author and narrator ID lists are at most 50 entries
+  each and every ID must be positive; publisher, language, country and audio length must not be negative;
+  `edition_format` is limited to 100 runes after trimming.
 - **Extra statuses** beyond the plan: 503 when the service is shutting down, 409 when the profile is being deleted,
   400 for an oversize body or a body that is not exactly one JSON object, and 401/500 from the handler path
   (authentication and unexpected failures). The two further 409s (no identifier; existing edition not confirmed)
   are described under "Added after the first validation".
 - **Detached create context.** Creation runs on a context detached from the request (`context.WithoutCancel`) with
-  a 2-minute timeout, so a client disconnect cannot leave an edition without its cover.
-- **Cover URL hardening.** `draft.CoverURL` strips credentials, query and fragment from the profile's
-  Audiobookshelf base URL before building the cover URL.
-- **`newHardcoverClient` refactor.** The extracted helper's debug log no longer carries `profile_id`.
+  a 2-minute timeout, so a client disconnect cannot interrupt resolution or leave an ambiguous insertion result.
+- **`newHardcoverClient` refactor.** This helper belongs to step 4; the extracted helper's debug log no longer carries
+  `profile_id`.
 - **Edition format fix.** `Creator.createEdition` previously hardcoded `edition_format: "Audiobook"` and
   ignored `EditionInput.EditionFormat`. It now sends the trimmed requested format and falls back to "Audiobook" when
   empty; `reading_format_id` stays 2. This also changes the behavior of the `edition` CLI. The Hardcover schema shows
@@ -596,10 +624,11 @@ Grounded in the code on the branch at that time; the ebook support that followed
   same-book edition is returned untouched (no cover upload, no mutation), and `EditionResult.Existing` records this
   (the `edition` CLI prints `"existing": true`).
 - **Shutdown.** A dedicated edition wait group means `Shutdown` first cancels running syncs and then drains in-flight
-  creates; a draft holds no admission gate (it only refuses to start once shutdown or profile deletion has
-  begun). Profile deletion still waits for an in-flight create (documented tradeoff).
-- **Response write deadline.** The two routes use `audiobookshelf.RequestTimeout` (30s) + `EditionCreateTimeout` (2m) +
-  15s, which required adding `Unwrap()` to the logger middleware's response writer.
+  creates. A draft refuses to start once shutdown or profile deletion has begun but performs no Hardcover work.
+  Profile deletion still waits for an in-flight create (documented tradeoff).
+- **Response write deadline.** The create route uses `audiobookshelf.RequestTimeout` (30s) +
+  `EditionCreateTimeout` (2m) + 15s, which required adding `Unwrap()` to the logger middleware's response writer.
+  The draft route keeps only the ordinary bound needed for its ABS/Audnex work.
 - **Small cleanups.** Blank titles are rejected (422); `Draft.ToInput` was removed as unused.
 - **ISBN helpers.** New leaf package `internal/isbn`: `Normalize`, and `Parse` with 978 <-> ISBN-10
   conversion; the counterpart form is derived only when the input checksum is valid, and a 979 ISBN-13 has no ISBN-10.
@@ -771,8 +800,8 @@ field and the gaps found while writing it.
   normalization, ISBN-10/13 split, publisher-ID lookup. `BookMismatch.ToEditionExport` already turns that
   into the edition-import shape (author/narrator ID lookup, `Audible Audio` format when an ASIN exists,
   `Unabridged` default, ABS-cover-first image URL). The mismatch JSON files the `edition` CLI imports come
-  from exactly this path, so the in-app draft will match what the file flow would have produced.
-  Also `people.go`/`publisher.go` lookups.
+  from exactly this path. The draft reuses only the local/Audnex mapping with a nil Hardcover client; step 4
+  reuses the strict `people.go`/`publisher.go` lookups immediately before create.
 - `internal/sync/service.go`: `processBook` (the exact per-book logic the full loop runs — lookup by
   ASIN/ISBN, user-book creation, read/progress/status updates, outcome recording),
   `checkpointState`, `enhanceBookProgressFromUserData`, `NewServiceWithRunIdentity`.
@@ -787,13 +816,12 @@ field and the gaps found while writing it.
   route/auth pattern; `internal/server/server.go` route table.
 - Hardcover client dry-run boundary: `SetDryRun` makes `GraphQLMutation` a no-op.
 
-Decision: **use `AddWithMetadata` -> `ToEditionExport` directly, with no extraction refactor and no
-parallel builder.** Accepted costs, all bounded and user-initiated (once per modal open): passing the
-Hardcover client (needed for the publisher lookup) also runs its Hardcover-candidate enrichment (a handful of
-extra rate-limited calls); its Audnex/publisher lookups use their own 15s/10s timeouts rather than the request
-context; it appends to a collector (a throwaway `mismatch.NewCollector()` is used and discarded). The one
-real defect — it defaults `PublisherID` to `1` when nothing resolves, so an unresolved publisher would be
-written onto a public edition — is fixed in place (see Backend 2).
+Decision: **split preparation from Hardcover resolution.** Step 3 uses the existing mismatch/export mapping with no
+Hardcover client, preserving Audnex date enrichment, ISBN normalization, reading format and edition labels while
+returning the exact ABS author/narrator/publisher names. Step 4 resolves those names with the existing strict lookup
+helpers, then passes a fully resolved `EditionInput` to the unchanged creator. Do not add a parallel mapping pipeline;
+extract a small pure/local preparation helper only if needed to keep the shared mapping explicit. The step 1 fix that
+leaves an unresolved publisher at `0` remains valid for mismatch exports and the edition CLI.
 
 ## Backend
 
@@ -802,24 +830,22 @@ written onto a public edition — is fixed in place (see Backend 2).
    (same auth/timeout style as `GetLibraryItems`; 404 -> typed not-found error). Not added to
    `AudiobookshelfClientInterface` (avoids breaking existing mocks); callers use the concrete client.
 
-2. **[Steps 1 and 3] Draft = existing pipeline, one small fix** (the fix in `internal/mismatch/mismatch.go` is step 1; the new `internal/edition/draft/draft.go`, package `draft`, is step 3; see the implementation notes):
+2. **[Steps 1, 3 and 4] Local draft, create-time resolution** (the fix in `internal/mismatch/mismatch.go` is step 1; the new `internal/edition/draft/draft.go`, package `draft`, is step 3; Hardcover resolution is step 4):
    - **Fix in place:** in `AddWithMetadata`, stop defaulting `publisherID := 1`; leave `0` (unresolved).
      `ToEditionExport` and `Creator.createEdition` already treat `0` as "no publisher" (`if input.PublisherID > 0`).
      This changes the mismatch JSON export too: an unresolved publisher now exports `publisher_id: 0` instead of
      `1`, so the `edition` CLI would stop stamping publisher 1 on imports. I can't verify offline what Hardcover
      publisher ID 1 is, so this is called out for review. Update the assertion at `mismatch_test.go:488` and add a
      case for "publisher name resolves -> its ID" / "unresolved -> 0". No other change to `AddWithMetadata`.
-   - **Draft:** `draft.New(ctx, absBook, hardcoverBookID, absBaseURL, hc, region)`:
-     1. `mismatch.NewCollector().AddWithMetadata(MediaMetadata{...from the ABS item...}, book.ID, "", reason,
-        duration, book.ID, hc, region)` — the same call the sync service makes (`service.go` ~2327);
-     2. set `m.HardcoverBookID` to the run record's Hardcover book ID (overriding whatever enrichment guessed);
-     3. `m.ToEditionExport(ctx, hc)` -> `EditionExport` (author/narrator ID lookups, `Audible Audio` format when an
-        ASIN exists, `Unabridged`, cover preference);
-     4. wrap as `Draft`: the export's fields + display names from `Export.Info` (`author_names`, `narrator_names`,
-        `publisher_name`) + `warnings []string` (no author resolved -> `EditionInput.Validate` would fail; missing
-        release date; unresolved publisher) + `dry_run`. `Draft.ToInput()` mapped the export to `edition.EditionInput` (removed later as unused).
-        No `image_url` is set: the app does not upload covers (decision log 16).
-   - No new metadata-mapping logic: Audnex date, ISBN split, publisher/author/narrator lookups all stay where they are.
+   - **Draft:** `draft.New(ctx, absBook, hardcoverBookID, region)`:
+     1. run the existing local/Audnex mismatch preparation with a nil Hardcover client;
+     2. set `HardcoverBookID` only from the run record (this identifies the future target; it is not a lookup);
+     3. export the local fields without Hardcover enrichment or ID resolution;
+     4. wrap them as `Draft`, carrying exact expanded `author_names`, `narrator_names` and `publisher_name`, local
+        warnings, `dry_run`, and no `author_ids`, `narrator_ids`, `publisher_id` or `image_url`.
+   - **Create:** refetch the expanded ABS item, resolve exact people and publisher names through the rate-limited
+     Hardcover client, attach the resulting IDs, then invoke the step 2 creator. Resolution uses the same strict
+     helpers as the export flow but does not rerun the mismatch candidate enrichment whose result is discarded.
 
 3. **[Step 6] Single-book sync** — `internal/sync/service.go`: new exported
    `(*Service).SyncBook(ctx, book models.AudiobookshelfBook) (BookOutcomeRecord, error)`:
@@ -835,7 +861,7 @@ written onto a public edition — is fixed in place (see Backend 2).
      translated into that record rather than surfaced as an error.
 
 4. **Service orchestration** — new `internal/multiuser/edition.go`. Step 3: draft, eligibility, admission.
-   Step 4: per-book in-flight guard, create, dry-run. Step 6: full-sync exclusivity (`bookOps`) and the resync call.
+   Step 4: per-book in-flight guard, Hardcover resolution, create, dry-run. Step 6: full-sync exclusivity (`bookOps`) and the resync call.
    - `PrepareEditionDraft(ctx, profileID, runID, bookID)` and
      `CreateEditionFromRunBook(ctx, profileID, runID, bookID, edits, resync bool)`.
    - Both load the run snapshot via `GetSyncRunSnapshot`, require a record with matching `book_id`,
@@ -851,10 +877,11 @@ written onto a public edition — is fixed in place (see Backend 2).
      try again when it finishes", before any edition is created) if a full sync is active/queued for the
      profile, and `StartSyncWithAcceptedRun` rejects (same sentinel -> 409) while a resync holds the profile.
      Creation *without* resync keeps the step 4 behavior.
-   - The POST body echoes the draft's editable fields (scalars, ID lists, duration, format, language/country) so
-     what was previewed is exactly what is created, with no second round of Hardcover lookups. The server always
-     sets `book_id` (from the run record) itself and never accepts it from the request. It sets no `image_url` and a request that
-     sends one is rejected: the app does not upload covers (decision log 16).
+   - The POST body contains only the draft's user-editable scalar fields. The server refetches the expanded ABS item,
+     derives the non-editable format/duration/language/country fields, and resolves exact author, narrator and publisher
+     names on Hardcover at create time. It never accepts people/publisher IDs, names, `book_id`, `reading_format` or
+     `image_url` from the request. The target `book_id` comes from the run record. A required author miss returns 422;
+     optional narrator/publisher misses are omitted and reported in fixed response warnings.
    - Dry-run profile: `hcClient.SetDryRun(true)`, Creator `dryRun=true` (returns `edition_id: 0`), and the
      resync is **not** attempted (`resync.attempted=false, reason="dry run"`) — nothing was created for
      it to find. Honors the AGENTS.md dry-run safeguard.
@@ -875,15 +902,15 @@ written onto a public edition — is fixed in place (see Backend 2).
    - `GET  /api/profiles/{id}/edition-capability` (step 4; the pre-flight scope gate, see the step 4 checklist)
    - `GET  /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft`
    - `POST /api/profiles/{id}/runs/{runID}/books/{bookID}/edition`
-     body: editable scalars, ID lists; from step 6, an optional `resync` (default `false`, opt-in).
+     body: editable scalars only; from step 6, an optional `resync` (default `false`, opt-in).
    - Both use `authorizeProfileMetadata(..., mutation=true)` (viewers 403; foreign profiles 404). POST body
      capped with `http.MaxBytesReader` (64 KiB), unknown fields rejected.
-   - Status mapping: bad IDs 400; profile/run/book not found or not eligible 404/409; same-book submit in flight
+   - Status mapping: bad route IDs or forbidden request fields 400; profile/run/book not found or not eligible 404/409; same-book submit in flight
      409 (step 4); full sync active while `resync` is requested 409 (step 6); validation failure (e.g. no author
      resolved) 422 with a readable message; upstream ABS/Hardcover failure 502.
      POST success: `{edition_id, dry_run}` in step 4; step 6 adds `resync: {attempted, outcome, reason, error}`.
-     The step 4 POST success `data` is `{edition_id, dry_run}`. An earlier design added a `warnings` array for a failed cover
-     upload; the app uploads no cover, so it is dropped.
+     The step 4 POST success `data` is `{edition_id, dry_run, warnings}`; warnings contain only fixed labels for optional
+     create-time resolution misses, never raw upstream errors. The app uploads no cover, so there is no cover warning.
      Also added after validation: 409 when the book has neither an ASIN nor an ISBN, or when an existing edition could
      not be confirmed to belong to the book; 422 when a create request has none of `asin`, `isbn_10`, `isbn_13`; 503
      while the service is shutting down.
@@ -899,13 +926,13 @@ written onto a public edition — is fixed in place (see Backend 2).
   `#edit-user-modal`, plus styles reusing the existing modal classes.
 - Delegated click handler for `[data-add-edition]` -> `openAddEditionModal(bookId)`: uses
   `this.openSummary.{profileId,runId}`, fetches the draft with the same auth-generation / abort /
-  `handleAuthExpiry` guards as `fetchAndRenderDetails`, renders read-only context (resolved
-  author/narrator/publisher names, duration, format, target Hardcover book, warnings) and editable text
+  `handleAuthExpiry` guards as `fetchAndRenderDetails`, renders read-only context (Audiobookshelf
+  author/narrator/publisher names, duration, format, target Hardcover book, local warnings) and editable text
   inputs (title, subtitle, ASIN, ISBN-10, ISBN-13, release date, edition information), all through
   `escapeHtml`/`escapeHtmlAttribute`, plus a checked-by-default checkbox
   **"Also sync this book's read status now"** (hidden/disabled for dry-run profiles).
 - **Create edition** POSTs; the button disables while in flight; errors render inline; success closes the
-  modal, toasts a two-part result (edition created / dry-run note; resync outcome and reason, e.g.
+  modal, shows any fixed create-time resolution warnings, toasts a two-part result (edition created / dry-run note; resync outcome and reason, e.g.
   `synced`, `already_current`, `skipped: unread book`, or `needs_review`/`failed` with its reason), records
   `editionResults[bookId]`, and re-renders.
 
@@ -926,7 +953,7 @@ the same format only, so a repeat submit normally returns the existing edition. 
   in-flight create.
 - A same-identifier edition of a different or unset format is not matched, so a duplicate is possible if Hardcover does
   not reject it; Hardcover's real "already exists" behavior for duplicate ISBNs is unverified.
-- The Hardcover client and its rate limiter are created per request.
+- The Hardcover client and its rate limiter are created per create/capability request. Draft requests create neither.
 - The end-of-sync mismatch export re-runs publisher lookups for unresolved publishers.
 - ASIN drafts call the live Audnex API (not stubbed in tests).
 - Numeric fields and identifiers have only loose bounds.
@@ -942,9 +969,9 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
 - **Step 3** — `internal/api/audiobookshelf/client_test.go`: `GetLibraryItem` success, 404, auth header/path.
 - **Step 1** — `internal/mismatch/mismatch_test.go`: other `AddWithMetadata` tests (incl. Audnex region fallback) pass unchanged;
   the publisher assertion is updated and a resolved-publisher case added.
-- **Step 3** — `internal/edition/draft/draft_test.go` (fake Hardcover client): people/publisher IDs carried through, Hardcover book ID
-  taken from the run record, unresolved author/publisher/date -> warnings, no cover URL,
-  ISBN forms (`ToInput()` was removed).
+- **Step 3** — `internal/edition/draft/draft_test.go`: exact expanded author/narrator names and publisher name carried
+  through without Hardcover IDs, Hardcover book ID taken from the run record, local missing-author/date and language
+  warnings, no cover URL, ISBN forms, and zero Hardcover requests at the HTTP boundary.
 - **Step 2** — `internal/edition/creator_test.go`: ABS token attached only under the configured base URL.
   `internal/edition/creator_reuse_test.go`: an existing edition is detected by every identifier before inserting, and
   another book's edition is refused. `internal/multiuser/edition_cover_test.go` (step 4): an ISBN match never touches another
@@ -963,9 +990,11 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
   already-synced -> `already_current`; unread with `process_unread_books` off -> `skipped`; Hardcover lookup
   failure -> `failed`; **dry-run issues no Hardcover mutation and persists no state** (real mutation boundary).
 - **Steps 3 and 4** — `internal/api/handlers_edition_test.go` (fixture style of `handlers_status_test.go`; httptest ABS +
-  Hardcover): non-`needs_review` / no candidate -> not eligible; viewer 403, foreign owner 404; draft success;
-  create sends the record's Hardcover `book_id` and ignores client-supplied `book_id`/`image_url`; dry-run -> no
-  Hardcover mutation; same-book concurrent submit -> 409; validation -> 422; creation is unaffected by an active
+  Hardcover): non-`needs_review` / no candidate -> not eligible; viewer 403, foreign owner 404; draft success with no
+  Hardcover request; create refetches ABS, resolves exact people/publisher names, and sends the run record's Hardcover
+  `book_id`; client-supplied IDs/names, `book_id`, `reading_format` and `image_url` are rejected; required-author miss
+  -> 422; optional narrator/publisher miss -> fixed success warning; lookup transport/GraphQL/timeout failure -> sanitized
+  502 with no insert; dry-run -> no Hardcover mutation; same-book concurrent submit -> 409; creation is unaffected by an active
   full sync; `StartSync`/`CancelSync` behave exactly as before.
 - **Step 6** — same file plus `internal/multiuser`: resync outcome returned; resync failure still returns 200 with
   the failure in `resync`; dry-run -> no resync; `resync=true` while a full sync is active -> 409 with **no edition
@@ -982,9 +1011,9 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
   the one-bullet-per-PR rule in "Step checklists"); the earlier plan of several Added/Changed/Fixed lines for these steps is
   replaced by that.
 - **Step 5:** `CHANGELOG.md` entry "Sync finds an edition stored under the other ISBN form".
-- **Token scope (steps 2, 4, 7):** step 2 documents the scopes in `cmd/edition/README.md`; step 4 adds the write scope to the README
+- **Token scope (steps 2, 4, 7):** step 3 explicitly documents that a draft never uses Hardcover; step 2 documents the scopes in `cmd/edition/README.md`; step 4 adds the write scope to the README
   Prerequisites, the API note and `docs/openapi.yaml` (the 403 response and the capability route) and covers it in its one CHANGELOG
-  bullet; step 7 documents it in the user-facing note, and the button is hidden unless the capability check passes. The draft (step 3) needs no write scope.
+  bullet; step 7 documents it in the user-facing note, and the button is hidden unless the capability check passes.
 - **Step 6:** the opt-in `resync` field/response block in README and OpenAPI; CHANGELOG entry.
 - **Step 7:** the user-facing "Add an edition from Sync Status" note (eligibility, preview/confirm, immediate
   read-status resync, dry-run behavior, the Known limitation); CHANGELOG entry.
@@ -998,8 +1027,8 @@ covered by a group, the crosswalk item is added to that step's checklist and tes
 3. `make test` (race + coverage) and `make lint` (golangci-lint; needs the CI-matching Go 1.26.7 toolchain first on
    `PATH`).
 4. `node --test web/app.test.js` (all steps; step 7 adds new cases).
-5. Exercise the step's real surface: steps 3, 4 and 6 by curl or the httptest fixture against stub ABS/Hardcover
-   servers; steps 1, 2 and 5 through their unit and sync tests against a stub Hardcover; step 7 in the browser pane (button only on
+5. Exercise the step's real surface: step 3 by curl or the httptest fixture against stub ABS/Audnex and assert no
+   Hardcover traffic; steps 4 and 6 against stub ABS/Hardcover servers; steps 1, 2 and 5 through their unit and sync tests against a stub Hardcover; step 7 in the browser pane (button only on
    eligible `needs_review` records, modal shows the draft, edits POST, resync result renders, error/dry-run paths, modal survives a status poll). Confirm a normal
    full sync and Sync Status still behave as before. A live create against real Hardcover is not part of
    automated verification — I will state that explicitly in each handoff.
