@@ -23,7 +23,7 @@ step touches.
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, the cover upload code kept but switched off, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
-| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | — | — | 1, 2 | ~2,147 (~1,078 prod and docs, ~1,069 tests), measured | Built and validated |
+| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | [#27](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/27) | — | 1, 2 | ~3,165 (~1,034 prod and docs, ~2,131 tests), measured | Built and validated; PR-description and live read-scope follow-ups remain below |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
@@ -223,27 +223,27 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       "Token cannot be blank", and the file must exist. Fix the README (the token is `hardcover.token` in `config.yaml`) or make the
       command honor the variable; the owner decides. `LoadFromFile` also logs the first 500 bytes of the file at debug level.
 
-**Step 3**
-- [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
+**Step 3** (fork PR #27)
+- [x] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
       the ABS side and the mapping into the draft. Decode the ABS item (`GetLibraryItem`, expanded, 404 typed) and decide
       what else the model reads (findings 2-4; `abridged`, finding 1, is already decoded by step 1); build fixtures from a real expanded item, one audiobook and one ebook; pin
       R1 (book ID from the run record, identifier requirement), R5 and R6 (counterpart only when derivable), R7 and R9
       (warnings, no narrator for an ebook), R8 (Audnex fallback, year fallback, warning), R10 (warning), R11, R13 and R14
       (rounding, ebook), R12 (`reading_format`), R15 and R16 (R17 is not used: the draft carries no cover URL); verify step 1's
       export behavior through the draft.
-- [ ] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
-      the step 1 bullet: step 3 currently rewrites step 1's hyphenated-ISBN line, which the rule forbids.
+- [x] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
+      the step 1 bullet. The earlier branch rewrote step 1's hyphenated-ISBN line; the final diff leaves it untouched.
 - [ ] The PR description says the response write-deadline mechanism (`extendEditionWriteDeadline`, `Unwrap()` in the logger, and
-      `multiuser.EditionCreateTimeout`) lives here because a draft makes many paced Hardcover lookups, and that
+      `multiuser.EditionDraftTimeout`) lives here because a draft makes many paced Hardcover lookups, and that
       `internal/edition/editiontest` includes helpers first used in step 4 (`HoldInsert`, `HoldSearches`, `FailWith`).
-- [ ] Some comments keep create wording (`editionWriteDeadline`, `editionRequestIDs`, the `newHeldCreateFixture` test helper name)
+- [x] Some comments keep create wording (`editionWriteDeadline`, `editionRequestIDs`, the `newHeldCreateFixture` test helper name)
       so step 4 stays additive; reword them only if it does not make step 4 non-additive.
-- [ ] Crosswalk findings, decide each and either do it in this step or record it as out of scope: (2) use the exact
+- [x] Crosswalk findings, decide each and either do it in this step or record it as out of scope: (2) use the exact
       `authors[].name` and `narrators[]` arrays from the expanded item instead of splitting `authorName` and `narratorName`
       on commas; (3) do not silently create a non-English item as language 1 (at least warn in the draft when ABS
       `metadata.language` is set and is not English); (4) try ABS `publishedDate` before the year-only fallback; (7) skip
       Audnex for ebook items.
-- [ ] Cleanup left by step 1: `BookMismatch.EditionInfo` is dead and should be removed in this step (or a small PR of its
+- [x] Cleanup left by step 1: `BookMismatch.EditionInfo` is dead and should be removed in this step (or a small PR of its
       own straight after step 1 merges), because the draft is the first new caller of `AddWithMetadata` -> `ToEditionExport`.
       Its only production writer is the constant `"Audiobookshelf"` in `mismatch.AddWithMetadata`, which `ToEditionExport`
       discards, and nothing else reads it; since step 1 the export's `edition_information` is decided by the reading format
@@ -255,16 +255,22 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       The unresolved CodeRabbit thread about making the audiobook placeholder filter case-insensitive disappears with it. Keep `EditionExport.EditionInfo` (`edition_information`): the `edition` tool imports it. The exported files must be
       identical for every record production can build; say so in the PR body and add a CHANGELOG note only if a mismatch
       JSON field disappears from a file users see (check `BookMismatch`'s `edition_information` in the status API first).
-- [ ] ISBN checksum flags from step 1: the export carries `isbn_10_valid` / `isbn_13_valid`. Decide what the draft does with a
+- [x] ISBN checksum flags from step 1: the export carries `isbn_10_valid` / `isbn_13_valid`. Decide what the draft does with a
       `false` one (a warning next to the ISBN field is the smallest change that loses nothing) and expose the flag in the draft;
       `insert_edition` accepts a bad checksum (confirmed with a write to a test book), so a `false` flag is a warning, not a blocker.
       The raw `isbn` stays on the record, so the value is never lost.
-- [ ] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
+- [x] Crosswalk finding 9: an author or narrator name is matched on Hardcover by exact, case-sensitive name (no ordering,
       `canonical_id` ignored, and a narrator needs a prior `Narrator` credit). Decide whether the draft warnings are enough
       or the lookups need improving; a looser query must first be checked against the hosted API (see `AGENTS.md`).
 
+- [x] Bound the complete draft request to two minutes so its sanitized error response can be written before the extended
+      165-second HTTP deadline. Hardcover metadata lookup failures and draft-budget expiry return `502`; caller cancellation
+      still propagates. Tests cover the deadline, exact expanded person names (including commas), legacy joined-name fallback,
+      and non-English and mixed-language warnings.
+
 - [ ] Token scopes for the draft: the draft only reads (the ABS item and Hardcover lookups), so it should need only the read scopes the
-      sync token already has; confirm that against the real API and say in the endpoint docs that previewing needs no write scope. A
+      sync token already has; the implementation and endpoint docs require no write scope, but confirmation against the real API is
+      still pending. A
       preview's `edition_format` can differ from what Hardcover stores, because it normalizes known labels on write (`Audible Audio` was
       stored as `Audible`).
 
