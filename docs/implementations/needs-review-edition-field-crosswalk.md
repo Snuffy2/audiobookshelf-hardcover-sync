@@ -67,7 +67,7 @@ Fields relevant to an edition (`media` is the book; `media.metadata` is its meta
 | `media.metadata.narratorName` | string | yes | `narrators.join(', ')`. |
 | `media.metadata.publisher` | string or null | yes | |
 | `media.metadata.publishedYear` | string or null | yes | For example `"2008"`. |
-| `media.metadata.publishedDate` | string or null | **no** | Free-form date string. |
+| `media.metadata.publishedDate` | string or null | yes | Free-form date string, preferred over the year-only fallback when Audnex has no release date. |
 | `media.metadata.isbn` | string or null | yes | One field. It may hold an ISBN-10 or an ISBN-13, hyphenated or not. |
 | `media.metadata.asin` | string or null | yes | |
 | `media.metadata.language` | string or null | yes | Free text such as `"English"`. Not used today. |
@@ -165,7 +165,7 @@ step delivers and what it only has to verify. **UI** means the field appears as 
 | R5 | `isbn_13` | `metadata.isbn` | Normalized (separators removed, trailing `x` uppercased), classified by shape. 13 digits goes here; a 10-character value goes to R6. The draft then fills the *other* form when it can be derived. The export also carries `isbn_10_valid` / `isbn_13_valid`: whether the exported ISBN's own check digit is correct (omitted when that ISBN is empty). A bad-checksum ISBN is still exported. | 1, 2, 3, 4, 5, 7 | UI, API |
 | R6 | `isbn_10` | `metadata.isbn` | As R5. The ISBN-10 to ISBN-13 conversion adds `978` and recalculates the check digit; a 979 ISBN-13 has no ISBN-10. A counterpart is derived only when the input's own checksum is valid. | 1, 2, 3, 4, 5, 7 | UI, API |
 | R7 | `contributions[]`, author (`contribution: null`) | expanded `metadata.authors[].name`, with `authorName` fallback | The draft carries exact trimmed ABS names without a Hardcover call. After create confirmation, each name is looked up on Hardcover by **exact, case-sensitive name** among active authors; the first row returned is used. IDs are de-duplicated and keep ABS order. No source author is a draft warning; no Hardcover match is a create-time 422. | 2, 3, 4, 7 | server |
-| R8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The result is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. `metadata.publishedDate` is not read. Create requires `YYYY-MM-DD`. | 2, 3, 7 | UI, API |
+| R8 | `release_date` | Audnex `releaseDate` (needs `asin`), else `metadata.publishedDate`, else `metadata.publishedYear` | Audnex is asked in the profile's configured region and then `us` (once, with no region, when none is configured). The first available value is normalized to `YYYY-MM-DD` (ISO 8601 with a time, RFC 3339, several slash and month-name layouts). A year alone becomes `YYYY-01-01`. Create requires `YYYY-MM-DD`. | 2, 3, 7 | UI, API |
 | R9 | `contributions[]`, `"Narrator"` | expanded `metadata.narrators[]`, with `narratorName` fallback | The draft carries exact trimmed ABS names without a Hardcover call. On create, lookup is by exact name among active authors **that already have a `Narrator` contribution**. Audiobook only; an ebook has no narrators. A create-time miss is non-fatal, omits the narrator and returns a fixed warning. | 1, 2, 3, 4, 7 | server |
 | R10 | `publisher_id` | `metadata.publisher` | The draft carries the exact ABS name only. On create it is looked up by **exact, case-sensitive** publisher name. Not found gives `0`, is omitted, and returns a fixed warning. Never defaults to a guessed ID (was `1` before step 1). | 1, 2, 3, 4, 7 | server |
 | R11 | `edition_format` | `metadata.asin`, `metadata.publisher`, item format | Audiobook: an ASIN gives `Audible Audio`; else a publisher containing "libro" gives `libro.fm`; else empty, and the creator sends `Audiobook`. Ebook: always `Ebook`, replacing any label the record carries. Recomputed from the ABS item at create time, trimmed, at most 100 characters. Hardcover normalizes the stored label: `Audible Audio` was stored as `Audible` (`Ebook` is unchanged). | 1, 2, 3, 4, 7 | server |
@@ -224,9 +224,9 @@ fallback (finding 2). Person lookup uses `SearchPeople` in the Hardcover client 
   miss is a create-time 422; optional narrator/publisher misses become fixed create-response warnings.
 
 **R8, release date.** Audnex is an Audible metadata service, so it only helps for Audible ASINs. Without a date from
-Audnex the fallback is the year only, and the Hardcover librarian rule (January 1 when only the year is known) is
-exactly what `YYYY-01-01` gives. Slash dates are read US-style (`01/02/2006` is tried before `02/01/2006`); that only
-matters if `publishedDate` is ever used, because Audnex and the year are ISO.
+Audnex, the full ABS `publishedDate` is preferred; `publishedYear` is the final fallback, and the Hardcover librarian
+rule (January 1 when only the year is known) is exactly what `YYYY-01-01` gives. Slash dates are read US-style
+(`01/02/2006` is tried before `02/01/2006`).
 
 **R11, edition format.** The audiobook labels come from `ToEditionExport`, which also produces the mismatch JSON the
 `edition` CLI imports, so the draft matches what the file flow would have produced. This differs from the Hardcover
@@ -334,7 +334,7 @@ ebook.
 - **R7, R9:** carry exact expanded ABS names, including commas within a name, with the joined legacy fields only as a
   fallback. No Hardcover IDs are present. A missing source author is a local warning; an ebook draft has no narrators and
   no narrator warning. Finding 2 is handled here; Hardcover matching in finding 9 moves to step 4.
-- **R8:** Audnex region fallback, normalization and the year fallback; a warning when there is no date.
+- **R8:** Audnex region fallback, normalization, the ABS `publishedDate` fallback, then the year fallback; a warning when there is no date.
 - **R10:** carry the publisher name without resolving it. There is no draft warning about whether Hardcover has a match.
 - **R11, R13, R14:** taken from the export: audiobook labels, `Ebook` for an ebook; duration rounded with `int(d + 0.5)`
   (33854.905 becomes 33855); an ebook has no audio and no `Unabridged`.
@@ -427,7 +427,7 @@ Code: `web/static/app.js`, `index.html`, `styles.css`. This step decides what th
 | `abridged` | Informs `edition_information` (`Abridged`). | Mapped in step 1 (finding 1); documented in the OpenAPI schema in step 1's review |
 | `authors[]`, `narrators[]` | Exact names, instead of splitting the joined strings. | **Gap** (finding 2) |
 | `language` | Should inform `language_id`. | **Gap** (finding 3) |
-| `publishedDate` | Could come before the year fallback. | Gap, minor (finding 4) |
+| `publishedDate` | Preferred over `publishedYear` when Audnex has no release date. | Mapped in step 3 (finding 4) |
 
 Hardcover `BookDtoInput` fields the tool never sends: `page_count` (no source), and `image_id` in the insert (it is set
 afterwards by `update_edition`). `EditionInput.locked` is not sent.
@@ -544,7 +544,7 @@ which step decides it.
 3. **`language` is ignored** (step 3). A non-English item is created as language 1. Minimum: a draft warning when ABS gives
    a language other than English. Better: look the language up in Hardcover's `languages` table. `language_id 1` and
    `country_id 1` are English and the United States (checked against Hardcover).
-4. **`publishedDate` is unused** (step 3, minor). It could be tried before the year-only fallback.
+4. **`publishedDate` is preferred over `publishedYear`** (step 3, done). When Audnex has no release date, the full ABS date is tried before the year-only fallback.
 5. **Cover** (decided in step 2). The default is a 400 px JPEG; Hardcover prefers larger images and rejects WebP. `?raw=1` would
    return the original but in any format. The creator now applies Hardcover's documented rules: PNG and JPEG only, decided from
    the bytes, at most 15 MiB (the largest size Hardcover documents; it documents no hard maximum), dimensions not enforced.
