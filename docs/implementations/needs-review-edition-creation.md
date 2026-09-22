@@ -23,7 +23,7 @@ step touches.
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, the cover upload code kept but switched off, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
-| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | [#27](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/27) | — | 1, 2 | ~3,165 (~1,034 prod and docs, ~2,131 tests), measured | Built and validated; PR-description and live read-scope follow-ups remain below |
+| 3 | Read-only draft endpoint (also carries the response write-deadline mechanism, see below) | `step_3_needs_review_add_edition` | [#27](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/27) | — | 1, 2 | ~3,165 (~1,034 prod and docs, ~2,131 tests), measured | Built and validated; PR-description follow-up remains below |
 | 4 | Create endpoint, its guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | ~1,525 (~588 prod and docs, ~937 tests), measured | Built and validated |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
@@ -268,9 +268,9 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       still propagates. Tests cover the deadline, exact expanded person names (including commas), legacy joined-name fallback,
       and non-English and mixed-language warnings.
 
-- [ ] Token scopes for the draft: the draft only reads (the ABS item and Hardcover lookups), so it should need only the read scopes the
-      sync token already has; the implementation and endpoint docs require no write scope, but confirmation against the real API is
-      still pending. A
+- [x] Token scopes for the draft: the draft only reads (the ABS item and Hardcover lookups), so it needs only the read scopes the
+      sync token already has. Live author, narrator and publisher searches all succeeded with the limited-scope Hardcover token;
+      no mutation was sent and the full-scope token was not used. The endpoint docs say previewing needs no write scope. A
       preview's `edition_format` can differ from what Hardcover stores, because it normalizes known labels on write (`Audible Audio` was
       stored as `Audible`).
 
