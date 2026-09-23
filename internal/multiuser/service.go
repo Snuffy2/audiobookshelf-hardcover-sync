@@ -126,6 +126,11 @@ type MultiUserService struct {
 	// profile/book pair. It is independent of the full-sync lifecycle state.
 	editionMutex     stdSync.Mutex
 	editionsInFlight map[string]struct{}
+	// Edition capability probes are cached and coalesced per profile and token.
+	editionCapabilityMutex stdSync.Mutex
+	editionCapabilities    map[editionCapabilityKey]editionCapabilityCacheEntry
+	editionCapabilityCalls map[editionCapabilityKey]*editionCapabilityCall
+	editionCapabilityEpoch map[string]uint64
 	// newEditionCreator, when set, replaces how an edition create request builds
 	// its creator. It exists so tests can inject the HTTP client used for cover
 	// transfers; production leaves it nil.
@@ -135,18 +140,21 @@ type MultiUserService struct {
 // NewMultiUserService creates a new multi-user service
 func NewMultiUserService(repo *database.Repository, globalConfig *config.Config, log *logger.Logger) *MultiUserService {
 	return &MultiUserService{
-		repository:       repo,
-		logger:           log,
-		globalConfig:     globalConfig,
-		profileStatuses:  make(map[string]*SyncProfileStatus),
-		activeSyncs:      make(map[string]context.CancelFunc),
-		activeRuns:       make(map[string]activeSyncRun),
-		syncServices:     make(map[string]*sync.Service),
-		serviceRuns:      make(map[string]uint64),
-		latestRuns:       make(map[string]activeSyncRun),
-		profileGates:     make(map[string]*profileRunGate),
-		deletingProfiles: make(map[string]struct{}),
-		deletedProfiles:  make(map[string]struct{}),
+		repository:             repo,
+		logger:                 log,
+		globalConfig:           globalConfig,
+		profileStatuses:        make(map[string]*SyncProfileStatus),
+		activeSyncs:            make(map[string]context.CancelFunc),
+		activeRuns:             make(map[string]activeSyncRun),
+		syncServices:           make(map[string]*sync.Service),
+		serviceRuns:            make(map[string]uint64),
+		latestRuns:             make(map[string]activeSyncRun),
+		profileGates:           make(map[string]*profileRunGate),
+		deletingProfiles:       make(map[string]struct{}),
+		deletedProfiles:        make(map[string]struct{}),
+		editionCapabilities:    make(map[editionCapabilityKey]editionCapabilityCacheEntry),
+		editionCapabilityCalls: make(map[editionCapabilityKey]*editionCapabilityCall),
+		editionCapabilityEpoch: make(map[string]uint64),
 	}
 }
 
@@ -261,6 +269,7 @@ func (s *MultiUserService) CreateProfileForUser(profileID, name, audiobookshelfU
 	if err := s.repository.CreateProfileForUser(profileID, name, audiobookshelfURL, audiobookshelfToken, hardcoverToken, syncConfig, ownerUserID); err != nil {
 		return err
 	}
+	s.invalidateEditionCapability(profileID)
 	s.admissionMutex.Lock()
 	delete(s.deletedProfiles, profileID)
 	s.admissionMutex.Unlock()
@@ -279,7 +288,11 @@ func (s *MultiUserService) UpdateProfileConfig(profileID, audiobookshelfURL, aud
 			return err
 		}
 	}
-	return s.repository.UpdateUserConfig(profileID, audiobookshelfURL, audiobookshelfToken, hardcoverToken, syncConfig)
+	if err := s.repository.UpdateUserConfig(profileID, audiobookshelfURL, audiobookshelfToken, hardcoverToken, syncConfig); err != nil {
+		return err
+	}
+	s.invalidateEditionCapability(profileID)
+	return nil
 }
 
 // DeleteProfile deletes a sync profile
@@ -317,6 +330,7 @@ func (s *MultiUserService) DeleteProfile(profileID string) error {
 		s.admissionMutex.Unlock()
 		return deleteErr
 	}
+	s.invalidateEditionCapability(profileID)
 	gate.mu.Unlock()
 
 	// Starts admitted before the deletion marker wait at the gate; workers are

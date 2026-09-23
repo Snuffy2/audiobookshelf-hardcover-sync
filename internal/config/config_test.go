@@ -4,10 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDefaultShutdownTimeoutCanDrainEditionCreates(t *testing.T) {
+	assert.Equal(t, 150*time.Second, DefaultConfig().Server.ShutdownTimeout)
+}
 
 func TestLoadConfigFromFile(t *testing.T) {
 	// Set required environment variables for testing

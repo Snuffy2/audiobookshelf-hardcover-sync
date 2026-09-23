@@ -376,9 +376,9 @@ components:
 
     EditionCreateRequest:
       type: object
-      description: Edition fields to create on Hardcover. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400; in particular book_id and image_url are not accepted, because the server takes the Hardcover book from the run record and does not use Hardcover's unsupported cover-upload flow. title and author_ids are required, but a missing value is reported by validation as 422, not 400. At least one of asin, isbn_10 and isbn_13 is also required, and an ISBN may be sent with hyphens or spaces. Validation also returns 422 for a missing identifier, an isbn_10 or isbn_13 that is not a 10- or 13-character ISBN, a malformed release_date, more than 50 author or narrator IDs, an author or narrator ID that is not positive, an edition_format longer than 100 characters, or a negative publisher_id, language_id, country_id, or audio_seconds.
+      description: Exactly seven client-editable scalar fields. The body must be exactly one JSON object of at most 64 KiB. Unknown fields are rejected with 400, including names, Hardcover IDs, edition_format, audio_seconds, language_id, country_id, reading_format, book_id and image_url. title must be nonblank; at least one of asin, isbn_10 or isbn_13 is required. ISBNs may contain hyphens or spaces and are normalized before insertion. Values with the wrong ISBN shape return 422. A bad checksum is accepted and reported by a fixed warning; the warning does not imply an insert, since the request may be a dry run or reuse an existing edition. The server refetches the expanded Audiobookshelf item and derives all other fields from it.
       additionalProperties: false
-      required: [title, author_ids]
+      required: [title]
       properties:
         title: {type: string}
         subtitle: {type: string}
@@ -390,29 +390,22 @@ components:
           description: Release date as YYYY-MM-DD.
           example: "2024-01-31"
         edition_information: {type: string}
-        edition_format:
+
+    EditionCapability:
+      type: object
+      required: [can_create]
+      properties:
+        can_create:
+          type: boolean
+          description: True only after a definite successful scope probe, or for a dry-run profile where no mutation can occur.
+        missing_scope:
           type: string
-          maxLength: 100
-          description: Free text sent to Hardcover as the edition format after trimming whitespace; empty defaults to "Audiobook" ("Ebook" for an ebook item). At most 100 characters after trimming (counted in characters); a longer value returns 422.
-        audio_seconds:
-          type: integer
-          description: Audio length in seconds. Not sent to Hardcover for an ebook item.
-        language_id: {type: integer}
-        country_id: {type: integer}
-        author_ids:
-          type: array
-          minItems: 1
-          maxItems: 50
-          description: Hardcover author IDs; at least one is required, each must be positive.
-          items: {type: integer}
-        narrator_ids:
-          type: array
-          maxItems: 50
-          description: Hardcover narrator IDs; each must be positive. Not sent to Hardcover for an ebook item.
-          items: {type: integer}
-        publisher_id:
-          type: integer
-          description: Hardcover publisher ID; 0 or omitted means no publisher.
+          description: The sanitized scope named by Hardcover when the probe received insufficient_scope.
+          example: write:catalog:append
+        reason:
+          type: string
+          enum: [unverified]
+          description: The probe could not verify capability because of a transient or unclassified upstream result.
 
     EditionCreateResult:
       type: object
@@ -426,7 +419,7 @@ components:
           description: True when the profile is in dry-run mode and nothing was created on Hardcover.
         warnings:
           type: array
-          description: Reserved for nonfatal creation warnings. Never null; currently empty because the unsupported cover-upload flow is not attempted.
+          description: Never null. Fixed warnings report unmatched optional narrator or publisher names and ISBN values with invalid check digits; remote error text is never included.
           items: {type: string}
 
 security:
@@ -686,6 +679,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
   
+  /profiles/{profileId}/edition-capability:
+    get:
+      tags: [Editions]
+      summary: Check whether a profile can create editions
+      description: Uses the profile's Hardcover token to call insert_edition with an impossible book_id of -1 and a minimal body. Hardcover checks write:catalog:append before rejecting the book id, so this cannot create an edition. A validation error identifying the missing book means the scope is present; insufficient_scope returns can_create false and the missing scope. Any other response, including network errors, timeout, 401, 429 or 5xx, returns reason unverified and can_create false. A dry-run profile returns can_create true without a request because mutations are disabled. Definite results are cached for three minutes; unverified results for five seconds. Concurrent calls for the same profile and token share a probe. Token/config changes and profile deletion invalidate the cache. Requires profile write permission.
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema: {type: string}
+          example: profile-123
+      responses:
+        '200':
+          description: Capability result, including an unverified result when Hardcover cannot be classified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean, example: true}
+                  data:
+                    $ref: '#/components/schemas/EditionCapability'
+        '400':
+          description: Profile ID is missing
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401':
+          description: Authentication is enabled and the request is not authenticated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '403':
+          description: Caller is a viewer without write permission
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '404':
+          description: Profile not found or owned by another user
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: Service is shutting down or the profile is being deleted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
   /profiles/{profileId}/runs/{runId}/books/{bookId}/edition-draft:
     get:
       tags: [Editions]
@@ -771,7 +812,7 @@ paths:
     post:
       tags: [Editions]
       summary: Create a Hardcover edition for a needs-review book
-      description: Creates a Hardcover edition for a book that a run with available details (the active run or a retained one) marked needs_review and that has a Hardcover candidate. Typically the draft from the edition-draft route is fetched, optionally edited, and posted back. The Hardcover book comes from the run record; the unsupported Hardcover cover-upload flow is not attempted. If the profile is in dry-run mode the request is still validated, but nothing is created on Hardcover and edition_id is 0. Creation continues even if the caller disconnects and is limited to 2 minutes. On shutdown, running syncs are cancelled first and in-flight creates are allowed to finish, bounded by the shutdown timeout; requests that start after shutdown begins get 503. Deleting a profile likewise waits for its in-flight edition creates (up to the create timeout), so the DELETE response can be delayed and can outlast the server write timeout even though the deletion succeeds. Before creating, Hardcover is searched for an existing audiobook edition with the same ASIN, ISBN-13 or ISBN-10 (an ISBN is also searched under its converted ISBN-10 or ISBN-13 form); an edition in another format, or with no reading format, is not a match (an ebook item is matched against ebook editions, an audiobook against audiobook editions). One of the same Hardcover book is returned untouched, so nothing is created and its metadata is not changed, and the response does not distinguish reuse from creation. A race with another creator, or a failed lookup, can still let a new edition be created. If the found edition belongs to another book, or its book cannot be confirmed (unknown or merged book ID), the request is rejected with 409; retry, or add the edition manually on Hardcover. A dry run performs no lookup, so it never reports an existing edition or this conflict. Requires write permission on the profile.
+      description: Creates an edition for a needs_review book with a Hardcover candidate. The target book comes only from the run record. Only title, subtitle, ASIN, ISBN-10, ISBN-13, release date and edition information are editable; the server refetches Audiobookshelf and derives format, duration, language/country, authors, narrators and publisher. Author names must have an exact Hardcover match. Unmatched narrators and publishers are omitted with fixed warnings. Hardcover transport, GraphQL, rate-limit and timeout errors during resolution return sanitized 502 responses before insertion. A bad-checksum ISBN is accepted and reported with a fixed warning that does not imply an insert, since the request may be a dry run or reuse an existing edition. The profile token requires write:catalog:append; GET /profiles/{profileId}/edition-capability performs a safe scope probe. A create-time 403 insufficient_scope is returned with a fixed message and is not retried. The two-minute operation deadline starts before the ABS fetch and covers resolution, duplicate detection and insertion; caller disconnect does not cancel the accepted create. Service shutdown waits for in-flight creates until its configured shutdown timeout (default 2m30s; a shorter configured timeout can end the drain early). If dry-run is enabled, the request is validated and metadata may be read, but no mutation occurs and edition_id is 0. Matching editions of the same book are reused untouched; matches owned by another or unconfirmed book return 409. The unsupported cover-upload flow is not attempted. Requires profile write permission.
       parameters:
         - name: profileId
           in: path
@@ -824,7 +865,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Caller is a viewer without write permission
+          description: Caller is a viewer without write permission, or Hardcover returned insufficient_scope for write:catalog:append; create-time scope failures use a fixed error message and are not retried
           content:
             application/json:
               schema:
@@ -842,7 +883,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: The submitted edition fails validation; the error carries the message (for example, no author)
+          description: The submitted edition fails validation or none of the exact Audiobookshelf author names matched a Hardcover author
           content:
             application/json:
               schema:

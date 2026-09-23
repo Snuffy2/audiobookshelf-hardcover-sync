@@ -15,7 +15,9 @@ import (
 type Config struct {
 	// Server configuration
 	Server struct {
-		Port            string        `yaml:"port" env:"PORT"`
+		Port string `yaml:"port" env:"PORT"`
+		// ShutdownTimeout bounds graceful draining. Keep the default above the
+		// edition create operation budget so accepted creates can finish.
 		ShutdownTimeout time.Duration `yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT"`
 		// EnableWebUI enables the web UI for multi-user mode (default: false)
 		EnableWebUI bool `yaml:"enable_web_ui" env:"ENABLE_WEB_UI"`
@@ -211,7 +213,7 @@ func DefaultConfig() *Config {
 
 	// Set default values
 	cfg.Server.Port = "8080"
-	cfg.Server.ShutdownTimeout = 30 * time.Second
+	cfg.Server.ShutdownTimeout = 2*time.Minute + 30*time.Second
 	cfg.Server.EnableWebUI = false // Web UI is disabled by default for backward compatibility
 
 	// Default sync configuration

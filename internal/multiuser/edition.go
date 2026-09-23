@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition/draft"
@@ -23,13 +23,19 @@ const (
 	// EditionDraftTimeout bounds draft preparation to less than Audiobookshelf's
 	// per-request timeout, leaving time to serialize and write the response.
 	EditionDraftTimeout = audiobookshelf.RequestTimeout - 5*time.Second
-	// maxEditionPeople bounds the author and narrator ID lists a caller may submit.
+	// maxEditionPeople bounds the author and narrator names resolved from ABS.
 	maxEditionPeople = 50
-	// maxEditionFormatLength bounds the free-text edition format label.
-	maxEditionFormatLength = 100
-	// EditionCreateTimeout bounds one edition creation, including the cover
-	// upload. The HTTP layer sizes its response write deadline from it.
+	// EditionCreateTimeout bounds one edition creation from the ABS refetch
+	// through Hardcover metadata resolution, duplicate checks, and insertion.
+	// The HTTP layer sizes its response write deadline from it.
 	EditionCreateTimeout = 2 * time.Minute
+	// EditionCapabilityCacheTTL keeps definite scope answers briefly while
+	// allowing token changes to be observed quickly.
+	EditionCapabilityCacheTTL = 3 * time.Minute
+	// EditionCapabilityUnverifiedTTL avoids hammering Hardcover during outages.
+	EditionCapabilityUnverifiedTTL = 5 * time.Second
+	EditionCapabilityTimeout       = 45 * time.Second
+	editionLookupLimit             = 10
 	// editionImageClientTimeout bounds a single cover download or upload request.
 	editionImageClientTimeout = 60 * time.Second
 )
@@ -58,6 +64,13 @@ var (
 
 	// ErrEditionInProgress indicates that an edition submit for the same book is already running.
 	ErrEditionInProgress = errors.New("an edition is already being created for this book")
+
+	// ErrEditionAuthorNotFound means none of the Audiobookshelf author names
+	// exactly matched an author in Hardcover.
+	ErrEditionAuthorNotFound = errors.New("no Audiobookshelf author matched a Hardcover author")
+
+	// ErrEditionInsufficientScope means the profile token cannot append catalog editions.
+	ErrEditionInsufficientScope = errors.New("Hardcover token is missing the required edition creation scope")
 )
 
 // EditionValidationError reports edition data that cannot be submitted. Its
@@ -94,13 +107,15 @@ type EditionEdits struct {
 	ISBN13             string `json:"isbn_13"`
 	ReleaseDate        string `json:"release_date"`
 	EditionInformation string `json:"edition_information"`
-	EditionFormat      string `json:"edition_format"`
-	AudioSeconds       int    `json:"audio_seconds"`
-	LanguageID         int    `json:"language_id"`
-	CountryID          int    `json:"country_id"`
-	AuthorIDs          []int  `json:"author_ids"`
-	NarratorIDs        []int  `json:"narrator_ids"`
-	PublisherID        int    `json:"publisher_id"`
+}
+
+// EditionCapability reports whether the current profile can create editions.
+// An unverified result is deliberately false so callers only enable creation
+// after a definite positive probe.
+type EditionCapability struct {
+	CanCreate    bool   `json:"can_create"`
+	MissingScope string `json:"missing_scope,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 // EditionCreated is the result of a create request. EditionID is 0 for a dry run.
@@ -183,6 +198,12 @@ func (s *MultiUserService) prepareEditionDraft(ctx context.Context, profileID, r
 // dry-run mode validates the request but issues no Hardcover mutation. Shutdown
 // cancels running syncs first and then waits for in-flight creates to finish.
 func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profileID, runID, bookID string, edits EditionEdits) (*EditionCreated, error) {
+	return s.createEditionFromRunBook(ctx, profileID, runID, bookID, edits, EditionCreateTimeout)
+}
+
+// createEditionFromRunBook keeps the operation budget injectable so timeout
+// coverage can exercise the same production path without waiting two minutes.
+func (s *MultiUserService) createEditionFromRunBook(ctx context.Context, profileID, runID, bookID string, edits EditionEdits, timeout time.Duration) (*EditionCreated, error) {
 	gate, err := s.beginEditionWork(profileID)
 	if err != nil {
 		return nil, err
@@ -200,8 +221,17 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	}
 	defer release()
 
-	item, err := s.fetchEditionItem(ctx, target.profile, bookID)
+	// Detach from a disconnected HTTP caller, but start the single operation
+	// budget before any upstream call so ABS, resolution, duplicate lookup and
+	// insert all share the same deadline.
+	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+
+	item, err := s.fetchEditionItem(createCtx, target.profile, bookID)
 	if err != nil {
+		if createCtx.Err() != nil && ctx.Err() == nil {
+			return nil, &EditionUpstreamError{Service: "audiobookshelf", Err: err}
+		}
 		return nil, err
 	}
 	if !hasEditionIdentifier(item) {
@@ -215,29 +245,32 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		// Cover upload remains disabled because Hardcover's upload endpoint is
 		// undocumented and rejects scoped API tokens. Do not ask the creator to
 		// produce a warning for a flow the service intentionally does not attempt.
-		ImageURL:      "",
-		ISBN10:        edits.ISBN10,
-		ISBN13:        edits.ISBN13,
-		ASIN:          edits.ASIN,
-		PublisherID:   edits.PublisherID,
-		LanguageID:    edits.LanguageID,
-		CountryID:     edits.CountryID,
-		AuthorIDs:     edits.AuthorIDs,
-		NarratorIDs:   edits.NarratorIDs,
-		AudioLength:   edits.AudioSeconds,
-		ReleaseDate:   edits.ReleaseDate,
-		EditionInfo:   edits.EditionInformation,
-		EditionFormat: edits.EditionFormat,
-		// The format comes from the Audiobookshelf item, never from the request,
-		// so an ebook cannot be created as an audiobook edition or the reverse.
+		ImageURL:    "",
+		ISBN10:      edits.ISBN10,
+		ISBN13:      edits.ISBN13,
+		ASIN:        edits.ASIN,
+		ReleaseDate: edits.ReleaseDate,
+		EditionInfo: edits.EditionInformation,
+		// Edition format, reading format and audio length are server-derived.
+		EditionFormat: derivedEditionFormat(item),
 		ReadingFormat: item.ReadingFormat(),
+		AudioLength:   derivedEditionAudioSeconds(item),
+		LanguageID:    1,
+		CountryID:     1,
+	}
+	if err := validateEditionScalars(input); err != nil {
+		return nil, &EditionValidationError{Err: err}
+	}
+	hcClient := s.newHardcoverClient(target.profile.HardcoverToken)
+	metadataWarnings, err := resolveEditionMetadata(createCtx, hcClient, item, input)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateEditionInput(input); err != nil {
 		return nil, &EditionValidationError{Err: err}
 	}
 
 	dryRun := target.profile.SyncConfig.DryRun
-	hcClient := s.newHardcoverClient(target.profile.HardcoverToken)
 	// Dry run is enforced at both the creator and the concrete client boundary.
 	hcClient.SetDryRun(dryRun)
 	// Cover upload is disabled, so the creator does not need the Audiobookshelf
@@ -245,19 +278,18 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	// the creator gains another outbound request path.
 	creator := s.editionCreator(hcClient, dryRun, "")
 
-	// Finish the creation even if the caller disconnects, so an edition is not
-	// left without its cover; the timeout still bounds the work.
-	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EditionCreateTimeout)
-	defer cancel()
-
 	result, err := creator.CreateEdition(createCtx, input)
 	if err != nil {
 		if errors.Is(err, edition.ErrEditionBelongsToOtherBook) {
 			return nil, ErrEditionConflict
 		}
+		if _, ok := hardcover.InsufficientScope(err); ok {
+			return nil, ErrEditionInsufficientScope
+		}
 		return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
 	}
-	created := &EditionCreated{EditionID: result.EditionID, DryRun: dryRun, Warnings: []string{}}
+	warnings := append(metadataWarnings, invalidISBNWarnings(input)...)
+	created := &EditionCreated{EditionID: result.EditionID, DryRun: dryRun, Warnings: warnings}
 	return created, nil
 }
 
@@ -274,6 +306,141 @@ func (s *MultiUserService) editionCreator(client edition.HardcoverClient, dryRun
 		audiobookshelfToken,
 		&http.Client{Timeout: editionImageClientTimeout},
 	)
+}
+
+// resolveEditionMetadata maps exact ABS names to profile-token-scoped Hardcover
+// IDs. It deliberately uses no global name cache: a result must be confirmed
+// through this profile's rate-limited client at create time.
+func resolveEditionMetadata(ctx context.Context, client *hardcover.Client, item *models.AudiobookshelfBook, input *edition.EditionInput) ([]string, error) {
+	meta := item.Media.Metadata
+	authorNames := expandedAuthorNames(meta.Authors)
+	if len(authorNames) == 0 && strings.TrimSpace(meta.AuthorName) != "" {
+		// The legacy field is treated as one exact name. Commas may be part of
+		// an author's name and are never used as a splitting rule here.
+		authorNames = []string{strings.TrimSpace(meta.AuthorName)}
+	}
+	if len(authorNames) > maxEditionPeople {
+		return nil, &EditionValidationError{Err: fmt.Errorf("at most %d authors are allowed", maxEditionPeople)}
+	}
+	for _, name := range authorNames {
+		id, found, err := exactPersonID(ctx, client, name, false)
+		if err != nil {
+			return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
+		}
+		if found {
+			input.AuthorIDs = appendUniqueID(input.AuthorIDs, id)
+		}
+	}
+	if len(input.AuthorIDs) == 0 {
+		return nil, &EditionValidationError{Err: ErrEditionAuthorNotFound}
+	}
+
+	warnings := make([]string, 0, 2)
+	if item.ReadingFormat() != models.ReadingFormatEbook {
+		narratorNames := expandedNarratorNames(meta.Narrators)
+		if len(narratorNames) == 0 && strings.TrimSpace(meta.NarratorName) != "" {
+			narratorNames = []string{strings.TrimSpace(meta.NarratorName)}
+		}
+		if len(narratorNames) > maxEditionPeople {
+			return nil, &EditionValidationError{Err: fmt.Errorf("at most %d narrators are allowed", maxEditionPeople)}
+		}
+		missedNarrator := false
+		for _, name := range narratorNames {
+			id, found, err := exactPersonID(ctx, client, name, true)
+			if err != nil {
+				return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
+			}
+			if found {
+				input.NarratorIDs = appendUniqueID(input.NarratorIDs, id)
+			} else {
+				missedNarrator = true
+			}
+		}
+		if missedNarrator {
+			warnings = append(warnings, "One or more Audiobookshelf narrators did not match a Hardcover narrator and were omitted.")
+		}
+	}
+
+	publisherName := strings.TrimSpace(meta.Publisher)
+	if publisherName != "" {
+		publishers, err := client.SearchPublishers(ctx, publisherName, editionLookupLimit)
+		if err != nil {
+			return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
+		}
+		matched := false
+		for _, publisher := range publishers {
+			if publisher.Name != publisherName {
+				continue
+			}
+			id, parseErr := strconv.Atoi(publisher.ID)
+			if parseErr != nil || id <= 0 {
+				return nil, &EditionUpstreamError{Service: "hardcover", Err: fmt.Errorf("invalid publisher id for exact match")}
+			}
+			input.PublisherID = id
+			matched = true
+			break
+		}
+		if !matched {
+			warnings = append(warnings, "Audiobookshelf publisher did not match a Hardcover publisher and was omitted.")
+		}
+	}
+	return warnings, nil
+}
+
+func expandedAuthorNames(authors []models.AudiobookshelfPerson) []string {
+	names := make([]string, 0, len(authors))
+	for _, author := range authors {
+		if name := strings.TrimSpace(author.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func expandedNarratorNames(narrators []string) []string {
+	names := make([]string, 0, len(narrators))
+	for _, narrator := range narrators {
+		if name := strings.TrimSpace(narrator); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func exactPersonID(ctx context.Context, client *hardcover.Client, name string, narrator bool) (int, bool, error) {
+	if name == "" {
+		return 0, false, nil
+	}
+	var people []models.Author
+	var err error
+	if narrator {
+		people, err = client.SearchNarratorsByName(ctx, name, editionLookupLimit)
+	} else {
+		people, err = client.SearchAuthors(ctx, name, editionLookupLimit)
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	for _, person := range people {
+		if person.Name != name {
+			continue
+		}
+		id, parseErr := strconv.Atoi(person.ID)
+		if parseErr != nil || id <= 0 {
+			return 0, false, errors.New("Hardcover returned an invalid person id")
+		}
+		return id, true, nil
+	}
+	return 0, false, nil
+}
+
+func appendUniqueID(ids []int, id int) []int {
+	for _, current := range ids {
+		if current == id {
+			return ids
+		}
+	}
+	return append(ids, id)
 }
 
 // resolveEditionTarget loads the profile and finds the needs-review record for
@@ -365,12 +532,10 @@ func (s *MultiUserService) claimEdition(profileID, bookID string) (release func(
 // validateEditionInput trims the title, then applies the creator's own rules
 // plus bounds on the caller-supplied ID lists.
 func validateEditionInput(input *edition.EditionInput) error {
-	// A blank title is as missing as an empty one, and the stored title is trimmed.
-	input.Title = strings.TrimSpace(input.Title)
-	if err := input.Validate(); err != nil {
+	if err := validateEditionScalars(input); err != nil {
 		return err
 	}
-	if err := normalizeEditionIdentifiers(input); err != nil {
+	if err := input.Validate(); err != nil {
 		return err
 	}
 	if len(input.AuthorIDs) > maxEditionPeople || len(input.NarratorIDs) > maxEditionPeople {
@@ -381,13 +546,68 @@ func validateEditionInput(input *edition.EditionInput) error {
 			return errors.New("author and narrator IDs must be positive")
 		}
 	}
-	if utf8.RuneCountInString(strings.TrimSpace(input.EditionFormat)) > maxEditionFormatLength {
-		return fmt.Errorf("edition format must be at most %d characters", maxEditionFormatLength)
-	}
 	if input.PublisherID < 0 || input.LanguageID < 0 || input.CountryID < 0 || input.AudioLength < 0 {
 		return errors.New("publisher, language, country, and audio length must not be negative")
 	}
 	return nil
+}
+
+func validateEditionScalars(input *edition.EditionInput) error {
+	input.Title = strings.TrimSpace(input.Title)
+	if input.BookID <= 0 {
+		return errors.New("book_id is required")
+	}
+	if input.Title == "" {
+		return errors.New("title is required")
+	}
+	switch strings.ToLower(strings.TrimSpace(input.ReadingFormat)) {
+	case models.ReadingFormatAudiobook, models.ReadingFormatEbook:
+	default:
+		return errors.New("invalid server-derived reading format")
+	}
+	if input.ReleaseDate != "" {
+		if _, err := time.Parse("2006-01-02", input.ReleaseDate); err != nil {
+			return errors.New("invalid release_date format, expected YYYY-MM-DD")
+		}
+	}
+	return normalizeEditionIdentifiers(input)
+}
+
+func derivedEditionFormat(item *models.AudiobookshelfBook) string {
+	if item.ReadingFormat() == models.ReadingFormatEbook {
+		return "Ebook"
+	}
+	if strings.TrimSpace(item.Media.Metadata.ASIN) != "" {
+		return "Audible Audio"
+	}
+	if strings.Contains(strings.ToLower(item.Media.Metadata.Publisher), "libro") {
+		return "libro.fm"
+	}
+	return ""
+}
+
+func derivedEditionAudioSeconds(item *models.AudiobookshelfBook) int {
+	if item.ReadingFormat() == models.ReadingFormatEbook || item.Media.Duration <= 0 {
+		return 0
+	}
+	return int(item.Media.Duration + 0.5)
+}
+
+func invalidISBNWarnings(input *edition.EditionInput) []string {
+	warnings := make([]string, 0, 2)
+	if input.ISBN10 != "" {
+		parsed, _ := isbn.Parse(input.ISBN10)
+		if !parsed.Valid {
+			warnings = append(warnings, "ISBN-10 has an invalid check digit.")
+		}
+	}
+	if input.ISBN13 != "" {
+		parsed, _ := isbn.Parse(input.ISBN13)
+		if !parsed.Valid {
+			warnings = append(warnings, "ISBN-13 has an invalid check digit.")
+		}
+	}
+	return warnings
 }
 
 // normalizeEditionIdentifiers trims the ASIN and rewrites the ISBNs without

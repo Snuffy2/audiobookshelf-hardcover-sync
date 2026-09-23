@@ -1,7 +1,7 @@
 # Server configuration
 server:
   port: "8080"
-  shutdown_timeout: "10s"  # Graceful shutdown timeout
+  shutdown_timeout: "2m30s"  # Graceful shutdown timeout; enough for an in-flight edition create
   enable_web_ui: false  # Enable web UI for multi-user mode (default: false)
 
 # Rate limiting configuration

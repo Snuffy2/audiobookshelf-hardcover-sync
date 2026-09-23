@@ -34,22 +34,32 @@ func (e ExistingEdition) inFormat(variables map[string]interface{}) bool {
 type HardcoverFake struct {
 	*httptest.Server
 
-	Authors  map[string]int
-	ASINs    map[string]ExistingEdition
-	ISBNs    map[string]ExistingEdition
-	FailWith string
+	Authors      map[string]int
+	Publishers   map[string]int
+	ASINs        map[string]ExistingEdition
+	ISBNs        map[string]ExistingEdition
+	FailWith     string
+	ProbeStatus  int
+	ProbeBody    string
+	InsertStatus int
+	InsertBody   string
+	SearchStatus int
+	SearchBody   string
 
 	Entered       chan struct{}
 	ReadEntered   chan struct{}
 	SearchEntered chan struct{}
+	ProbeEntered  chan struct{}
 
 	mu          sync.Mutex
 	mutations   []map[string]interface{}
 	writes      []string
 	requests    int
+	probes      []map[string]interface{}
 	holdInsert  chan struct{}
 	holdReads   chan struct{}
 	holdSearch  chan struct{}
+	holdProbe   chan struct{}
 	delayAll    time.Duration
 	delayInsert time.Duration
 }
@@ -63,11 +73,13 @@ func NewHardcoverFake(t *testing.T) *HardcoverFake {
 	t.Helper()
 	fake := &HardcoverFake{
 		Authors:       map[string]int{},
+		Publishers:    map[string]int{},
 		ASINs:         map[string]ExistingEdition{},
 		ISBNs:         map[string]ExistingEdition{},
 		Entered:       make(chan struct{}, 8),
 		ReadEntered:   make(chan struct{}, 64),
 		SearchEntered: make(chan struct{}, 8),
+		ProbeEntered:  make(chan struct{}, 8),
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(fake.Close)
@@ -100,6 +112,25 @@ func (f *HardcoverFake) RequestCount() int {
 	return f.requests
 }
 
+// ProbeCount returns the number of impossible-book edition capability probes.
+func (f *HardcoverFake) ProbeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.probes)
+}
+
+// ProbeBookIDs returns book ids sent to the capability mutation.
+func (f *HardcoverFake) ProbeBookIDs() []float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]float64, 0, len(f.probes))
+	for _, variables := range f.probes {
+		id, _ := variables["bookId"].(float64)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (f *HardcoverFake) HoldInsert(ch chan struct{}) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -118,10 +149,16 @@ func (f *HardcoverFake) HoldSearches(ch chan struct{}) {
 	f.holdSearch = ch
 }
 
+func (f *HardcoverFake) HoldProbes(ch chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdProbe = ch
+}
+
 func (f *HardcoverFake) ReleaseHolds() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, hold := range []*chan struct{}{&f.holdInsert, &f.holdReads, &f.holdSearch} {
+	for _, hold := range []*chan struct{}{&f.holdInsert, &f.holdReads, &f.holdSearch, &f.holdProbe} {
 		if *hold != nil {
 			close(*hold)
 			*hold = nil
@@ -151,7 +188,7 @@ func (f *HardcoverFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests++
 	delayAll, delayInsert := f.delayAll, f.delayInsert
-	holdInsert, holdReads, holdSearch := f.holdInsert, f.holdReads, f.holdSearch
+	holdInsert, holdReads, holdSearch, holdProbe := f.holdInsert, f.holdReads, f.holdSearch, f.holdProbe
 	isMutation := strings.HasPrefix(strings.TrimSpace(request.Query), "mutation")
 	if isMutation {
 		f.writes = append(f.writes, request.Query)
@@ -170,15 +207,46 @@ func (f *HardcoverFake) serve(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case strings.Contains(request.Query, "insert_edition"):
+		bookID, _ := request.Variables["bookId"].(float64)
+		if bookID == -1 {
+			f.mu.Lock()
+			f.probes = append(f.probes, request.Variables)
+			probeStatus, probeBody := f.ProbeStatus, f.ProbeBody
+			f.mu.Unlock()
+			if holdProbe != nil {
+				f.ProbeEntered <- struct{}{}
+				select {
+				case <-holdProbe:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			if probeStatus != 0 {
+				w.WriteHeader(probeStatus)
+				if probeBody != "" {
+					_, _ = w.Write([]byte(probeBody))
+				}
+				return
+			}
+			respond(map[string]interface{}{"insert_edition": map[string]interface{}{"id": nil, "errors": []string{"Couldn't find Book"}}})
+			return
+		}
 		f.mu.Lock()
 		f.mutations = append(f.mutations, request.Variables)
-		failWith := f.FailWith
+		failWith, insertStatus, insertBody := f.FailWith, f.InsertStatus, f.InsertBody
 		f.mu.Unlock()
 		f.Entered <- struct{}{}
 		if holdInsert != nil {
 			<-holdInsert
 		}
 		time.Sleep(delayInsert)
+		if insertStatus != 0 {
+			w.WriteHeader(insertStatus)
+			if insertBody != "" {
+				_, _ = w.Write([]byte(insertBody))
+			}
+			return
+		}
 		if failWith != "" {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"errors": []map[string]string{{"message": failWith}}})
 			return
@@ -204,12 +272,39 @@ func (f *HardcoverFake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(map[string]interface{}{"editions": editions})
 	case strings.Contains(request.Query, "SearchPeopleDirect") || strings.Contains(request.Query, "SearchNarrators"):
+		f.mu.Lock()
+		searchStatus, searchBody := f.SearchStatus, f.SearchBody
+		f.mu.Unlock()
+		if searchStatus != 0 {
+			w.WriteHeader(searchStatus)
+			if searchBody != "" {
+				_, _ = w.Write([]byte(searchBody))
+			}
+			return
+		}
 		name, _ := request.Variables["name"].(string)
 		people := []map[string]interface{}{}
 		if id, ok := f.Authors[name]; ok {
 			people = append(people, map[string]interface{}{"id": id, "name": name, "books_count": 3})
 		}
 		respond(map[string]interface{}{"authors": people})
+	case strings.Contains(request.Query, "SearchPublishers"):
+		f.mu.Lock()
+		searchStatus, searchBody := f.SearchStatus, f.SearchBody
+		f.mu.Unlock()
+		if searchStatus != 0 {
+			w.WriteHeader(searchStatus)
+			if searchBody != "" {
+				_, _ = w.Write([]byte(searchBody))
+			}
+			return
+		}
+		name, _ := request.Variables["name"].(string)
+		publishers := []map[string]interface{}{}
+		if id, ok := f.Publishers[name]; ok {
+			publishers = append(publishers, map[string]interface{}{"id": id, "name": name})
+		}
+		respond(map[string]interface{}{"publishers": publishers})
 	default:
 		if holdSearch != nil {
 			f.SearchEntered <- struct{}{}
@@ -247,6 +342,7 @@ type AudiobookshelfFake struct {
 
 	mu        sync.Mutex
 	holdReads chan struct{}
+	itemReads int
 }
 
 // NewAudiobookshelfFake starts an Audiobookshelf fake closed with the test.
@@ -266,6 +362,9 @@ func NewAudiobookshelfFake(t *testing.T, items map[string]map[string]interface{}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": results})
 		case strings.HasPrefix(r.URL.Path, "/api/items/"):
+			fake.mu.Lock()
+			fake.itemReads++
+			fake.mu.Unlock()
 			if !fake.waitForReadRelease(r) {
 				return
 			}
@@ -285,6 +384,13 @@ func NewAudiobookshelfFake(t *testing.T, items map[string]map[string]interface{}
 	}))
 	t.Cleanup(fake.Close)
 	return fake
+}
+
+// ItemRequestCount returns the number of expanded item fetches.
+func (f *AudiobookshelfFake) ItemRequestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.itemReads
 }
 
 // HoldReads makes item requests wait until ch is closed; nil stops holding.

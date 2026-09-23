@@ -68,6 +68,7 @@ Existing single-profile setups are **automatically migrated** on first startup:
 | `PUT` | `/api/profiles/{id}/config` | Update profile configuration |
 | `GET` | `/api/profiles/{id}/runs/{runId}/details` | Get book-level details for a retained sync run |
 | `GET` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition-draft` | Get a draft Hardcover edition for a `needs_review` book in a run with available details |
+| `GET` | `/api/profiles/{id}/edition-capability` | Check whether the profile's Hardcover token can create editions |
 | `POST` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition` | Create a Hardcover edition for a `needs_review` book from reviewed fields |
 | `POST` | `/api/profiles/{id}/sync` | Start sync |
 | `DELETE` | `/api/profiles/{id}/sync` | Cancel sync |
@@ -124,8 +125,11 @@ endpoint with an authenticated account that can edit the profile:
 curl -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/api/profiles/$PROFILE_ID/runs/$RUN_ID/books/$BOOK_ID/edition-draft"
 
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/profiles/$PROFILE_ID/edition-capability"
+
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"title":"Example Title","isbn_13":"9780306406157","author_ids":[123]}' \
+  -d '{"title":"Example Title","isbn_13":"9780306406157"}' \
   "http://localhost:8080/api/profiles/$PROFILE_ID/runs/$RUN_ID/books/$BOOK_ID/edition"
 ```
 
@@ -134,9 +138,17 @@ handles audiobook and ebook fields, derives the other ISBN form when possible,
 and returns warnings for metadata worth reviewing. If the item has no ASIN or
 parseable ISBN, add one in Audiobookshelf before trying again.
 
-Previewing is read-only and makes no Hardcover request. Creation validates the
-submitted identifiers and Hardcover contributor IDs, honors dry-run mode, and
-does not attempt Hardcover's unsupported cover-upload flow.
+Previewing is read-only and makes no Hardcover request. Before creating an
+edition, check that `can_create` is true; existing profile tokens may need the
+`write:catalog:append` scope. Creation accepts only title, subtitle, ASIN,
+ISBN-10, ISBN-13, release date and edition information. It refetches
+Audiobookshelf metadata and resolves exact contributor and publisher names;
+an author match is required, while missing narrator or publisher matches are
+returned as warnings. A bad ISBN check digit is accepted with a fixed warning.
+Dry-run mode performs no mutation. The
+two-minute operation deadline covers the ABS refetch through Hardcover insert.
+The default graceful-shutdown timeout is 2m30s so an accepted create can drain;
+a shorter configured timeout can end shutdown before a create finishes.
 See the [OpenAPI specification](docs/openapi.yaml) for request fields, response
 fields, and errors.
 
@@ -265,7 +277,7 @@ The project follows standard Go project layout:
 - Go 1.21 or later
 - Docker (optional, for containerized deployment)
 - Audiobookshelf instance with API access
-- Hardcover API token
+- Hardcover API token; edition creation also requires `write:catalog:append` on the profile token
 
 ### Local Development
 
@@ -329,7 +341,7 @@ The application will automatically migrate settings from the old `app` section t
 
 - [Docker](https://docs.docker.com/engine/install/) installed on your system
 - [Docker Compose](https://docs.docker.com/compose/install/) (recommended for the main sync service)
-- [Hardcover API token](#getting-started) (requires scopes: `read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library` — [create one with this link](https://hardcover.app/account/api/keys/new?scope=read%3Alibrary+read%3Acatalog+write%3Alibrary+read%3Alists+read%3Ame))
+- [Hardcover API token](#getting-started) (sync scopes: `read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`; edition creation also needs `write:catalog:append` — [create one with these scopes](https://hardcover.app/account/api/keys/new?scope=read%3Alibrary+read%3Acatalog+read%3Alists+read%3Ame+write%3Alibrary+write%3Acatalog%3Aappend))
 - (Optional) [Audiobookshelf](https://www.audiobookshelf.org/) URL and token if using the sync service
 
 
@@ -568,7 +580,7 @@ Version 2.0.0 introduces a YAML configuration file as the primary way to configu
 # Server configuration
 server:
   port: "8080"
-  shutdown_timeout: "10s"  # Graceful shutdown timeout
+  shutdown_timeout: "2m30s"  # Graceful shutdown timeout; enough for an in-flight edition create
 
 # Rate limiting configuration
 rate_limit:
@@ -720,7 +732,7 @@ The application supports two distinct operating modes controlled by the `enable_
 server:
   port: 8080
   enable_web_ui: true  # Enable web UI for multi-user mode
-  shutdown_timeout: 30s
+  shutdown_timeout: 2m30s
 
 # Single-user mode (when enable_web_ui: false)
 audiobookshelf:

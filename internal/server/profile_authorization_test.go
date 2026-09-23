@@ -180,6 +180,35 @@ func TestProfileAuthorizationOwnershipAndAdminOverride(t *testing.T) {
 	require.Contains(t, adminListResponse.Body.String(), "legacy-ownerless")
 }
 
+func TestEditionCapabilityRequiresProfileWriteAccess(t *testing.T) {
+	fixture := newRouteTestFixture(t, true)
+	owner := newRouteSession(t, fixture, "edition-capability-owner", auth.RoleUser)
+	otherOwner := newRouteSession(t, fixture, "edition-capability-other-owner", auth.RoleUser)
+	viewer := newRouteSession(t, fixture, "edition-capability-viewer", auth.RoleViewer)
+	createRouteProfile(t, fixture, owner, "edition-capability-profile", "edition-token")
+	createRouteProfile(t, fixture, otherOwner, "edition-capability-other-profile", "other-edition-token")
+	require.NoError(t, fixture.repo.CreateProfileForUser(
+		"edition-capability-viewer-profile",
+		"edition-capability-viewer-profile",
+		"http://audiobookshelf.invalid",
+		"viewer-abs-token",
+		"viewer-edition-token",
+		database.SyncConfigData{DryRun: true},
+		viewer.user.ID,
+	))
+	path := "/api/profiles/edition-capability-profile/edition-capability"
+
+	ownerResponse := fixture.requestWithCookies(http.MethodGet, path, nil, []*http.Cookie{owner.cookie})
+	require.Equal(t, http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
+	require.Contains(t, ownerResponse.Body.String(), `"can_create":true`)
+
+	viewerResponse := fixture.requestWithCookies(http.MethodGet, "/api/profiles/edition-capability-viewer-profile/edition-capability", nil, []*http.Cookie{viewer.cookie})
+	require.Equal(t, http.StatusForbidden, viewerResponse.Code, viewerResponse.Body.String())
+
+	foreignResponse := fixture.requestWithCookies(http.MethodGet, "/api/profiles/edition-capability-other-profile/edition-capability", nil, []*http.Cookie{owner.cookie})
+	require.Equal(t, http.StatusNotFound, foreignResponse.Code, foreignResponse.Body.String())
+}
+
 func TestAuthDisabledProfileResponsesRedactCredentialsAndPreserveUpdates(t *testing.T) {
 	fixture := newRouteTestFixture(t, false)
 	const (

@@ -203,6 +203,50 @@ func TestClient_SearchPeople(t *testing.T) {
 	}
 }
 
+func TestSearchNarratorsByNameDoesNotTreatNumericNamesAsIDs(t *testing.T) {
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode query request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		queries = append(queries, request.Query)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := io.WriteString(w, `{"data":{"authors":[{"id":123,"name":"123","books_count":1}]}}`)
+		if err != nil {
+			t.Errorf("write query response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := NewClientWithConfig(&ClientConfig{
+		BaseURL:       server.URL,
+		Timeout:       time.Second,
+		MaxRetries:    0,
+		RateLimit:     time.Millisecond,
+		MaxConcurrent: 1,
+	}, "test-token", logger.Get())
+
+	people, err := client.SearchNarratorsByName(context.Background(), "123", 10)
+	require.NoError(t, err)
+	require.Equal(t, "123", people[0].Name)
+	require.Len(t, queries, 1)
+	require.Contains(t, queries[0], "query SearchPeopleDirect")
+	require.Contains(t, queries[0], `contributions: {contribution: {_eq: "Narrator"}}`)
+	require.NotContains(t, queries[0], "query GetPerson(")
+
+	// Existing generic searches retain their numeric-ID behavior for callers
+	// that intentionally pass a Hardcover ID.
+	queries = nil
+	_, err = client.SearchNarrators(context.Background(), "123", 10)
+	require.NoError(t, err)
+	require.Len(t, queries, 1)
+	require.Contains(t, queries[0], "query GetPerson(")
+}
+
 func TestClient_SearchPeople_UnsupportedType(t *testing.T) {
 	// This test is no longer needed as we're handling the person type at a higher level
 	// and the SearchPeople function is not directly exposed anymore

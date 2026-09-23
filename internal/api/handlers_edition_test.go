@@ -33,7 +33,7 @@ func editionAPIItem(id, title, author, coverPath string) map[string]interface{} 
 		"mediaType": "book",
 		"media": map[string]interface{}{
 			"coverPath": coverPath,
-			"metadata":  map[string]interface{}{"title": title, "authorName": author, "isbn": "978-0-306-40615-7"},
+			"metadata":  map[string]interface{}{"title": title, "authorName": author, "narratorName": "Narrator", "isbn": "978-0-306-40615-7"},
 			"duration":  3600.0,
 		},
 	}
@@ -59,6 +59,34 @@ func newEditionAPIFixture(t *testing.T, dryRun bool, records []syncsvc.BookOutco
 	t.Helper()
 	hardcover := editiontest.NewHardcoverRequestCounter(t)
 	abs := editiontest.NewAudiobookshelfFake(t, items)
+	for _, item := range items {
+		media, _ := item["media"].(map[string]interface{})
+		metadata, _ := media["metadata"].(map[string]interface{})
+		if name, _ := metadata["authorName"].(string); strings.TrimSpace(name) != "" {
+			hardcover.Authors[strings.TrimSpace(name)] = 101
+		}
+		if authors, ok := metadata["authors"].([]interface{}); ok {
+			for _, value := range authors {
+				person, _ := value.(map[string]interface{})
+				if name, _ := person["name"].(string); strings.TrimSpace(name) != "" {
+					hardcover.Authors[strings.TrimSpace(name)] = 101
+				}
+			}
+		}
+		if name, _ := metadata["narratorName"].(string); strings.TrimSpace(name) != "" {
+			hardcover.Authors[strings.TrimSpace(name)] = 202
+		}
+		if narrators, ok := metadata["narrators"].([]interface{}); ok {
+			for _, value := range narrators {
+				if name, _ := value.(string); strings.TrimSpace(name) != "" {
+					hardcover.Authors[strings.TrimSpace(name)] = 202
+				}
+			}
+		}
+		if name, _ := metadata["publisher"].(string); strings.TrimSpace(name) != "" {
+			hardcover.Publishers[strings.TrimSpace(name)] = 303
+		}
+	}
 	fixture := newStatusServiceFixture(t, hardcover.URL)
 	require.NoError(t, fixture.repo.CreateProfile(
 		editionProfileID, "Edition profile", abs.URL, "abs-secret-token", "hc-secret-token",
@@ -74,6 +102,7 @@ func newEditionAPIFixture(t *testing.T, dryRun bool, records []syncsvc.BookOutco
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("POST /api/profiles/{id}/sync", handler.StartSync)
 	apiMux.HandleFunc("DELETE /api/profiles/{id}/sync", handler.CancelSync)
+	apiMux.HandleFunc("GET /api/profiles/{id}/edition-capability", handler.GetEditionCapability)
 	apiMux.HandleFunc("GET /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft", handler.GetEditionDraft)
 	apiMux.HandleFunc("POST /api/profiles/{id}/runs/{runID}/books/{bookID}/edition", handler.CreateEdition)
 	root := http.NewServeMux()
@@ -124,8 +153,7 @@ func reviewRecord(bookID, hardcoverBookID string) syncsvc.BookOutcomeRecord {
 	return syncsvc.BookOutcomeRecord{BookID: bookID, Outcome: syncsvc.OutcomeNeedsReview, HardcoverBookID: hardcoverBookID}
 }
 
-const validEditionBody = `{"title":"A Title","isbn_13":"9780306406157","release_date":"2021-02-03","edition_information":"Unabridged",` +
-	`"audio_seconds":3600,"language_id":1,"country_id":1,"author_ids":[101],"narrator_ids":[202]}`
+const validEditionBody = `{"title":"A Title","isbn_13":"9780306406157","release_date":"2021-02-03","edition_information":"Unabridged"}`
 
 func singleItemFixture(t *testing.T, dryRun bool, item map[string]interface{}) *editionAPIFixture {
 	t.Helper()
@@ -236,7 +264,7 @@ func TestCreateEditionTargetsTheRunRecordAndReturnsTheEdition(t *testing.T) {
 }
 
 func TestCreateEditionWithAnExistingASIN(t *testing.T) {
-	const body = `{"title":"A Title","asin":"B0EXISTING1","language_id":1,"country_id":1,"author_ids":[101]}`
+	const body = `{"title":"A Title","asin":"B0EXISTING1"}`
 
 	t.Run("an edition of the same book is returned untouched", func(t *testing.T) {
 		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
@@ -265,7 +293,7 @@ func TestCreateEditionWithAnISBNOnAnotherBooksEditionIsAConflict(t *testing.T) {
 	f.hardcover.ISBNs["9781234567897"] = editiontest.ExistingEdition{EditionID: 555, BookID: 9999}
 
 	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
-		`{"title":"A Title","isbn_13":"9781234567897","language_id":1,"country_id":1,"author_ids":[101]}`)
+		`{"title":"A Title","isbn_13":"9781234567897"}`)
 
 	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
 	require.Equal(t, "An edition with this ASIN or ISBN already exists on Hardcover and could not be confirmed to belong to this book.", decodeEnvelope(t, recorder).Error)
@@ -314,7 +342,7 @@ func TestEbookEditionEndpointsCreateAnEbookEdition(t *testing.T) {
 
 	require.Zero(t, f.hardcover.RequestCount(), "a valid ebook preview must not send any Hardcover request")
 
-	// The request still carries audiobook-only fields; the server sends none of them.
+	// The request contains only editable scalars; the server derives ebook metadata.
 	create := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusOK, create.Code, create.Body.String())
 	mutations := f.hardcover.RecordedMutations()
@@ -399,11 +427,11 @@ func TestEditionRequestCannotChooseTheReadingFormat(t *testing.T) {
 func TestCreateEditionRequiresAnIdentifierInTheRequest(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
 
-	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","author_ids":[101]}`)
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title"}`)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Equal(t, "an ASIN or ISBN is required", decodeEnvelope(t, recorder).Error)
 
-	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","isbn_13":"12345","author_ids":[101]}`)
+	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","isbn_13":"12345"}`)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "isbn_13")
 	require.Empty(t, f.hardcover.RecordedMutations())
@@ -413,7 +441,7 @@ func TestCreateEditionAcceptsAHyphenatedISBNAndSendsItNormalized(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
 
 	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
-		`{"title":"A Title","isbn_13":"978-0-306-40615-7","language_id":1,"country_id":1,"author_ids":[101]}`)
+		`{"title":"A Title","isbn_13":"978-0-306-40615-7"}`)
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	mutations := f.hardcover.RecordedMutations()
@@ -423,7 +451,7 @@ func TestCreateEditionAcceptsAHyphenatedISBNAndSendsItNormalized(t *testing.T) {
 }
 
 func TestCreateEditionByISBN10MatchesAnExistingEdition(t *testing.T) {
-	const body = `{"title":"A Title","isbn_10":"0-306-40615-2","language_id":1,"country_id":1,"author_ids":[101]}`
+	const body = `{"title":"A Title","isbn_10":"0-306-40615-2"}`
 
 	t.Run("an edition of the same book is returned untouched", func(t *testing.T) {
 		f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", "/cover.jpg"))
@@ -446,40 +474,48 @@ func TestCreateEditionByISBN10MatchesAnExistingEdition(t *testing.T) {
 	})
 }
 
-func TestCreateEditionSendsTheRequestedEditionFormat(t *testing.T) {
-	tests := []struct {
-		name       string
-		body       string
-		wantFormat string
+func TestCreateEditionDerivesNonEditableFieldsFromAudiobookshelf(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	mutations := f.hardcover.RecordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.Equal(t, "Audiobook", dto["edition_format"])
+	require.EqualValues(t, 2, dto["reading_format_id"])
+	require.EqualValues(t, 3600, dto["audio_seconds"])
+	require.EqualValues(t, 1, dto["language_id"])
+	require.EqualValues(t, 1, dto["country_id"])
+}
+
+func TestCreateEditionDerivesAudiobookEditionLabelFromAudiobookshelf(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		asin      string
+		publisher string
+		want      string
 	}{
-		{"provided format", strings.TrimSuffix(validEditionBody, "}") + `,"edition_format":"Audible Audio"}`, "Audible Audio"},
-		{"format at the length limit", strings.TrimSuffix(validEditionBody, "}") + `,"edition_format":"` + strings.Repeat("f", 100) + `"}`, strings.Repeat("f", 100)},
-		{"omitted format", validEditionBody, "Audiobook"},
-	}
-	for _, tt := range tests {
+		{name: "audible ASIN", asin: "B0AUDIBLE123", want: "Audible Audio"},
+		{name: "libro publisher", publisher: "Libro.fm", want: "libro.fm"},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
-
-			recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", tt.body)
+			item := editionAPIItem("item-1", "Title", "Author", "")
+			metadata := item["media"].(map[string]interface{})["metadata"].(map[string]interface{})
+			if tt.asin != "" {
+				metadata["asin"] = tt.asin
+			}
+			if tt.publisher != "" {
+				metadata["publisher"] = tt.publisher
+			}
+			f := singleItemFixture(t, false, item)
+			recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-
 			mutations := f.hardcover.RecordedMutations()
 			require.Len(t, mutations, 1)
 			dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
-			require.Equal(t, tt.wantFormat, dto["edition_format"])
-			require.EqualValues(t, 2, dto["reading_format_id"], "the reading format stays Audiobook")
+			require.Equal(t, tt.want, dto["edition_format"])
 		})
 	}
-}
-
-func TestCreateEditionRejectsAnOverlongEditionFormat(t *testing.T) {
-	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
-	body := strings.TrimSuffix(validEditionBody, "}") + `,"edition_format":"` + strings.Repeat("f", 101) + `"}`
-
-	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", body)
-	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
-	require.Contains(t, decodeEnvelope(t, recorder).Error, "edition format")
-	require.Empty(t, f.hardcover.RecordedMutations())
 }
 
 func TestCreateEditionRejectsClientControlledTargetsAndBadBodies(t *testing.T) {
@@ -494,9 +530,17 @@ func TestCreateEditionRejectsClientControlledTargetsAndBadBodies(t *testing.T) {
 	}{
 		{"client-supplied book id", withField(`"book_id":999`)},
 		{"client-supplied image url", withField(`"image_url":"https://evil.example/cover.jpg"`)},
+		{"client-supplied author ids", withField(`"author_ids":[123]`)},
+		{"client-supplied narrator ids", withField(`"narrator_ids":[123]`)},
+		{"client-supplied publisher id", withField(`"publisher_id":123`)},
+		{"client-supplied edition format", withField(`"edition_format":"Ebook"`)},
+		{"client-supplied duration", withField(`"audio_seconds":30`)},
+		{"client-supplied language", withField(`"language_id":2`)},
+		{"client-supplied country", withField(`"country_id":2`)},
 		{"unknown field", withField(`"extra":true`)},
 		{"malformed JSON", `{"title":`},
 		{"empty body", ``},
+		{"null body", `null`},
 		{"not an object", `[]`},
 		{"trailing JSON value", validEditionBody + `{}`},
 		{"body over the size limit", `{"title":"` + strings.Repeat("a", 70<<10) + `"}`},
@@ -508,20 +552,116 @@ func TestCreateEditionRejectsClientControlledTargetsAndBadBodies(t *testing.T) {
 		})
 	}
 	require.Empty(t, f.hardcover.RecordedMutations())
+	require.Zero(t, f.abs.ItemRequestCount(), "invalid top-level bodies must be rejected before fetching ABS")
 }
 
 func TestCreateEditionRejectsInvalidEditsWithUserReadableError(t *testing.T) {
 	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
 
-	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"A Title","author_ids":[]}`)
+	f.hardcover.Authors = map[string]int{}
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
-	require.Contains(t, decodeEnvelope(t, recorder).Error, "author")
+	require.Equal(t, "no Audiobookshelf author matched a Hardcover author", decodeEnvelope(t, recorder).Error)
 	require.Empty(t, f.hardcover.RecordedMutations())
 
-	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"   ","author_ids":[101]}`)
+	f.hardcover.Authors["Author"] = 101
+	recorder = f.do(http.MethodPost, editionBasePath+"item-1/edition", `{"title":"   ","isbn_13":"9780306406157"}`)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
 	require.Contains(t, decodeEnvelope(t, recorder).Error, "title is required")
 	require.Empty(t, f.hardcover.RecordedMutations())
+}
+
+func TestCreateEditionResolvesExactExpandedNamesAndReturnsOptionalWarnings(t *testing.T) {
+	item := editionAPIItem("item-1", "Title", "Legacy joined name", "")
+	metadata := item["media"].(map[string]interface{})["metadata"].(map[string]interface{})
+	metadata["authors"] = []interface{}{map[string]interface{}{"name": "Surname, Given"}, map[string]interface{}{"name": "Second Author"}}
+	metadata["narrators"] = []interface{}{"Narrator Missing"}
+	metadata["publisher"] = "Publisher Missing"
+	f := singleItemFixture(t, false, item)
+	f.hardcover.Authors["Surname, Given"] = 301
+	f.hardcover.Authors["Second Author"] = 302
+	delete(f.hardcover.Authors, "Narrator Missing")
+	delete(f.hardcover.Publishers, "Publisher Missing")
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, map[string]interface{}{
+		"edition_id": float64(777), "dry_run": false,
+		"warnings": []interface{}{
+			"One or more Audiobookshelf narrators did not match a Hardcover narrator and were omitted.",
+			"Audiobookshelf publisher did not match a Hardcover publisher and was omitted.",
+		},
+	}, decodeEnvelope(t, recorder).Data)
+	mutations := f.hardcover.RecordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	contributions := dto["contributions"].([]interface{})
+	require.Len(t, contributions, 2)
+	require.EqualValues(t, 301, contributions[0].(map[string]interface{})["author_id"])
+	require.EqualValues(t, 302, contributions[1].(map[string]interface{})["author_id"])
+	require.NotContains(t, dto, "publisher_id")
+}
+
+func TestCreateEditionLookupFailureIsSanitizedAndDoesNotInsert(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	f.hardcover.SearchStatus = http.StatusUnauthorized
+	f.hardcover.SearchBody = `{"message":"private upstream detail and token"}`
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
+	require.Equal(t, http.StatusBadGateway, recorder.Code, recorder.Body.String())
+	require.Equal(t, "Could not complete the request with hardcover", decodeEnvelope(t, recorder).Error)
+	require.NotContains(t, recorder.Body.String(), "private upstream detail")
+	require.Empty(t, f.hardcover.RecordedMutations())
+}
+
+func TestCreateEditionAcceptsBadISBNChecksumWithFixedWarning(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
+		`{"title":"A Title","isbn_13":"9780306406158"}`)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, []interface{}{"ISBN-13 has an invalid check digit."}, decodeEnvelope(t, recorder).Data["warnings"])
+	mutations := f.hardcover.RecordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.Equal(t, "9780306406158", dto["isbn_13"])
+}
+
+func TestInvalidISBNWarningDoesNotAssumeInsertForDryRunOrReuse(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		dryRun bool
+		reuse  bool
+		wantID float64
+	}{
+		{name: "duplicate reuse", reuse: true, wantID: 555},
+		{name: "dry run", dryRun: true, wantID: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := singleItemFixture(t, tt.dryRun, editionAPIItem("item-1", "Title", "Author", ""))
+			if tt.reuse {
+				f.hardcover.ISBNs["9780306406158"] = editiontest.ExistingEdition{EditionID: 555, BookID: 4242}
+			}
+			recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition",
+				`{"title":"A Title","isbn_13":"9780306406158"}`)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			data := decodeEnvelope(t, recorder).Data
+			require.Equal(t, tt.wantID, data["edition_id"])
+			require.Equal(t, []interface{}{"ISBN-13 has an invalid check digit."}, data["warnings"])
+			require.Empty(t, f.hardcover.RecordedWrites())
+		})
+	}
+}
+
+func TestCreateEditionInsufficientScopeIsForbiddenWithoutRetry(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	f.hardcover.InsertStatus = http.StatusForbidden
+	f.hardcover.InsertBody = `{"error":"insufficient_scope","scope":"write:catalog:append","message":"private upstream details"}`
+
+	recorder := f.do(http.MethodPost, editionBasePath+"item-1/edition", validEditionBody)
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	require.Equal(t, "The profile's Hardcover token needs the write:catalog:append scope to create editions", decodeEnvelope(t, recorder).Error)
+	require.NotContains(t, recorder.Body.String(), "private upstream details")
+	require.Len(t, f.hardcover.RecordedMutations(), 1, "HTTP 403 must not be retried")
 }
 
 func TestEditionDryRunProfilesIssueNoHardcoverMutation(t *testing.T) {
@@ -535,7 +675,97 @@ func TestEditionDryRunProfilesIssueNoHardcoverMutation(t *testing.T) {
 	require.Equal(t, http.StatusOK, draft.Code, draft.Body.String())
 	require.Equal(t, true, decodeEnvelope(t, draft).Data["dry_run"])
 
-	require.Zero(t, f.hardcover.RequestCount())
+	require.Empty(t, f.hardcover.RecordedWrites(), "dry-run may read metadata but must not send a Hardcover mutation")
+}
+
+func TestEditionCapabilityProbeIsImpossibleCachedAndInvalidatedOnTokenChange(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	path := "/api/profiles/" + editionProfileID + "/edition-capability"
+	for i := 0; i < 2; i++ {
+		recorder := f.do(http.MethodGet, path, "")
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		require.Equal(t, map[string]interface{}{"can_create": true}, decodeEnvelope(t, recorder).Data)
+	}
+	require.Equal(t, 1, f.hardcover.ProbeCount(), "the positive result should be cached")
+	require.Equal(t, []float64{-1}, f.hardcover.ProbeBookIDs())
+
+	require.NoError(t, f.multiUser.UpdateProfileConfig(
+		editionProfileID, f.abs.URL, "abs-secret-token", "rotated-hc-token", database.SyncConfigData{DryRun: false},
+	))
+	recorder := f.do(http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, 2, f.hardcover.ProbeCount(), "a token change invalidates the prior capability")
+}
+
+func TestEditionCapabilityDistinguishesDeniedAndUnverified(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		status     int
+		body       string
+		want       map[string]interface{}
+		wantProbes int
+	}{
+		{
+			name:       "missing append scope",
+			status:     http.StatusForbidden,
+			body:       `{"error":"insufficient_scope","scope":"write:catalog:append"}`,
+			want:       map[string]interface{}{"can_create": false, "missing_scope": "write:catalog:append"},
+			wantProbes: 1,
+		},
+		{
+			name:       "other authentication failure is unverified",
+			status:     http.StatusUnauthorized,
+			body:       `{"error":"invalid_token","message":"secret remote detail"}`,
+			want:       map[string]interface{}{"can_create": false, "reason": "unverified"},
+			wantProbes: 1,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+			f.hardcover.ProbeStatus = tt.status
+			f.hardcover.ProbeBody = tt.body
+			recorder := f.do(http.MethodGet, "/api/profiles/"+editionProfileID+"/edition-capability", "")
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			require.Equal(t, tt.want, decodeEnvelope(t, recorder).Data)
+			require.Equal(t, tt.wantProbes, f.hardcover.ProbeCount())
+			require.NotContains(t, recorder.Body.String(), "secret remote detail")
+		})
+	}
+}
+
+func TestDryRunEditionCapabilityDoesNotProbe(t *testing.T) {
+	f := singleItemFixture(t, true, editionAPIItem("item-1", "Title", "Author", ""))
+	recorder := f.do(http.MethodGet, "/api/profiles/"+editionProfileID+"/edition-capability", "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, map[string]interface{}{"can_create": true}, decodeEnvelope(t, recorder).Data)
+	require.Zero(t, f.hardcover.ProbeCount())
+	require.Empty(t, f.hardcover.RecordedWrites())
+}
+
+func TestEditionCapabilityConcurrentCallsShareOneProbe(t *testing.T) {
+	f := singleItemFixture(t, false, editionAPIItem("item-1", "Title", "Author", ""))
+	hold := make(chan struct{})
+	f.hardcover.HoldProbes(hold)
+	path := "/api/profiles/" + editionProfileID + "/edition-capability"
+	first := make(chan *httptest.ResponseRecorder, 1)
+	second := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- f.do(http.MethodGet, path, "") }()
+	select {
+	case <-f.hardcover.ProbeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the capability probe did not reach Hardcover")
+	}
+	go func() { second <- f.do(http.MethodGet, path, "") }()
+	close(hold)
+	for _, response := range []<-chan *httptest.ResponseRecorder{first, second} {
+		select {
+		case recorder := <-response:
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		case <-time.After(5 * time.Second):
+			t.Fatal("a capability request did not finish")
+		}
+	}
+	require.Equal(t, 1, f.hardcover.ProbeCount())
 }
 
 func TestEditionEndpointsReportMissingAndFailingAudiobookshelfItems(t *testing.T) {

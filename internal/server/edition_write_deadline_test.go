@@ -29,6 +29,8 @@ type slowEditionServers struct {
 
 func newSlowEditionServers(t *testing.T) *slowEditionServers {
 	t.Helper()
+	hardcover := editiontest.NewHardcoverFake(t)
+	hardcover.Authors["An Author"] = 101
 	return &slowEditionServers{
 		abs: editiontest.NewAudiobookshelfFake(t, map[string]map[string]interface{}{
 			"item-1": {
@@ -41,7 +43,7 @@ func newSlowEditionServers(t *testing.T) *slowEditionServers {
 				},
 			},
 		}),
-		hardcover: editiontest.NewHardcoverFake(t),
+		hardcover: hardcover,
 	}
 }
 
@@ -108,7 +110,7 @@ func TestCreateEditionResponseSurvivesTheServerWriteTimeout(t *testing.T) {
 
 	status, payload, elapsed := doEditionRequest(t, http.MethodPost,
 		baseURL+"/api/profiles/edition-profile/runs/run-1/books/item-1/edition",
-		`{"title":"A Title","isbn_13":"9780306406157","release_date":"2021-02-03","audio_seconds":3600,"language_id":1,"country_id":1,"author_ids":[101]}`,
+		`{"title":"A Title","isbn_13":"9780306406157","release_date":"2021-02-03"}`,
 		cookie)
 
 	require.Greater(t, elapsed, deadlineTestWriteTimeout, "the request must outlive the server write timeout for this test to mean anything")

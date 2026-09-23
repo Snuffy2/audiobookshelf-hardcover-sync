@@ -28,7 +28,7 @@ Add the following to your `config.yaml`:
 server:
   port: 8080                    # HTTP server port
   enable_web_ui: true          # Enable web UI (default: false)
-  shutdown_timeout: 30s        # Graceful shutdown timeout
+  shutdown_timeout: 2m30s      # Graceful shutdown timeout; enough for an in-flight edition create
 
 # Headless mode configuration (when enable_web_ui: false)
 audiobookshelf:

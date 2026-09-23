@@ -23,7 +23,7 @@ func editionItem(id, title, author string) map[string]interface{} {
 		"libraryId": "library",
 		"mediaType": "book",
 		"media": map[string]interface{}{
-			"metadata": map[string]interface{}{"title": title, "authorName": author, "isbn": "978-0-306-40615-7"},
+			"metadata": map[string]interface{}{"title": title, "authorName": author, "narratorName": "A Narrator", "isbn": "978-0-306-40615-7"},
 			"duration": 3600.0,
 		},
 	}
@@ -71,6 +71,8 @@ func newEditionFixture(t *testing.T, dryRun bool, records []syncsvc.BookOutcomeR
 	service.globalConfig.Hardcover.BaseURL = hardcover.URL
 	service.globalConfig.RateLimit.Rate = time.Nanosecond
 	service.globalConfig.RateLimit.MaxConcurrent = 4
+	hardcover.Authors["An Author"] = 101
+	hardcover.Authors["A Narrator"] = 202
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 
 	require.NoError(t, service.repository.CreateProfile(
@@ -98,11 +100,6 @@ func validEdits() EditionEdits {
 		ISBN13:             "9780306406157",
 		ReleaseDate:        "2021-02-03",
 		EditionInformation: "Unabridged",
-		AudioSeconds:       3600,
-		LanguageID:         1,
-		CountryID:          1,
-		AuthorIDs:          []int{101},
-		NarratorIDs:        []int{202},
 	}
 }
 
@@ -136,6 +133,24 @@ func TestCreateEditionFromRunBook_DryRunIssuesNoMutation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &EditionCreated{EditionID: 0, DryRun: true, Warnings: []string{}}, created)
 	require.Empty(t, f.hardcover.RecordedMutations())
+}
+
+func TestDeleteProfileInvalidatesEditionCapabilityCache(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+	capability, err := f.service.EditionCapabilityForProfile(context.Background(), "profile-1")
+	require.NoError(t, err)
+	require.True(t, capability.CanCreate)
+	require.Equal(t, 1, f.hardcover.ProbeCount())
+
+	require.NoError(t, f.service.DeleteProfile("profile-1"))
+	f.service.editionCapabilityMutex.Lock()
+	defer f.service.editionCapabilityMutex.Unlock()
+	for key := range f.service.editionCapabilities {
+		require.NotEqual(t, "profile-1", key.profileID)
+	}
 }
 
 func TestEditionRequestsRequireAnEligibleRecord(t *testing.T) {
@@ -185,23 +200,20 @@ func TestEditionRequestsRequireAnEligibleRecord(t *testing.T) {
 
 func TestCreateEditionFromRunBook_RejectsInvalidEdits(t *testing.T) {
 	tests := []struct {
-		name   string
-		mutate func(*EditionEdits)
+		name      string
+		mutate    func(*EditionEdits)
+		noAuthors bool
 	}{
-		{"no author", func(e *EditionEdits) { e.AuthorIDs = nil }},
-		{"no ASIN or ISBN", func(e *EditionEdits) { e.ISBN13 = "" }},
-		{"blank ASIN and ISBNs", func(e *EditionEdits) { e.ASIN, e.ISBN10, e.ISBN13 = "  ", " ", "\t" }},
-		{"malformed ISBN-13", func(e *EditionEdits) { e.ISBN13 = "978030640615" }},
-		{"ISBN-10 sent as the ISBN-13", func(e *EditionEdits) { e.ISBN13 = "0306406152" }},
-		{"malformed ISBN-10", func(e *EditionEdits) { e.ISBN10 = "03064061" }},
-		{"ISBN-13 sent as the ISBN-10", func(e *EditionEdits) { e.ISBN10 = "9780306406157" }},
-		{"no title", func(e *EditionEdits) { e.Title = "" }},
-		{"blank title", func(e *EditionEdits) { e.Title = " \t\n " }},
-		{"malformed release date", func(e *EditionEdits) { e.ReleaseDate = "03/02/2021" }},
-		{"non-positive author ID", func(e *EditionEdits) { e.AuthorIDs = []int{0} }},
-		{"non-positive narrator ID", func(e *EditionEdits) { e.NarratorIDs = []int{-1} }},
-		{"negative audio length", func(e *EditionEdits) { e.AudioSeconds = -1 }},
-		{"edition format over the length limit", func(e *EditionEdits) { e.EditionFormat = strings.Repeat("f", maxEditionFormatLength+1) }},
+		{"no author match", nil, true},
+		{"no ASIN or ISBN", func(e *EditionEdits) { e.ISBN13 = "" }, false},
+		{"blank ASIN and ISBNs", func(e *EditionEdits) { e.ASIN, e.ISBN10, e.ISBN13 = "  ", " ", "\t" }, false},
+		{"malformed ISBN-13", func(e *EditionEdits) { e.ISBN13 = "978030640615" }, false},
+		{"ISBN-10 sent as the ISBN-13", func(e *EditionEdits) { e.ISBN13 = "0306406152" }, false},
+		{"malformed ISBN-10", func(e *EditionEdits) { e.ISBN10 = "03064061" }, false},
+		{"ISBN-13 sent as the ISBN-10", func(e *EditionEdits) { e.ISBN10 = "9780306406157" }, false},
+		{"no title", func(e *EditionEdits) { e.Title = "" }, false},
+		{"blank title", func(e *EditionEdits) { e.Title = " \t\n " }, false},
+		{"malformed release date", func(e *EditionEdits) { e.ReleaseDate = "03/02/2021" }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -210,7 +222,12 @@ func TestCreateEditionFromRunBook_RejectsInvalidEdits(t *testing.T) {
 				map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
 			)
 			edits := validEdits()
-			tt.mutate(&edits)
+			if tt.mutate != nil {
+				tt.mutate(&edits)
+			}
+			if tt.noAuthors {
+				f.hardcover.Authors = map[string]int{}
+			}
 
 			_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
 			var validation *EditionValidationError

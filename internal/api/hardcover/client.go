@@ -426,6 +426,72 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP error %d: %s", e.StatusCode, string(e.Body))
 }
 
+// InsufficientScope reports a Hardcover 403 insufficient_scope response and
+// returns only its scope field. Callers should use a fixed message for errors
+// and may expose the scope only after validating it for their response shape.
+func InsufficientScope(err error) (scope string, ok bool) {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusForbidden {
+		return "", false
+	}
+	var body struct {
+		Error        string `json:"error"`
+		Code         string `json:"code"`
+		Message      string `json:"message"`
+		Scope        string `json:"scope"`
+		MissingScope string `json:"missing_scope"`
+		Extensions   struct {
+			Code  string `json:"code"`
+			Scope string `json:"scope"`
+		} `json:"extensions"`
+	}
+	if json.Unmarshal(httpErr.Body, &body) != nil {
+		return "", false
+	}
+	code := strings.ToLower(strings.TrimSpace(body.Error + " " + body.Code + " " + body.Extensions.Code + " " + body.Message))
+	if !strings.Contains(code, "insufficient_scope") {
+		return "", false
+	}
+	scope = body.Scope
+	if scope == "" {
+		scope = body.MissingScope
+	}
+	if scope == "" {
+		scope = body.Extensions.Scope
+	}
+	return strings.TrimSpace(scope), true
+}
+
+// ProbeEditionCreateCapability uses a guaranteed-invalid book id to let
+// Hardcover perform its normal scope check before argument validation. The
+// mutation therefore cannot create an edition. A recognized missing-book
+// validation error means the token passed the scope check.
+func (c *Client) ProbeEditionCreateCapability(ctx context.Context) (bool, error) {
+	const mutation = `
+	mutation ProbeEditionCreateCapability($bookId: Int!, $edition: EditionInput!) {
+	  insert_edition(book_id: $bookId, edition: $edition) { id errors }
+	}`
+	variables := map[string]interface{}{
+		"bookId":  -1,
+		"edition": map[string]interface{}{"dto": map[string]interface{}{"title": "__edition_capability_probe__"}},
+	}
+	var response struct {
+		InsertEdition struct {
+			Errors []string `json:"errors"`
+		} `json:"insert_edition"`
+	}
+	if err := c.GraphQLMutation(ctx, mutation, variables, &response); err != nil {
+		return false, err
+	}
+	for _, message := range response.InsertEdition.Errors {
+		message = strings.ToLower(strings.TrimSpace(message))
+		if strings.Contains(message, "couldn't find book") || strings.Contains(message, "could not find book") || strings.Contains(message, "book not found") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func isRetryableHTTPStatus(statusCode int) bool {
 	return statusCode == http.StatusTooManyRequests || (statusCode >= 500 && statusCode <= 599)
 }
@@ -2803,12 +2869,25 @@ func (c *Client) GetEdition(ctx context.Context, editionID string) (*models.Edit
 // SearchPeople searches for people (authors or narrators) by name or ID
 // Implements the HardcoverClient interface
 func (c *Client) SearchPeople(ctx context.Context, name, personType string, limit int) ([]models.Author, error) {
+	return c.searchPeople(ctx, name, personType, limit, true)
+}
+
+// SearchNarratorsByName performs an exact narrator-name search without
+// interpreting numeric names as Hardcover person IDs. Edition creation uses
+// this path so narrator contributions are confirmed by the narrator query.
+func (c *Client) SearchNarratorsByName(ctx context.Context, name string, limit int) ([]models.Author, error) {
+	return c.searchPeople(ctx, name, "narrator", limit, false)
+}
+
+func (c *Client) searchPeople(ctx context.Context, name, personType string, limit int, allowNumericID bool) ([]models.Author, error) {
 	// Check if the input is a numeric ID
-	if id, err := strconv.Atoi(name); err == nil {
-		// If it's a numeric ID, try to fetch the person directly
-		person, err := c.GetPersonByID(ctx, strconv.Itoa(id))
-		if err == nil && person != nil {
-			return []models.Author{*person}, nil
+	if allowNumericID {
+		if id, err := strconv.Atoi(name); err == nil {
+			// If it's a numeric ID, try to fetch the person directly
+			person, err := c.GetPersonByID(ctx, strconv.Itoa(id))
+			if err == nil && person != nil {
+				return []models.Author{*person}, nil
+			}
 		}
 	}
 	if c.logger == nil {

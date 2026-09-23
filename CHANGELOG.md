@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Create a Hardcover edition for a `needs_review` book (API)**: Add write-authorized endpoints to preview an edition from Audiobookshelf and optional Audnex metadata, then create it on the Hardcover book recorded by the sync run. Previewing remains read-only and makes no Hardcover requests; creation validates client edits, preserves dry-run safety, supports audiobook and ebook editions, reuses a matching edition of the same book, and leaves the unsupported cover-upload flow disabled. No UI is included yet. By @Snuffy2. (#198)
+- **Draft a Hardcover edition for a `needs_review` book (API)**: Add a write-authorized endpoint that previews an edition from Audiobookshelf and optional Audnex metadata. It handles audiobook and ebook fields, derives counterpart ISBNs, warns about source metadata, and rejects items without an ASIN or parseable ISBN. Previewing never calls Hardcover or creates anything; no UI is included yet. By @Snuffy2. (#198)
+- **Create a Hardcover edition for a `needs_review` book (API)**: Add a write-authorized create endpoint and capability check. The server refetches Audiobookshelf metadata, resolves exact author, narrator and publisher names with the profile's Hardcover token, and derives all non-editable edition fields. Optional misses and invalid ISBN check digits are reported as fixed warnings; insufficient catalog-append scope is reported clearly. The create budget covers the ABS fetch through Hardcover insertion, and the default graceful-shutdown timeout now allows that operation to drain; dry-run still makes no mutation. No UI is included yet. By @Snuffy2.
 
 ### Changed
 

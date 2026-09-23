@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/multiuser"
 )
 
@@ -20,11 +20,29 @@ const maxEditionRequestBytes = 64 << 10
 // to be written, measured from when the handler starts. The server's default
 // write timeout is far shorter than an edition create, so without this a slow
 // request would finish its work but the client would see a closed connection
-// and retry into a duplicate. A create first fetches the Audiobookshelf item
-// (at most audiobookshelf.RequestTimeout) and only then starts its own
-// multiuser.EditionCreateTimeout, so the bound is both plus a margin for the
-// work around them.
-const editionWriteDeadline = audiobookshelf.RequestTimeout + multiuser.EditionCreateTimeout + 15*time.Second
+// and retry into a duplicate. The operation deadline includes the ABS refetch,
+// Hardcover resolution, duplicate checks and insertion, with a response-write
+// margin.
+const editionWriteDeadline = multiuser.EditionCreateTimeout + 15*time.Second
+
+// GetEditionCapability handles GET /api/profiles/{id}/edition-capability.
+func (h *Handler) GetEditionCapability(w http.ResponseWriter, r *http.Request) {
+	profileID := profileIDFromRequest(r)
+	if profileID == "" {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Profile ID is required")
+		return
+	}
+	if _, authorized := h.authorizeProfileMetadata(w, r, profileID, true); !authorized {
+		return
+	}
+	h.extendEditionWriteDeadline(w)
+	capability, err := h.multiUserService.EditionCapabilityForProfile(r.Context(), profileID)
+	if err != nil {
+		h.writeEditionError(w, "check edition capability", profileID, err)
+		return
+	}
+	h.writeSuccessResponse(w, capability)
+}
 
 // GetEditionDraft handles
 // GET /api/profiles/{id}/runs/{runID}/books/{bookID}/edition-draft.
@@ -58,15 +76,27 @@ func (h *Handler) CreateEdition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var edits multiuser.EditionEdits
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEditionRequestBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&edits); err != nil {
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			h.writeErrorResponse(w, http.StatusBadRequest, "Request body too large")
 			return
 		}
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	var edits multiuser.EditionEdits
+	objectDecoder := json.NewDecoder(bytes.NewReader(trimmed))
+	objectDecoder.DisallowUnknownFields()
+	if err := objectDecoder.Decode(&edits); err != nil {
 		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -134,6 +164,8 @@ func (h *Handler) writeEditionError(w http.ResponseWriter, action, profileID str
 		h.writeErrorResponse(w, http.StatusConflict, "This book has no ASIN or ISBN in Audiobookshelf, so an edition created for it could not be matched by a sync. Add an ASIN or ISBN in Audiobookshelf first.")
 	case errors.Is(err, multiuser.ErrEditionInProgress):
 		h.writeErrorResponse(w, http.StatusConflict, "An edition is already being created for this book")
+	case errors.Is(err, multiuser.ErrEditionInsufficientScope):
+		h.writeErrorResponse(w, http.StatusForbidden, "The profile's Hardcover token needs the write:catalog:append scope to create editions")
 	case errors.Is(err, multiuser.ErrProfileDeleting):
 		h.writeErrorResponse(w, http.StatusConflict, "Sync profile is being deleted")
 	case errors.Is(err, multiuser.ErrServiceShuttingDown):

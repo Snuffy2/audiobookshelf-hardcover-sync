@@ -241,6 +241,33 @@ func TestPrepareEditionDraftOverallTimeoutStopsBlockedAudiobookshelfRead(t *test
 	}
 }
 
+func TestEditionCreateBudgetStartsBeforeAudiobookshelfRefetch(t *testing.T) {
+	f := newHeldCreateFixture(t)
+	holdReads := make(chan struct{})
+	f.abs.HoldReads(holdReads)
+	t.Cleanup(f.abs.ReleaseReads)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.service.createEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits(), 50*time.Millisecond)
+		done <- err
+	}()
+	select {
+	case <-f.abs.ReadEntered:
+	case <-time.After(time.Second):
+		t.Fatal("the create never started the ABS refetch")
+	}
+	select {
+	case err := <-done:
+		var upstream *EditionUpstreamError
+		require.ErrorAs(t, err, &upstream)
+		require.Equal(t, "audiobookshelf", upstream.Service)
+	case <-time.After(time.Second):
+		t.Fatal("the operation deadline did not bound the ABS refetch")
+	}
+	require.Zero(t, f.hardcover.RequestCount(), "an expired ABS stage must not start Hardcover resolution or insertion")
+}
+
 func TestPrepareEditionDraftFallsBackWhenAudnexExceedsItsBudget(t *testing.T) {
 	item := editionItem("item-1", "A Title", "An Author")
 	metadata := item["media"].(map[string]interface{})["metadata"].(map[string]interface{})
