@@ -49,8 +49,8 @@ The user-approved identifier rules for the completed flow (after Step 6) are:
   that has a proper Audible mapping. This accepted outcome does not change
   ISBN or genuine retail-ASIN behavior for other formats.
 - Replace both the in-memory ASIN shortcut and its 24-hour persisted positive
-  cache as sources of match identity. Do
-  not migrate its entries wholesale: some came from the old `editions.asin`
+  cache as sources of match identity. Do not migrate its entries wholesale:
+  some came from the old `editions.asin`
   lookup and are not verified Audible mappings. A separate short-lived
   performance cache is not part of this plan.
 
@@ -61,6 +61,7 @@ an unverified local association. Dry run may perform reads but neither
 mutates Hardcover nor persists an association that would skip a later real
 sync. No step may rely on a subsequent PR to make its newly shipped behavior
 safe.
+
 Keep the existing Hardcover `Owned`-list ownership checks and Audiobookshelf
 finished-state behavior throughout the matching and resync changes.
 
@@ -130,9 +131,9 @@ match.
 On a local miss, probe exact regional Audible mappings with supported
 marketplace identifiers and confirm that any multiple hits agree on the same
 book and edition and have the expected audiobook format. Audnex may establish
-a region for a bare ASIN when the
-mapping is absent; an absence or conflict is not proof that the book is
-absent. Continue to ISBN and title/author candidate discovery as appropriate.
+a region for a bare ASIN when the mapping is absent; an absence or conflict is
+not proof that the book is absent. Continue to ISBN and title/author candidate
+discovery as appropriate.
 During this step only, preserve the existing `edition.asin` fallback on an
 unresolved audiobook so behavior does not regress before Step 6. Never write
 that fallback into the durable association. Retire the old 24-hour positive
@@ -236,6 +237,249 @@ identified and does not offer a real resync.
   tests, `make test`, `make lint`, relevant builds, and web tests if touched.
   The PR description uses the repository template. Do not push or open a PR
   merely because this plan names one.
+
+## PR description block
+
+Every fork and upstream PR uses the repository's
+[pull request template](../../.github/pull_request_template.md). Put the
+following `Multi-Step Project` block after **Summary of Changes** and before
+**Testing Instructions**. Copy it into the PR for that step, move `(this PR)`
+to the delivered line, and keep merged steps struck through without changing
+their historical wording. Keep each line to one or two sentences. Answer every
+template checklist item exactly as written; put qualifications in Testing
+Instructions. Do not add issue links to fork PRs or upstream PRs targeting
+non-default `develop`.
+
+```markdown
+## Multi-Step Project
+
+1. ~~ISBN and export foundations: Add shared ISBN normalization and reading-format helpers, and fix the mismatch export (hyphenated ISBNs are kept, no default publisher, ebook items export as ebook editions, an abridged audiobook exports as Abridged).~~
+
+2. ~~Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, keep the cover upload code but switched off, and create ebook editions.~~
+
+3. Edition draft endpoint (this PR): Preview ABS audiobook and ebook metadata without a Hardcover call. Treat an audiobook ASIN as a source Audible identifier and show a region only when established.
+
+4. ISBN counterpart matching: Find ISBN-10 and ISBN-13 counterparts during sync while preserving reading-format checks.
+
+5. Durable Audible resolution: Store confirmed ABS-to-Hardcover book/edition associations, read exact regional Audible mappings, and retire the 24-hour positive ASIN cache.
+
+6. Missing regional mapping: Resolve a known candidate with `upsert_book`, retain validated `loaded` or `created` IDs locally, and stop matching audiobooks by `editions.asin`.
+
+7. Create capability: Report whether the profile can perform the applicable edition insertion or Audible import before offering the create action.
+
+8. Edition create endpoint: Add or reuse a Hardcover edition for a needs-review item, using regional Audible import for audiobooks and saving a confirmed local association.
+
+9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status without overlapping a full sync.
+
+10. Sync Status UI: Preview, confirm, and report edition creation for an eligible needs-review item, with an optional resync.
+
+[Full Plan Document](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
+```
+
+Update this block here first when a step's actual contract changes, then
+update any open PR descriptions. When an upstream PR merges, strike its line
+through and update the delivery table and checklist in the same plan change.
+The example marks Step 3 as the current PR; no Step 4–10 PR is implied to
+exist.
+
+## Changelog by step
+
+Each implementation PR adds exactly one bullet under the fitting
+`[Unreleased]` section of `CHANGELOG.md`. Fold related user-visible changes
+into that bullet. Preserve earlier steps' bullets; add the upstream PR number
+only after that PR exists. Steps 1 and 2 are merged and their entries are
+already recorded; do not rewrite them for this plan revision. The following
+wording is a starting point to update against the final diff and live API
+evidence:
+
+- **Step 3 — Added:** `**Edition draft for needs-review items**: Preview ABS
+  audiobook and ebook metadata without a Hardcover request, distinguishing a
+  source Audible ASIN from an edition field and reporting when its region is
+  uncertain. By @Snuffy2 (#198)` if the existing upstream PR continues. Its
+  current bullet claims a later step must put Audible identifiers directly in
+  `book_mappings`; replace that claim. If the PR is superseded, use the new
+  upstream number when it exists.
+- **Step 4 — Fixed:** `**ISBN counterpart matching**: Match an ABS ISBN-10 to
+  its valid ISBN-13 counterpart, and the reverse, without changing
+  reading-format separation. By @Snuffy2`.
+- **Step 5 — Added:** `**Durable Audible matches**: Persist verified ABS item
+  to Hardcover book and edition resolutions, search exact regional Audible
+  mappings, and retire the expiring positive ASIN cache. By @Snuffy2`.
+- **Step 6 — Changed:** `**Audible identifier resolution**: Resolve a missing
+  regional mapping through Hardcover import when permitted, retain confirmed
+  results locally, and stop treating edition ASINs as Audible matches; items
+  without a verified resolution remain reviewable. By @Snuffy2`.
+- **Step 7 — Added:** `**Edition creation capability**: Report the profile's
+  applicable insertion and Audible import capabilities without promising
+  permission from an unrelated scope check. By @Snuffy2`.
+- **Step 8 — Added:** `**Create editions from needs-review items (API)**:
+  Create or reuse an edition after confirmation, import Audible identifiers
+  through the regional path, and retain its confirmed local resolution; dry
+  runs make no external change. By @Snuffy2`.
+- **Step 9 — Added:** `**Immediate one-book resync**: Optionally sync read
+  status after edition creation while excluding an overlapping full sync. By
+  @Snuffy2`.
+- **Step 10 — Added:** `**Edition creation in Sync Status**: Preview and
+  confirm an eligible needs-review edition in the UI, show capability and
+  region uncertainty, and optionally resync its read status. By @Snuffy2`.
+
+Step 3 owns the draft README/OpenAPI description; Steps 4–6 document matching
+and any new persistence or permission behavior; Step 7 documents its
+capability route; Step 8 documents the create route and its exact editable
+fields; Step 9 documents the `resync` request/response; Step 10 documents the
+user flow. Update the field crosswalk as the relevant step lands, rather than
+leaving its old R4 destination as an implementation contract.
+
+## Step checklists
+
+These are the follow-up lists for the revised sequence. A checked item means
+the work or verified pre-existing part is complete, not merely planned.
+Before marking any implementation step done, run its focused behavioral tests,
+`gofmt`, relevant builds and `go vet`, `make test`, and `make lint`; run
+`node --test web/app.test.js` when web code changes. Update README, OpenAPI,
+crosswalk, and the one changelog bullet where that step affects them. Review
+the branch diff against its base so an old stacked branch does not carry
+another step's work. Follow the PR template and block above, check CI, and
+address valid review feedback. A live API test is recorded as live evidence,
+not substituted for automated interface tests. PR creation and pushes still
+require the owner's instruction.
+
+### Step 1 — ISBN and export foundations (merged)
+
+- [x] Normalize and classify source ISBNs, retain invalid-checksum values with
+  validity flags, and derive a counterpart only when valid and possible.
+- [x] Correct publisher and ebook mismatch exports and abridged audiobook
+  information; preserve the other audiobook export behavior.
+- [x] Merge upstream PR #195 into `develop`; retain its existing CHANGELOG
+  bullet and completed review record in the legacy plan.
+
+### Step 2 — edition creator hardening (merged)
+
+- [x] Harden same-book reuse and cross-book refusal, edition format handling,
+  ebook creation, token scoping, redirects, and the disabled cover path.
+- [x] Merge upstream PR #197 into `develop`; retain its existing CHANGELOG
+  bullet and completed review record in the legacy plan.
+
+### Step 3 — source draft (existing PR needs revision)
+
+- [x] The existing branch has an ABS/Audnex draft endpoint with no Hardcover
+  call; its useful decoding and local metadata tests can be retained.
+- [ ] Establish the ordinary-token Audible import/update behavior needed to
+  decide which audiobook fields the draft may truthfully call editable.
+- [ ] Rework the draft schema and crosswalk R4 so it preserves the bare ABS
+  source ASIN, optional established region, and uncertainty without implying
+  an `edition.asin` write or silently choosing US.
+- [ ] Keep region discovery bounded and reusable by sync; cover no result,
+  multiple equivalent results, and conflicting results in interface tests.
+- [ ] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
+  language and date warnings, eligibility, cancellation, and zero Hardcover
+  requests at the HTTP boundary.
+- [ ] Correct README, OpenAPI, the single CHANGELOG bullet, and the fork and
+  upstream PR descriptions; rerun the shared validation and PR gates.
+
+### Step 4 — ISBN counterpart matching
+
+- [x] A prior Step 5 branch contains an ISBN matching implementation to audit
+  and restack; that branch is not merged.
+- [ ] Rebase onto current `develop` and keep this PR's diff to ISBN
+  normalization, counterpart searches, and same-format behavior.
+- [ ] Test ISBN-10 only, ISBN-13 only, valid counterpart, 979/no counterpart,
+  invalid checksum, normalized separators, audiobook, and ebook at the sync
+  and GraphQL boundaries.
+- [ ] Update the matching documentation and one CHANGELOG bullet, complete
+  the shared validation, and publish only on instruction.
+
+### Step 5 — durable association and exact Audible mapping
+
+- [ ] Choose and document the profile-scoped durable store and versioned
+  record, including ABS item/source ASIN, regional ID, Hardcover IDs, and
+  provenance; cover single-user and multiuser persistence.
+- [ ] Read a valid local association first; invalidate it after a changed
+  source identifier or unavailable target, and provide a controlled rematch.
+- [ ] Discover or enumerate supported regions and query Audible
+  `book_mappings` exactly; accept agreeing results of the correct format and
+  leave conflicts or unknown regions reviewable.
+- [ ] Retire the in-memory and 24-hour positive ASIN caches without trusting
+  or migrating old hits; do not persist the temporary legacy fallback.
+- [ ] Test restart, concurrent save, storage failure, source change, mapping
+  conflict, no-op, and dry-run paths through real persistence and client
+  boundaries.
+- [ ] Document the persistence and read-only matching behavior, add one
+  CHANGELOG bullet, and complete the shared validation and PR gates.
+
+### Step 6 — regional import and matching switchover
+
+- [ ] Verify the ordinary API-token scope for `upsert_book` and keep normal
+  library sync usable without it.
+- [ ] Require an unambiguous candidate book and established region; bound
+  polling, handle `failed`/`loaded`/`created`, and verify returned book,
+  edition, and reading format before saving.
+- [ ] Persist confirmed `loaded` and `created` resolutions even when Hardcover
+  does not retain the submitted regional alias.
+- [ ] Remove audiobook `editions.asin` matching and duplicate checks from the
+  sync path in this same PR; never call `insert_book_mapping`.
+- [ ] Test missing-scope, timeout, conflicting-ID, import failure, no-op,
+  restart, and dry-run paths without partial local success or a failed whole
+  sync.
+- [ ] Document the matching change and accepted legacy-record coexistence,
+  add one CHANGELOG bullet, and complete the shared validation and PR gates.
+
+### Step 7 — create capability
+
+- [ ] Split the existing create branch so capability reporting is a standalone
+  route, with authorization matching the eventual create operation.
+- [ ] Distinguish proven `insert_edition` capability from verified Audible
+  import and metadata-update capability; report unknown or failed probes as
+  unverified rather than allowed.
+- [ ] Test no-mutation probes, scope denial, token change, transient errors,
+  profile access, and dry run at the HTTP/client boundary.
+- [ ] Document the route and its truthful limits in README/OpenAPI, add one
+  CHANGELOG bullet, and complete the shared validation and PR gates.
+
+### Step 8 — create endpoint
+
+- [ ] Set the request's editable fields from the Step 3 live capability result;
+  reject unsupported edits rather than accepting and dropping them.
+- [ ] Refetch the ABS item, use the run record's book ID, derive non-editable
+  fields server-side, and resolve required/optional people and publisher
+  metadata only after confirmation.
+- [ ] Route Audible imports through the regional resolver without an
+  `edition.asin` write or duplicate guard; retain the original ABS and
+  submitted identifiers in the durable association. Preserve ISBN/ebook
+  insertion and same-book checks.
+- [ ] Make successful create immediately findable by normal sync. Distinguish
+  a remote success followed by local-store failure so a retry is safe.
+- [ ] Test unauthorized/foreign profiles, wrong book, invalid fields,
+  missing author, optional misses, missing scope, timeouts, double submit,
+  shutdown, existing edition, and dry run at the HTTP boundary.
+- [ ] Update README/OpenAPI/crosswalk, add one CHANGELOG bullet, and complete
+  the shared validation and PR gates before offering the API for use.
+
+### Step 9 — immediate one-book resync
+
+- [ ] Add `SyncBook` through existing per-book progress, ownership,
+  finished-state, checkpoint, and mutation boundaries.
+- [ ] Make `resync` opt-in and exclude overlap with a full sync for the same
+  profile before any create-with-resync mutation begins.
+- [ ] Report resync failure separately after a successful create; attempt no
+  resync or persistent state write in dry run.
+- [ ] Test synced, already-current, skipped, failed, cancellation, full-sync
+  contention, and no-op paths, including the race detector.
+- [ ] Document request/response changes, add one CHANGELOG bullet, and
+  complete the shared validation and PR gates.
+
+### Step 10 — Sync Status UI
+
+- [ ] Show the action only for eligible needs-review records with the
+  applicable verified capability and permitted profile access.
+- [ ] Render the draft's source identifier, established/uncertain region,
+  warnings, and only supported editable fields; escape ABS-provided strings.
+- [ ] Confirm through the create POST, display reused/created and error
+  outcomes, and make resync an explicit option except in dry run.
+- [ ] Test capability denial, preview, edits, confirmation, transient errors,
+  status polling, and resync results at the web boundary.
+- [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
+  the shared validation and PR gates.
 
 ## Remaining decisions and evidence gates
 
