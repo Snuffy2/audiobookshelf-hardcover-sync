@@ -23,7 +23,8 @@ services:
     image: ghcr.io/drallgood/audiobookshelf-hardcover-sync:${VERSION:-latest}
     container_name: audiobookshelf-hardcover-sync
     restart: unless-stopped
-    stop_grace_period: 10s
+    # Allow the application's 2m30s graceful drain plus its response-write margin.
+    stop_grace_period: 2m45s
     stop_signal: SIGTERM
     init: true
     healthcheck:

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,17 +91,29 @@ func startEditionHTTPServer(t *testing.T, servers *slowEditionServers) (baseURL 
 
 func doEditionRequest(t *testing.T, method, url, body string, cookie *http.Cookie) (int, []byte, time.Duration) {
 	t.Helper()
+	status, payload, elapsed, err := doEditionRequestResult(method, url, body, cookie)
+	require.NoError(t, err, "the response must reach the client even though the request outlived the server's write timeout")
+	return status, payload, elapsed
+}
+
+func doEditionRequestResult(method, url, body string, cookie *http.Cookie) (int, []byte, time.Duration, error) {
 	request, err := http.NewRequest(method, url, strings.NewReader(body))
-	require.NoError(t, err)
+	if err != nil {
+		return 0, nil, 0, err
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	started := time.Now()
 	response, err := http.DefaultClient.Do(request)
-	require.NoError(t, err, "the response must reach the client even though the request outlived the server's write timeout")
+	if err != nil {
+		return 0, nil, time.Since(started), err
+	}
 	defer func() { _ = response.Body.Close() }()
 	payload, err := io.ReadAll(response.Body)
-	require.NoError(t, err)
-	return response.StatusCode, payload, time.Since(started)
+	if err != nil {
+		return 0, nil, time.Since(started), err
+	}
+	return response.StatusCode, payload, time.Since(started), nil
 }
 
 func TestCreateEditionResponseSurvivesTheServerWriteTimeout(t *testing.T) {
@@ -122,4 +135,54 @@ func TestCreateEditionResponseSurvivesTheServerWriteTimeout(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(payload, &envelope))
 	require.Equal(t, 777, envelope.Data.EditionID)
+}
+
+func TestDeleteProfileResponseSurvivesEditionDrainPastServerWriteTimeout(t *testing.T) {
+	servers := newSlowEditionServers(t)
+	hold := make(chan struct{})
+	servers.hardcover.HoldInsert(hold)
+	baseURL, cookie := startEditionHTTPServer(t, servers)
+
+	createDone := make(chan error, 1)
+	go func() {
+		status, payload, _, err := doEditionRequestResult(http.MethodPost,
+			baseURL+"/api/profiles/edition-profile/runs/run-1/books/item-1/edition",
+			`{"title":"A Title","isbn_13":"9780306406157","release_date":"2021-02-03"}`,
+			cookie)
+		if err != nil {
+			createDone <- err
+			return
+		}
+		if status != http.StatusOK {
+			createDone <- fmt.Errorf("create returned %d: %s", status, payload)
+			return
+		}
+		createDone <- nil
+	}()
+	select {
+	case <-servers.hardcover.Entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the create never reached Hardcover")
+	}
+
+	type deleteResult struct {
+		status  int
+		payload []byte
+		elapsed time.Duration
+		err     error
+	}
+	deleteDone := make(chan deleteResult, 1)
+	go func() {
+		status, payload, elapsed, err := doEditionRequestResult(http.MethodDelete,
+			baseURL+"/api/profiles/edition-profile", "", cookie)
+		deleteDone <- deleteResult{status: status, payload: payload, elapsed: elapsed, err: err}
+	}()
+	time.Sleep(3 * deadlineTestWriteTimeout)
+	close(hold)
+
+	require.NoError(t, <-createDone)
+	deleted := <-deleteDone
+	require.NoError(t, deleted.err)
+	require.Greater(t, deleted.elapsed, deadlineTestWriteTimeout, "deletion must outlive the server write timeout for this test to mean anything")
+	require.Equal(t, http.StatusOK, deleted.status, string(deleted.payload))
 }

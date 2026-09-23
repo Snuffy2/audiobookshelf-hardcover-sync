@@ -153,6 +153,48 @@ func TestDeleteProfileInvalidatesEditionCapabilityCache(t *testing.T) {
 	}
 }
 
+func TestEditionCapabilityCanceledLeaderDoesNotPoisonConcurrentCaller(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": editionItem("item-1", "A Title", "An Author")},
+	)
+	hold := make(chan struct{})
+	f.hardcover.HoldProbes(hold)
+	t.Cleanup(func() { f.hardcover.HoldProbes(nil) })
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := f.service.EditionCapabilityForProfile(leaderCtx, "profile-1")
+		leaderDone <- err
+	}()
+	select {
+	case <-f.hardcover.ProbeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the capability probe did not reach Hardcover")
+	}
+
+	followerDone := make(chan struct {
+		capability EditionCapability
+		err        error
+	}, 1)
+	go func() {
+		capability, err := f.service.EditionCapabilityForProfile(context.Background(), "profile-1")
+		followerDone <- struct {
+			capability EditionCapability
+			err        error
+		}{capability: capability, err: err}
+	}()
+	cancelLeader()
+	close(hold)
+
+	require.ErrorIs(t, <-leaderDone, context.Canceled)
+	result := <-followerDone
+	require.NoError(t, result.err)
+	require.Equal(t, EditionCapability{CanCreate: true}, result.capability)
+	require.Equal(t, 1, f.hardcover.ProbeCount(), "the healthy follower must share the completed probe")
+}
+
 func TestEditionRequestsRequireAnEligibleRecord(t *testing.T) {
 	records := []syncsvc.BookOutcomeRecord{
 		needsReview("ok-item", "4242"),

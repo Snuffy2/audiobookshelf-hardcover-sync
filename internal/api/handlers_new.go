@@ -491,6 +491,10 @@ func (h *Handler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 	if !h.authorizeProfile(w, r, profileID, true) {
 		return
 	}
+	// Deletion drains edition work already accepted for this profile. Give the
+	// response the same write window as that bounded work so the caller receives
+	// the successful deletion instead of losing the response at WriteTimeout.
+	h.extendEditionWriteDeadline(w)
 
 	// Check if profile exists
 	_, err := h.multiUserService.GetProfile(profileID)

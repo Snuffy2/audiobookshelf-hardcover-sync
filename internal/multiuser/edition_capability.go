@@ -72,7 +72,10 @@ func (s *MultiUserService) EditionCapabilityForProfile(ctx context.Context, prof
 	s.editionCapabilityCalls[key] = call
 	s.editionCapabilityMutex.Unlock()
 
-	probeCtx, cancel := context.WithTimeout(ctx, EditionCapabilityTimeout)
+	// A probe is shared by concurrent callers. Keep the bounded upstream work
+	// alive if the caller that started it disconnects so a canceled request
+	// cannot turn a healthy coalesced request into an unverified result.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EditionCapabilityTimeout)
 	allowed, probeErr := s.newHardcoverClient(profile.HardcoverToken, profileID).ProbeEditionCreateCapability(probeCtx)
 	cancel()
 	capability := classifyEditionCapability(allowed, probeErr)
