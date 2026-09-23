@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Create a Hardcover edition for a `needs_review` book (API)**: Add write-authorized endpoints to preview an edition from Audiobookshelf and optional Audnex metadata, then create it on the Hardcover book recorded by the sync run. Previewing remains read-only and makes no Hardcover requests; creation validates client edits, preserves dry-run safety, supports audiobook and ebook editions, reuses a matching edition of the same book, and reports cover-upload warnings without exposing tokens. No UI is included yet. By @Snuffy2. (#198)
+- **Create a Hardcover edition for a `needs_review` book (API)**: Add write-authorized endpoints to preview an edition from Audiobookshelf and optional Audnex metadata, then create it on the Hardcover book recorded by the sync run. Previewing remains read-only and makes no Hardcover requests; creation validates client edits, preserves dry-run safety, supports audiobook and ebook editions, reuses a matching edition of the same book, and leaves the unsupported cover-upload flow disabled. No UI is included yet. By @Snuffy2. (#198)
 
 ### Changed
 

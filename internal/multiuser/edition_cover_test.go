@@ -109,38 +109,16 @@ func newCoverFixture(t *testing.T, dryRun bool) (*editionFixture, *editionCoverT
 	return f, &editionCoverTransport{absHost: absURL.Host}
 }
 
-func TestCreateEditionFromRunBook_CoverTransfersKeepTheAudiobookshelfTokenScoped(t *testing.T) {
-	tests := []struct {
-		name         string
-		failUpload   bool
-		wantWarnings []string
-	}{
-		{name: "cover uploaded", wantWarnings: []string{}},
-		{name: "cover upload fails but the edition is still created", failUpload: true, wantWarnings: []string{editionCoverWarning}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f, rt := newCoverFixture(t, false)
-			rt.failUpload = tt.failUpload
-			useCoverTransport(f, rt, false)
+func TestCreateEditionFromRunBook_DoesNotAttemptUnsupportedCoverUpload(t *testing.T) {
+	f, rt := newCoverFixture(t, false)
+	useCoverTransport(f, rt, false)
 
-			created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 
-			require.NoError(t, err, "a cover failure must not fail the request")
-			require.Equal(t, &EditionCreated{EditionID: 777, DryRun: false, Warnings: tt.wantWarnings}, created)
-			require.Len(t, f.hardcover.RecordedMutations(), 1)
-
-			require.True(t, rt.reached(rt.absHost), "the cover must be downloaded from Audiobookshelf")
-			require.True(t, rt.reached(hardcoverUploadHost), "the upload must be attempted")
-			for _, r := range rt.recorded() {
-				if r.host == rt.absHost {
-					require.Equal(t, "Bearer abs-token", r.authorization, "Audiobookshelf must receive the profile token")
-				} else {
-					require.NotContains(t, r.authorization, "abs-token", "the Audiobookshelf token must not reach %s", r.host)
-				}
-			}
-		})
-	}
+	require.NoError(t, err)
+	require.Equal(t, &EditionCreated{EditionID: 777, DryRun: false, Warnings: []string{}}, created)
+	require.Len(t, f.hardcover.RecordedMutations(), 1)
+	require.Empty(t, rt.recorded(), "the API must not attempt the unsupported Hardcover cover-upload flow")
 }
 
 // TestCreateEditionFromRunBook_DryRunIsEnforcedAtTheHardcoverClient builds the

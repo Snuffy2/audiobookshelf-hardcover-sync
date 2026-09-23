@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -107,18 +106,13 @@ type EditionEdits struct {
 // EditionCreated is the result of a create request. EditionID is 0 for a dry run.
 // When the ASIN or ISBN already identifies an edition of the target book,
 // that edition is returned untouched and nothing is created.
-// Warnings lists user-readable problems that did not stop the edition from
-// being created, such as a cover image that could not be uploaded. It is never
-// nil so it always serializes as an array.
+// Warnings is reserved for user-readable nonfatal creation problems. It is
+// never nil so it always serializes as an array.
 type EditionCreated struct {
 	EditionID int      `json:"edition_id"`
 	DryRun    bool     `json:"dry_run"`
 	Warnings  []string `json:"warnings"`
 }
-
-// editionCoverWarning is shown when the edition exists but its cover does not.
-// It deliberately omits the underlying error, which may hold remote details.
-const editionCoverWarning = "The edition was created, but its cover image could not be uploaded."
 
 // editionTarget is a needs-review run record resolved for edition creation.
 type editionTarget struct {
@@ -215,10 +209,13 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	}
 
 	input := &edition.EditionInput{
-		BookID:        target.hardcoverBookID,
-		Title:         edits.Title,
-		Subtitle:      edits.Subtitle,
-		ImageURL:      editionCoverURL(target.profile.AudiobookshelfURL, *item),
+		BookID:   target.hardcoverBookID,
+		Title:    edits.Title,
+		Subtitle: edits.Subtitle,
+		// Cover upload remains disabled because Hardcover's upload endpoint is
+		// undocumented and rejects scoped API tokens. Do not ask the creator to
+		// produce a warning for a flow the service intentionally does not attempt.
+		ImageURL:      "",
 		ISBN10:        edits.ISBN10,
 		ISBN13:        edits.ISBN13,
 		ASIN:          edits.ASIN,
@@ -243,8 +240,10 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 	hcClient := s.newHardcoverClient(target.profile.HardcoverToken)
 	// Dry run is enforced at both the creator and the concrete client boundary.
 	hcClient.SetDryRun(dryRun)
-	creator := s.editionCreator(hcClient, dryRun, target.profile.AudiobookshelfToken)
-	creator.SetAudiobookshelfBaseURL(target.profile.AudiobookshelfURL)
+	// Cover upload is disabled, so the creator does not need the Audiobookshelf
+	// token. Keeping it out of this boundary prevents accidental disclosure if
+	// the creator gains another outbound request path.
+	creator := s.editionCreator(hcClient, dryRun, "")
 
 	// Finish the creation even if the caller disconnects, so an edition is not
 	// left without its cover; the timeout still bounds the work.
@@ -259,26 +258,7 @@ func (s *MultiUserService) CreateEditionFromRunBook(ctx context.Context, profile
 		return nil, &EditionUpstreamError{Service: "hardcover", Err: err}
 	}
 	created := &EditionCreated{EditionID: result.EditionID, DryRun: dryRun, Warnings: []string{}}
-	if result.ImageError != "" {
-		created.Warnings = append(created.Warnings, editionCoverWarning)
-	}
 	return created, nil
-}
-
-// editionCoverURL returns the server-controlled Audiobookshelf cover URL for
-// an item, or "" when the item has no cover or no usable base URL.
-func editionCoverURL(absBaseURL string, absBook models.AudiobookshelfBook) string {
-	if absBook.ID == "" || absBook.Media.CoverPath == "" {
-		return ""
-	}
-	base, err := url.Parse(strings.TrimSpace(absBaseURL))
-	if err != nil || base.Scheme == "" || base.Host == "" {
-		return ""
-	}
-	base.User = nil
-	base.RawQuery = ""
-	base.Fragment = ""
-	return fmt.Sprintf("%s/api/items/%s/cover", strings.TrimRight(base.String(), "/"), url.PathEscape(absBook.ID))
 }
 
 // editionCreator builds the creator for one create request, using

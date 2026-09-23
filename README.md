@@ -68,6 +68,7 @@ Existing single-profile setups are **automatically migrated** on first startup:
 | `PUT` | `/api/profiles/{id}/config` | Update profile configuration |
 | `GET` | `/api/profiles/{id}/runs/{runId}/details` | Get book-level details for a retained sync run |
 | `GET` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition-draft` | Get a draft Hardcover edition for a `needs_review` book in a run with available details |
+| `POST` | `/api/profiles/{id}/runs/{runId}/books/{bookId}/edition` | Create a Hardcover edition for a `needs_review` book from reviewed fields |
 | `POST` | `/api/profiles/{id}/sync` | Start sync |
 | `DELETE` | `/api/profiles/{id}/sync` | Cancel sync |
 | `GET` | `/api/status` | All profile statuses |
@@ -135,7 +136,7 @@ parseable ISBN, add one in Audiobookshelf before trying again.
 
 Previewing is read-only and makes no Hardcover request. Creation validates the
 submitted identifiers and Hardcover contributor IDs, honors dry-run mode, and
-may return a warning if the edition succeeds but its cover cannot be uploaded.
+does not attempt Hardcover's unsupported cover-upload flow.
 See the [OpenAPI specification](docs/openapi.yaml) for request fields, response
 fields, and errors.
 
