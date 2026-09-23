@@ -1,5 +1,14 @@
 # Field Crosswalk: Audiobookshelf Item to Hardcover Edition
 
+**Revision notice (2026-09-23):** This crosswalk is a historical field study
+for the earlier seven-step plan. Its audiobook R4 destination, Step 3–7
+allocations, create pipeline, and Audible duplicate/matching rules are
+superseded by the [current plan](needs-review-edition-creation.md) and the
+[live mapping findings](../hardcover-audible-mapping-findings.md). Do not use
+those older sections as implementation instructions. The merged Step 1–2
+record and independently verified ABS/ISBN field observations remain useful;
+the affected rows will be revised with their implementation PRs.
+
 Companion to [needs-review-edition-creation.md](needs-review-edition-creation.md). That document says *what* the
 "add an edition to Hardcover" feature does and how it is split into steps; this one says, field by field, what
 Audiobookshelf (ABS) data ends up in which Hardcover edition field and what is done to it on the way.
