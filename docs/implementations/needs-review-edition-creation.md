@@ -28,7 +28,7 @@ step touches.
 |------|-------|--------|--------|-------------|-----------|------|--------|
 | 1 | ISBN package, reading-format helpers, mismatch export fixes | `step_1_needs_review_add_edition` | [#24](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/24) | [#195](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/195) | `develop` | ~950 (15 files, ~585 of it tests), measured | Built and validated; under maintainer review (see its checklist) |
 | 2 | Edition creator hardening (duplicate detection, cross-book guard, `edition_format`, token scoping and redirects, the cover upload code kept but switched off, ebook format) and the `edition` CLI field | `step_2_needs_review_add_edition` | — | — | 1 | ~1,760 (~340 prod and docs, ~1,420 tests), measured | Built, reviewed and validated. See its checklist under "Step checklists" |
-| 3 | Read-only ABS/Audnex draft endpoint; no Hardcover calls | `step_3_needs_review_add_edition` | [#27](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/27) | — | 1, 2 | Remeasure after the no-Hardcover adjustment | Requires adjustment and revalidation; remove draft-time Hardcover work |
+| 3 | Read-only ABS/Audnex draft endpoint; no Hardcover calls | `step_3_needs_review_add_edition` | [#28](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/28) | [#198](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/198) | 1, 2 | ~2,350 (23 files), measured | Built, reviewed, validated, and published upstream; awaiting maintainer review |
 | 4 | Create endpoint, create-time Hardcover resolution, guards, and docs | `step_4_needs_review_add_edition` | — | — | 3 | Remeasure after the no-Hardcover adjustment | Requires adjustment and revalidation |
 | 5 | Sync identifier matching | `step_5_needs_review_add_edition` | — | — | 1 only | ~500 (~335 tests), measured | Implemented and validated; needs a rebase onto step 1 (see the Step 5 notes) |
 | 6 | Immediate read-status resync (backend) | `step_6_needs_review_add_edition` | — | — | 4, 5 | ~700-1,000 (about half tests), estimated | Not started |
@@ -228,8 +228,8 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       "Token cannot be blank", and the file must exist. Fix the README (the token is `hardcover.token` in `config.yaml`) or make the
       command honor the variable; the owner decides. `LoadFromFile` also logs the first 500 bytes of the file at debug level.
 
-**Step 3** (fork PR #27)
-- [ ] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
+**Step 3** (fork PR #28, upstream PR #198)
+- [x] Crosswalk scope ([section 5, Step 3](needs-review-edition-field-crosswalk.md#step-3-draft-endpoint)): this step owns
       the ABS side and the mapping into the draft. Decode the ABS item (`GetLibraryItem`, expanded, 404 typed) and decide
       what else the model reads (findings 2-4; `abridged`, finding 1, is already decoded by step 1); build fixtures from a real expanded item, one audiobook and one ebook; pin
       R1 (book ID from the run record, identifier requirement), R5 and R6 (counterpart only when derivable), R7 and R9
@@ -239,12 +239,12 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       export behavior through the draft.
 - [x] Replace this step's CHANGELOG bullets with ONE bullet for the draft endpoint (one-bullet-per-PR rule), and stop editing
       the step 1 bullet. The earlier branch rewrote step 1's hyphenated-ISBN line; the final diff leaves it untouched.
-- [ ] Remove every Hardcover dependency from the draft path. `PrepareEditionDraft` must not construct a Hardcover client;
+- [x] Remove every Hardcover dependency from the draft path. `PrepareEditionDraft` must not construct a Hardcover client;
       `draft.New` must not accept one; and opening a draft must issue zero Hardcover HTTP requests. Move
       `newHardcoverClient`, Hardcover test fakes, and the response write-deadline mechanism
       (`extendEditionWriteDeadline`, `editionWriteDeadline`, and the logger response writer's `Unwrap`) to step 4, where
       create-time resolution and insertion need them. Keep only a request-scoped ABS/Audnex timeout in step 3.
-- [ ] Remove step-4-only deadline/request identifiers, comments and held-Hardcover helpers from step 3; introduce them on
+- [x] Remove step-4-only deadline/request identifiers, comments and held-Hardcover helpers from step 3; introduce them on
       step 4 instead so the draft PR remains standalone and contains no dormant Hardcover surface.
 - [x] Crosswalk findings, decide each and either do it in this step or record it as out of scope: (2) use the exact
       `authors[].name` and `narrators[]` arrays from the expanded item instead of splitting `authorName` and `narratorName`
@@ -267,14 +267,14 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
       `false` one (a warning next to the ISBN field is the smallest change that loses nothing) and expose the flag in the draft;
       `insert_edition` accepts a bad checksum (confirmed with a write to a test book), so a `false` flag is a warning, not a blocker.
       The raw `isbn` stays on the record, so the value is never lost.
-- [ ] Crosswalk finding 9 moves to step 4. The draft carries the exact expanded ABS author and narrator names, including
+- [x] Crosswalk finding 9 moves to step 4. The draft carries the exact expanded ABS author and narrator names, including
       commas within a name, and the publisher name, but neither resolves nor warns about Hardcover matches. It may warn only
       about local/source facts such as a missing ABS author, missing date, non-English metadata, or a checksum-invalid ISBN.
-- [ ] Replace the two-minute Hardcover-oriented draft budget and `502` lookup behavior with a bound appropriate to the ABS
+- [x] Replace the two-minute Hardcover-oriented draft budget and `502` lookup behavior with a bound appropriate to the ABS
       item fetch and optional Audnex enrichment. Caller cancellation still propagates. Tests cover timeout/cancellation,
       exact expanded person names, legacy joined-name fallback, non-English and mixed-language warnings, and prove at the
       HTTP boundary that a draft makes no Hardcover request.
-- [ ] The draft requires no Hardcover scope or token use at all. Update README, OpenAPI, CHANGELOG and PR wording to say
+- [x] The draft requires no Hardcover scope or token use at all. Update README, OpenAPI, CHANGELOG and PR wording to say
       previewing reads Audiobookshelf metadata and may call Audnex for an audiobook ASIN, but never calls Hardcover. Remove
       the Step 3 live read-scope confirmation; the already-recorded author, narrator and publisher live searches become
       Step 4 create-resolution evidence. A preview's `edition_format` can differ from what Hardcover later stores because
