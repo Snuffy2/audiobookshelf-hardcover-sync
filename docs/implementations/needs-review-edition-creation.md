@@ -4,9 +4,9 @@
 PR boundaries remain subject to review. Steps 1 and 2 are merged into `develop`.
 Step 3 and later are not merged.
 
-This is the current plan. The earlier seven-step version remains in Git
-history; its unmerged step instructions and audiobook ASIN assumptions are
-superseded here. The
+This is the current plan. The [legacy seven-step version](needs-review-edition-creation-legacy.md)
+is retained for its completed-work record and earlier decisions; its unmerged
+step instructions and audiobook ASIN assumptions are superseded here. The
 [field crosswalk](needs-review-edition-field-crosswalk.md) still records useful
 ABS metadata and ISBN transformations; its Audible R4 row, create pipeline,
 and old step allocations must be revised before the affected PRs are ready.
