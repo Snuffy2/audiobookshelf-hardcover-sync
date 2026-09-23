@@ -73,7 +73,7 @@ func (s *MultiUserService) EditionCapabilityForProfile(ctx context.Context, prof
 	s.editionCapabilityMutex.Unlock()
 
 	probeCtx, cancel := context.WithTimeout(ctx, EditionCapabilityTimeout)
-	allowed, probeErr := s.newHardcoverClient(profile.HardcoverToken).ProbeEditionCreateCapability(probeCtx)
+	allowed, probeErr := s.newHardcoverClient(profile.HardcoverToken, profileID).ProbeEditionCreateCapability(probeCtx)
 	cancel()
 	capability := classifyEditionCapability(allowed, probeErr)
 	ttl := EditionCapabilityUnverifiedTTL

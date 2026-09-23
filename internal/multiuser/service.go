@@ -1183,7 +1183,7 @@ func (s *MultiUserService) runSyncWorker(profileID, runID string, generation uin
 
 // newHardcoverClient builds a Hardcover client for token using the global
 // base URL, rate-limit, and concurrency settings.
-func (s *MultiUserService) newHardcoverClient(token string) *hardcover.Client {
+func (s *MultiUserService) newHardcoverClient(token, profileID string) *hardcover.Client {
 	hcCfg := hardcover.DefaultClientConfig()
 	if s.globalConfig != nil {
 		if s.globalConfig.Hardcover.BaseURL != "" {
@@ -1198,6 +1198,7 @@ func (s *MultiUserService) newHardcoverClient(token string) *hardcover.Client {
 	}
 
 	s.logger.Debug("Initializing Hardcover client (multi-user)", map[string]interface{}{
+		"profile_id":     profileID,
 		"base_url":       hcCfg.BaseURL,
 		"rate_limit":     hcCfg.RateLimit.String(),
 		"max_concurrent": hcCfg.MaxConcurrent,
@@ -1229,28 +1230,7 @@ func (s *MultiUserService) performSync(ctx context.Context, profileID string, pr
 	// Create clients
 	absClient := audiobookshelf.NewClient(profileConfig.AudiobookshelfURL, profileConfig.AudiobookshelfToken)
 
-	// Build Hardcover client config using global settings (rate limits/base URL)
-	hcCfg := hardcover.DefaultClientConfig()
-	if s.globalConfig != nil {
-		if s.globalConfig.Hardcover.BaseURL != "" {
-			hcCfg.BaseURL = s.globalConfig.Hardcover.BaseURL
-		}
-		if s.globalConfig.RateLimit.Rate > 0 {
-			hcCfg.RateLimit = s.globalConfig.RateLimit.Rate
-		}
-		if s.globalConfig.RateLimit.MaxConcurrent > 0 {
-			hcCfg.MaxConcurrent = s.globalConfig.RateLimit.MaxConcurrent
-		}
-	}
-
-	s.logger.Debug("Initializing Hardcover client (multi-user)", map[string]interface{}{
-		"profile_id":     profileID,
-		"base_url":       hcCfg.BaseURL,
-		"rate_limit":     hcCfg.RateLimit.String(),
-		"max_concurrent": hcCfg.MaxConcurrent,
-	})
-
-	hcClient := hardcover.NewClientWithConfig(hcCfg, profileConfig.HardcoverToken, s.logger)
+	hcClient := s.newHardcoverClient(profileConfig.HardcoverToken, profileID)
 
 	// Create sync service bound to the accepted run identity. This preserves the
 	// queued run ID/timestamp through service initialization and Sync startup.

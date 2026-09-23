@@ -261,7 +261,7 @@ func (s *MultiUserService) createEditionFromRunBook(ctx context.Context, profile
 	if err := validateEditionScalars(input); err != nil {
 		return nil, &EditionValidationError{Err: err}
 	}
-	hcClient := s.newHardcoverClient(target.profile.HardcoverToken)
+	hcClient := s.newHardcoverClient(target.profile.HardcoverToken, profileID)
 	metadataWarnings, err := resolveEditionMetadata(createCtx, hcClient, item, input)
 	if err != nil {
 		return nil, err
