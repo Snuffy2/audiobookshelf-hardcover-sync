@@ -321,10 +321,11 @@ it), rather than only in a report or a reply. Keep the tracker table's Status co
 - [ ] **Scope gate (pre-flight check).** A token's scopes cannot be read (no introspection endpoint, opaque tokens, no schema field), so
       add a check that learns them safely, and expose it so the UI shows the add-edition action only when the profile's token can create
       editions.
-      - The check calls Hardcover's edition insert with a book id that cannot exist (`-1`) and an otherwise minimal body, so it never
-        creates anything. HTTP 200 (a "Couldn't find Book" error) means the token has the scope; `403 insufficient_scope` means it does
-        not, and the response's `scope` field names the missing one. Both sides were confirmed against the real API, and the scope is
-        checked before the arguments. Any other outcome (network error, timeout, 401, 429, 5xx) is "unverified", never "allowed".
+      - The check calls Hardcover's edition insert with a book id that cannot exist (`-1`) and an otherwise minimal body. This exact
+        mutation was validated against the hosted Hardcover API with real tokens: a scope-capable token returned HTTP 200 with a
+        "Couldn't find Book" error, a limited token returned `403 insufficient_scope` with the missing scope, and neither probe created
+        an edition. The live results confirm that Hardcover checks token scope before validating the arguments. Any other outcome
+        (network error, timeout, 401, 429, 5xx) is "unverified", never "allowed".
       - Route: `GET /api/profiles/{id}/edition-capability`, with the same authorization as create (viewers 403, foreign profiles 404).
         Response `data`: `{can_create: boolean, missing_scope?: string, reason?: "unverified"}`. `can_create` is true only when the check
         succeeded. In dry-run mode the client blocks every Hardcover mutation, so the check cannot run: report `can_create: true`, since
