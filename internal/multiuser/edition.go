@@ -36,6 +36,14 @@ const (
 	EditionCapabilityUnverifiedTTL = 5 * time.Second
 	EditionCapabilityTimeout       = 45 * time.Second
 	editionLookupLimit             = 10
+	// editionCreateOverheadReserve leaves time for normal network and response
+	// processing in addition to the pacing enforced between Hardcover requests.
+	editionCreateOverheadReserve = 15 * time.Second
+	// editionCreateReservedRequests accounts for up to five proactive duplicate
+	// identifier lookups, one publisher lookup, the insert, and up to five
+	// identifier lookups again if the insert races with another creator. The
+	// five identifiers are the ASIN, supplied ISBN-13/ISBN-10, and conversions.
+	editionCreateReservedRequests = 12
 	// editionImageClientTimeout bounds a single cover download or upload request.
 	editionImageClientTimeout = 60 * time.Second
 )
@@ -215,7 +223,7 @@ func (s *MultiUserService) createEditionFromRunBook(ctx context.Context, profile
 		return nil, err
 	}
 
-	release, ok := s.claimEdition(profileID, bookID)
+	release, ok := s.claimEdition(profileID, bookID, target.hardcoverBookID)
 	if !ok {
 		return nil, ErrEditionInProgress
 	}
@@ -262,7 +270,7 @@ func (s *MultiUserService) createEditionFromRunBook(ctx context.Context, profile
 		return nil, &EditionValidationError{Err: err}
 	}
 	hcClient := s.newHardcoverClient(target.profile.HardcoverToken, profileID)
-	metadataWarnings, err := resolveEditionMetadata(createCtx, hcClient, item, input)
+	metadataWarnings, err := resolveEditionMetadata(createCtx, hcClient, item, input, timeout, s.hardcoverRateLimit())
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +319,7 @@ func (s *MultiUserService) editionCreator(client edition.HardcoverClient, dryRun
 // resolveEditionMetadata maps exact ABS names to profile-token-scoped Hardcover
 // IDs. It deliberately uses no global name cache: a result must be confirmed
 // through this profile's rate-limited client at create time.
-func resolveEditionMetadata(ctx context.Context, client *hardcover.Client, item *models.AudiobookshelfBook, input *edition.EditionInput) ([]string, error) {
+func resolveEditionMetadata(ctx context.Context, client *hardcover.Client, item *models.AudiobookshelfBook, input *edition.EditionInput, createTimeout, rateLimit time.Duration) ([]string, error) {
 	meta := item.Media.Metadata
 	authorNames := expandedAuthorNames(meta.Authors)
 	if len(authorNames) == 0 && strings.TrimSpace(meta.AuthorName) != "" {
@@ -322,6 +330,25 @@ func resolveEditionMetadata(ctx context.Context, client *hardcover.Client, item 
 	if len(authorNames) > maxEditionPeople {
 		return nil, &EditionValidationError{Err: fmt.Errorf("at most %d authors are allowed", maxEditionPeople)}
 	}
+	if len(authorNames) == 0 {
+		return nil, &EditionValidationError{Err: ErrEditionAuthorNotFound}
+	}
+
+	var narratorNames []string
+	if item.ReadingFormat() != models.ReadingFormatEbook {
+		narratorNames = expandedNarratorNames(meta.Narrators)
+		if len(narratorNames) == 0 && strings.TrimSpace(meta.NarratorName) != "" {
+			narratorNames = []string{strings.TrimSpace(meta.NarratorName)}
+		}
+		if len(narratorNames) > maxEditionPeople {
+			return nil, &EditionValidationError{Err: fmt.Errorf("at most %d narrators are allowed", maxEditionPeople)}
+		}
+	}
+	lookupUnits := editionContributorLookupUnits(authorNames, narratorNames)
+	if lookupUnits > editionContributorLookupBudget(createTimeout, rateLimit) {
+		return nil, &EditionValidationError{Err: errors.New("too many authors and narrators to resolve within the edition create time budget")}
+	}
+
 	for _, name := range authorNames {
 		id, found, err := exactPersonID(ctx, client, name, false)
 		if err != nil {
@@ -337,13 +364,6 @@ func resolveEditionMetadata(ctx context.Context, client *hardcover.Client, item 
 
 	warnings := make([]string, 0, 2)
 	if item.ReadingFormat() != models.ReadingFormatEbook {
-		narratorNames := expandedNarratorNames(meta.Narrators)
-		if len(narratorNames) == 0 && strings.TrimSpace(meta.NarratorName) != "" {
-			narratorNames = []string{strings.TrimSpace(meta.NarratorName)}
-		}
-		if len(narratorNames) > maxEditionPeople {
-			return nil, &EditionValidationError{Err: fmt.Errorf("at most %d narrators are allowed", maxEditionPeople)}
-		}
 		missedNarrator := false
 		for _, name := range narratorNames {
 			id, found, err := exactPersonID(ctx, client, name, true)
@@ -389,8 +409,13 @@ func resolveEditionMetadata(ctx context.Context, client *hardcover.Client, item 
 
 func expandedAuthorNames(authors []models.AudiobookshelfPerson) []string {
 	names := make([]string, 0, len(authors))
+	seen := make(map[string]struct{}, len(authors))
 	for _, author := range authors {
 		if name := strings.TrimSpace(author.Name); name != "" {
+			if _, duplicate := seen[name]; duplicate {
+				continue
+			}
+			seen[name] = struct{}{}
 			names = append(names, name)
 		}
 	}
@@ -399,12 +424,46 @@ func expandedAuthorNames(authors []models.AudiobookshelfPerson) []string {
 
 func expandedNarratorNames(narrators []string) []string {
 	names := make([]string, 0, len(narrators))
+	seen := make(map[string]struct{}, len(narrators))
 	for _, narrator := range narrators {
 		if name := strings.TrimSpace(narrator); name != "" {
+			if _, duplicate := seen[name]; duplicate {
+				continue
+			}
+			seen[name] = struct{}{}
 			names = append(names, name)
 		}
 	}
 	return names
+}
+
+func editionContributorLookupUnits(authorNames, narratorNames []string) int {
+	units := len(authorNames) + 2*len(narratorNames)
+	for _, name := range authorNames {
+		if _, err := strconv.Atoi(name); err == nil {
+			// SearchAuthors first tries a numeric value as a Hardcover person ID,
+			// then falls back to the name query when that ID is not found.
+			units++
+		}
+	}
+	return units
+}
+
+// editionContributorLookupBudget reserves one ABS request, normal request
+// overhead, and the fixed Hardcover work that follows contributor resolution.
+func editionContributorLookupBudget(createTimeout, rateLimit time.Duration) int {
+	if rateLimit <= 0 {
+		rateLimit = hardcover.DefaultRateLimit
+	}
+	queryTime := createTimeout - audiobookshelf.RequestTimeout - editionCreateOverheadReserve
+	if queryTime <= 0 {
+		return 0
+	}
+	budget := int(queryTime/rateLimit) - editionCreateReservedRequests
+	if budget < 0 {
+		return 0
+	}
+	return budget
 }
 
 func exactPersonID(ctx context.Context, client *hardcover.Client, name string, narrator bool) (int, bool, error) {
@@ -509,23 +568,32 @@ func (s *MultiUserService) fetchEditionItem(ctx context.Context, profile *databa
 	return item, nil
 }
 
-// claimEdition marks one profile/book pair as being submitted. It reports false
-// when that pair is already in flight; otherwise the returned func releases it.
-func (s *MultiUserService) claimEdition(profileID, bookID string) (release func(), ok bool) {
-	key := profileID + "\x00" + bookID
+// claimEdition marks both the Audiobookshelf item and its resolved Hardcover
+// target as being submitted. It reports false when either claim is in flight.
+func (s *MultiUserService) claimEdition(profileID, bookID string, hardcoverBookID int) (release func(), ok bool) {
+	keys := [...]editionClaimKey{
+		{profileID: profileID, kind: "abs", itemID: bookID},
+		{profileID: profileID, kind: "hardcover", itemID: strconv.Itoa(hardcoverBookID)},
+	}
 	s.editionMutex.Lock()
 	defer s.editionMutex.Unlock()
-	if _, busy := s.editionsInFlight[key]; busy {
-		return nil, false
+	for _, key := range keys {
+		if _, busy := s.editionsInFlight[key]; busy {
+			return nil, false
+		}
 	}
 	if s.editionsInFlight == nil {
-		s.editionsInFlight = make(map[string]struct{})
+		s.editionsInFlight = make(map[editionClaimKey]struct{})
 	}
-	s.editionsInFlight[key] = struct{}{}
+	for _, key := range keys {
+		s.editionsInFlight[key] = struct{}{}
+	}
 	return func() {
 		s.editionMutex.Lock()
 		defer s.editionMutex.Unlock()
-		delete(s.editionsInFlight, key)
+		for _, key := range keys {
+			delete(s.editionsInFlight, key)
+		}
 	}, true
 }
 

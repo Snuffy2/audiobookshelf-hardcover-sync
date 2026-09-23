@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
@@ -126,6 +128,62 @@ func TestDeleteProfileWaitsForAnInFlightEditionCreate(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatalf("%s did not finish after release", name)
 		}
+	}
+}
+
+func TestDeleteProfileKeepsAdmittedCreateProfileActiveUntilLookupCompletes(t *testing.T) {
+	f := newHeldCreateFixture(t)
+	profileLookupEntered := make(chan struct{})
+	releaseProfileLookup := make(chan struct{})
+	var lookupEnteredOnce sync.Once
+	var releaseLookupOnce sync.Once
+	const callbackName = "multiuser_test_hold_admitted_edition_profile_lookup"
+	require.NoError(t, f.db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema == nil || tx.Statement.Schema.Name != "SyncProfile" {
+			return
+		}
+		lookupEnteredOnce.Do(func() { close(profileLookupEntered) })
+		<-releaseProfileLookup
+	}))
+	t.Cleanup(func() { require.NoError(t, f.db.Callback().Query().Remove(callbackName)) })
+	defer releaseLookupOnce.Do(func() { close(releaseProfileLookup) })
+
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+		createDone <- err
+	}()
+	select {
+	case <-profileLookupEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the admitted create did not reach profile lookup")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() { deleteDone <- f.service.DeleteProfile("profile-1") }()
+	gate := f.service.profileGate("profile-1")
+	require.Eventually(t, func() bool {
+		gate.mu.Lock()
+		defer gate.mu.Unlock()
+		return gate.deleted
+	}, time.Second, time.Millisecond, "deletion should close the profile gate while waiting for admitted work")
+
+	var active bool
+	require.NoError(t, f.db.Raw("SELECT active FROM sync_profiles WHERE id = ?", "profile-1").Scan(&active).Error)
+	require.True(t, active, "the repository profile must remain active until the admitted create resolves it")
+
+	releaseLookupOnce.Do(func() { close(releaseProfileLookup) })
+	select {
+	case err := <-createDone:
+		require.NoError(t, err, "the create admitted before deletion must retain access to profile state")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the admitted create did not finish after profile lookup was released")
+	}
+	select {
+	case err := <-deleteDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("profile deletion did not finish after the admitted create")
 	}
 }
 

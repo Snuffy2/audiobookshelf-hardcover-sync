@@ -341,7 +341,7 @@ The application will automatically migrate settings from the old `app` section t
 
 - [Docker](https://docs.docker.com/engine/install/) installed on your system
 - [Docker Compose](https://docs.docker.com/compose/install/) (recommended for the main sync service)
-- [Hardcover API token](#getting-started) (sync scopes: `read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`; edition creation also needs `write:catalog:append` — [create one with these scopes](https://hardcover.app/account/api/keys/new?scope=read%3Alibrary+read%3Acatalog+read%3Alists+read%3Ame+write%3Alibrary+write%3Acatalog%3Aappend))
+- [Hardcover API token](#quick-start) (sync scopes: `read:library`, `read:catalog`, `read:lists`, `read:me`, `write:library`; edition creation also needs `write:catalog:append` — [create one with these scopes](https://hardcover.app/account/api/keys/new?scope=read%3Alibrary+read%3Acatalog+read%3Alists+read%3Ame+write%3Alibrary+write%3Acatalog%3Aappend))
 - (Optional) [Audiobookshelf](https://www.audiobookshelf.org/) URL and token if using the sync service
 
 

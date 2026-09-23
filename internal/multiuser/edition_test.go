@@ -1,15 +1,22 @@
 package multiuser
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/edition/editiontest"
 	syncsvc "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
@@ -41,6 +48,7 @@ type editionFixture struct {
 	service   *MultiUserService
 	hardcover *editiontest.HardcoverRequestCounter
 	abs       *editiontest.AudiobookshelfFake
+	db        *gorm.DB
 }
 
 type editionRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -65,7 +73,7 @@ func stubAudnexTransport(t *testing.T, roundTrip func(*http.Request) (*http.Resp
 // contains the given outcome records.
 func newEditionFixture(t *testing.T, dryRun bool, records []syncsvc.BookOutcomeRecord, items map[string]map[string]interface{}) *editionFixture {
 	t.Helper()
-	service, _ := newStatusLookupService(t)
+	service, db := newStatusLookupService(t)
 	hardcover := editiontest.NewHardcoverRequestCounter(t)
 	abs := editiontest.NewAudiobookshelfFake(t, items)
 	service.globalConfig.Hardcover.BaseURL = hardcover.URL
@@ -87,7 +95,7 @@ func newEditionFixture(t *testing.T, dryRun bool, records []syncsvc.BookOutcomeR
 			BookOutcomes: records,
 		},
 	})
-	return &editionFixture{service: service, hardcover: hardcover, abs: abs}
+	return &editionFixture{service: service, hardcover: hardcover, abs: abs, db: db}
 }
 
 func needsReview(bookID, hardcoverBookID string) syncsvc.BookOutcomeRecord {
@@ -121,6 +129,165 @@ func TestCreateEditionFromRunBook_TargetsTheRecordedHardcoverBook(t *testing.T) 
 	require.Equal(t, "2021-02-03", dto["release_date"])
 	require.Len(t, dto["contributions"], 2)
 	require.NotContains(t, dto, "image_id", "an item without a cover must not attach an image")
+}
+
+func TestCreateEditionFromRunBookDeduplicatesTrimmedContributorNames(t *testing.T) {
+	item := editionItem("item-1", "A Title", "An Author")
+	metadata := item["media"].(map[string]interface{})["metadata"].(map[string]interface{})
+	metadata["authors"] = []interface{}{
+		map[string]interface{}{"name": "An Author"},
+		map[string]interface{}{"name": " An Author "},
+	}
+	metadata["narrators"] = []interface{}{"A Narrator", " A Narrator "}
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": item},
+	)
+
+	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
+	require.NoError(t, err)
+	require.Equal(t, 777, created.EditionID)
+	require.Equal(t, 5, f.hardcover.RequestCount(), "one author search, one narrator search, two duplicate lookups and one insert are expected")
+	contributions := f.hardcover.RecordedMutations()[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})["contributions"].([]interface{})
+	require.Len(t, contributions, 2, "duplicate names should still produce one contribution each")
+}
+
+func TestCreateEditionFromRunBookAcceptsContributorBudgetBoundaryWithFiveDuplicateLookups(t *testing.T) {
+	item := editionItem("item-1", "A Title", "An Author")
+	metadata := item["media"].(map[string]interface{})["metadata"].(map[string]interface{})
+	metadata["publisher"] = "A Publisher"
+	narratorNames := make([]string, 12)
+	narrators := make([]interface{}, len(narratorNames))
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": item},
+	)
+	for i := range narratorNames {
+		narratorNames[i] = fmt.Sprintf("Narrator %02d", i)
+		narrators[i] = narratorNames[i]
+		f.hardcover.Authors[narratorNames[i]] = 200 + i
+	}
+	metadata["narrators"] = narrators
+	f.hardcover.Publishers["A Publisher"] = 303
+	// At the default limiter this is exactly 25 lookup units: one author query
+	// plus 12 narrators, conservatively budgeted for direct and fallback search.
+	f.service.globalConfig.RateLimit.Rate = 0
+	rateLimit := f.service.hardcoverRateLimit()
+	budget := editionContributorLookupBudget(EditionCreateTimeout, rateLimit)
+	require.Equal(t, hardcover.DefaultRateLimit, rateLimit)
+	require.Equal(t, 25, budget)
+	require.Equal(t, budget, editionContributorLookupUnits([]string{"An Author"}, narratorNames))
+
+	// Route the test client's requests through a narrow recording proxy so the
+	// test can verify all five proactive identifier probes without expanding
+	// the shared edition fake's API.
+	type graphQLRequest struct {
+		Query     string                 `json:"query"`
+		Variables map[string]interface{} `json:"variables"`
+	}
+	var requestMu sync.Mutex
+	var requests []graphQLRequest
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var observed graphQLRequest
+		if err := json.Unmarshal(body, &observed); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestMu.Lock()
+		requests = append(requests, observed)
+		requestMu.Unlock()
+		upstreamRequest, err := http.NewRequestWithContext(r.Context(), r.Method, f.hardcover.URL, bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		upstreamRequest.Header = r.Header.Clone()
+		upstreamResponse, err := http.DefaultClient.Do(upstreamRequest)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer upstreamResponse.Body.Close()
+		for key, values := range upstreamResponse.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(upstreamResponse.StatusCode)
+		_, _ = io.Copy(w, upstreamResponse.Body)
+	}))
+	defer proxy.Close()
+	f.service.globalConfig.Hardcover.BaseURL = proxy.URL
+
+	edits := validEdits()
+	edits.ASIN = "B0EXISTING1"
+	edits.ISBN10 = "0131103628" // Unrelated ISBNs yield five distinct lookup keys.
+	created, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+	require.NoError(t, err)
+	require.Equal(t, 777, created.EditionID)
+	require.Empty(t, created.Warnings)
+	mutations := f.hardcover.RecordedMutations()
+	require.Len(t, mutations, 1)
+	dto := mutations[0]["edition"].(map[string]interface{})["dto"].(map[string]interface{})
+	require.EqualValues(t, 303, dto["publisher_id"])
+	require.Len(t, dto["contributions"], 13)
+
+	requestMu.Lock()
+	defer requestMu.Unlock()
+	var duplicateProbes []graphQLRequest
+	for _, request := range requests {
+		if strings.Contains(request.Query, "query BookByASIN") || strings.Contains(request.Query, "query BookByISBN") {
+			duplicateProbes = append(duplicateProbes, request)
+		}
+	}
+	require.Len(t, duplicateProbes, 5)
+	require.Equal(t, "B0EXISTING1", duplicateProbes[0].Variables["asin"])
+	require.Equal(t, "9780306406157", duplicateProbes[1].Variables["isbn"])
+	require.Equal(t, "0131103628", duplicateProbes[2].Variables["isbn"])
+	require.Equal(t, "9780131103627", duplicateProbes[3].Variables["isbn"])
+	require.Equal(t, "0306406152", duplicateProbes[4].Variables["isbn"])
+}
+
+func TestCreateEditionFromRunBookRejectsContributorLookupsOverCombinedBudget(t *testing.T) {
+	item := editionItem("item-1", "A Title", "An Author")
+	metadata := item["media"].(map[string]interface{})["metadata"].(map[string]interface{})
+	narratorNames := make([]string, 13)
+	narrators := make([]interface{}, len(narratorNames))
+	for i := range narratorNames {
+		narratorNames[i] = fmt.Sprintf("Narrator %02d", i)
+		narrators[i] = narratorNames[i]
+	}
+	metadata["narrators"] = narrators
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242")},
+		map[string]map[string]interface{}{"item-1": item},
+	)
+	// With the default two-second limiter, the two-minute create budget leaves
+	// room for 25 contributor lookup requests after reserving the worst-case
+	// creator work: five proactive identifier probes, publisher, insert, and
+	// five duplicate-race probes. One author plus 12 narrators costs exactly
+	// 25 requests; the next narrator pushes the input over budget.
+	f.service.globalConfig.RateLimit.Rate = 0
+	rateLimit := f.service.hardcoverRateLimit()
+	budget := editionContributorLookupBudget(EditionCreateTimeout, rateLimit)
+	require.Equal(t, hardcover.DefaultRateLimit, rateLimit)
+	require.Equal(t, 25, budget)
+	require.Equal(t, budget, editionContributorLookupUnits([]string{"An Author"}, narratorNames[:12]))
+	require.Greater(t, editionContributorLookupUnits([]string{"An Author"}, narratorNames), budget)
+	edits := validEdits()
+	edits.ASIN = "B0EXISTING1"
+	edits.ISBN10 = "0131103628" // unrelated to the supplied ISBN-13: five distinct creator probes.
+
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", edits)
+	var validation *EditionValidationError
+	require.ErrorAs(t, err, &validation)
+	require.Contains(t, validation.Error(), "within the edition create time budget")
+	require.Zero(t, f.hardcover.RequestCount(), "over-budget metadata must be rejected before contributor lookups")
 }
 
 func TestCreateEditionFromRunBook_DryRunIssuesNoMutation(t *testing.T) {
@@ -354,6 +521,25 @@ func TestCreateEditionFromRunBook_RejectsOverlappingSubmitForTheSameBook(t *test
 	// Once finished, the same book can be submitted again.
 	_, err = f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-1", validEdits())
 	require.NoError(t, err)
+}
+
+func TestCreateEditionFromRunBookRejectsOverlappingItemsForSameHardcoverTarget(t *testing.T) {
+	f := newEditionFixture(t, false,
+		[]syncsvc.BookOutcomeRecord{needsReview("item-1", "4242"), needsReview("item-2", "4242")},
+		map[string]map[string]interface{}{
+			"item-1": editionItem("item-1", "A Title", "An Author"),
+			"item-2": editionItem("item-2", "Another ABS Item", "An Author"),
+		},
+	)
+	release := holdCreatesOpen(t, f)
+	firstDone := startHeldCreate(t, f)
+
+	_, err := f.service.CreateEditionFromRunBook(context.Background(), "profile-1", "run-1", "item-2", validEdits())
+	require.ErrorIs(t, err, ErrEditionInProgress)
+	require.Len(t, f.hardcover.RecordedMutations(), 1, "the second ABS item must not insert against the same Hardcover target concurrently")
+
+	release()
+	require.NoError(t, <-firstDone)
 }
 
 func TestEditionRequestsAreRejectedAfterShutdown(t *testing.T) {

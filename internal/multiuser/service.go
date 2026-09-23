@@ -92,6 +92,12 @@ type profileRunGate struct {
 	deleted                bool
 }
 
+type editionClaimKey struct {
+	profileID string
+	kind      string
+	itemID    string
+}
+
 // MultiUserService manages sync operations for multiple users
 type MultiUserService struct {
 	repository       *database.Repository
@@ -122,10 +128,10 @@ type MultiUserService struct {
 	// Shutdown's cancellation of running syncs; Shutdown drains it last.
 	editionWaitGroup stdSync.WaitGroup
 
-	// editionsInFlight guards against overlapping edition submits for one
-	// profile/book pair. It is independent of the full-sync lifecycle state.
+	// editionsInFlight guards the profile's ABS item and resolved Hardcover
+	// target pairs independently of the full-sync lifecycle state.
 	editionMutex     stdSync.Mutex
-	editionsInFlight map[string]struct{}
+	editionsInFlight map[editionClaimKey]struct{}
 	// Edition capability probes are cached and coalesced per profile and token.
 	editionCapabilityMutex stdSync.Mutex
 	editionCapabilities    map[editionCapabilityKey]editionCapabilityCacheEntry
@@ -321,6 +327,15 @@ func (s *MultiUserService) DeleteProfile(profileID string) error {
 		}
 	}
 	gate.deleted = true
+	gate.mu.Unlock()
+
+	// Admission is closed by deletingProfiles, and gate.deleted rejects sync
+	// starts admitted just before that marker. Drain those starts before making
+	// the profile inactive so an already-admitted edition create can still load
+	// its profile and finish its lifecycle.
+	gate.startWaitGroup.Wait()
+
+	gate.mu.Lock()
 	deleteErr := s.repository.DeleteProfile(profileID)
 	if deleteErr != nil {
 		gate.deleted = false
@@ -333,10 +348,9 @@ func (s *MultiUserService) DeleteProfile(profileID string) error {
 	s.invalidateEditionCapability(profileID)
 	gate.mu.Unlock()
 
-	// Starts admitted before the deletion marker wait at the gate; workers are
-	// drained before removing lifecycle maps so late terminal callbacks observe
-	// the deleted gate and cannot persist a report for the deleted profile.
-	gate.startWaitGroup.Wait()
+	// Workers are drained before removing lifecycle maps so late terminal
+	// callbacks observe the deleted gate and cannot persist a report for the
+	// deleted profile.
 	gate.workerWaitGroup.Wait()
 	s.statusMutex.Lock()
 	delete(s.profileStatuses, profileID)
@@ -1189,9 +1203,7 @@ func (s *MultiUserService) newHardcoverClient(token, profileID string) *hardcove
 		if s.globalConfig.Hardcover.BaseURL != "" {
 			hcCfg.BaseURL = s.globalConfig.Hardcover.BaseURL
 		}
-		if s.globalConfig.RateLimit.Rate > 0 {
-			hcCfg.RateLimit = s.globalConfig.RateLimit.Rate
-		}
+		hcCfg.RateLimit = s.hardcoverRateLimit()
 		if s.globalConfig.RateLimit.MaxConcurrent > 0 {
 			hcCfg.MaxConcurrent = s.globalConfig.RateLimit.MaxConcurrent
 		}
@@ -1205,6 +1217,13 @@ func (s *MultiUserService) newHardcoverClient(token, profileID string) *hardcove
 	})
 
 	return hardcover.NewClientWithConfig(hcCfg, token, s.logger)
+}
+
+func (s *MultiUserService) hardcoverRateLimit() time.Duration {
+	if s.globalConfig != nil && s.globalConfig.RateLimit.Rate > 0 {
+		return s.globalConfig.RateLimit.Rate
+	}
+	return hardcover.DefaultRateLimit
 }
 
 // performSync performs the actual sync operation for a profile

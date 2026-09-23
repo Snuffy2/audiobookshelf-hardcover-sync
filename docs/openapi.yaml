@@ -721,8 +721,18 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '409':
+          description: The profile is being deleted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '500':
+          description: Unexpected server failure
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
         '503':
-          description: Service is shutting down or the profile is being deleted
+          description: Service is shutting down
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
