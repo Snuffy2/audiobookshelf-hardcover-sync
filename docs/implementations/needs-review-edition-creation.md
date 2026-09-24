@@ -159,8 +159,22 @@ export enrichment (the configured region, then US) is unchanged by this plan.
 Each step is one reviewable PR to `develop`. The sequence can be split further
 if an actual diff becomes too broad; a split must still leave both resulting
 PRs working independently. New branches and PRs are created or published only
-when requested. Branch names below are provisional after Step 3 because the
-existing Step 4 and Step 5 branches implement the old ordering.
+when requested. Step 3 keeps its existing branch name. Every future step uses
+`step_X_needs_review_add_edition`, with `X` equal to its step number:
+
+| Step | Branch |
+|---|---|
+| 4 | `step_4_needs_review_add_edition` |
+| 5 | `step_5_needs_review_add_edition` |
+| 6 | `step_6_needs_review_add_edition` |
+| 7 | `step_7_needs_review_add_edition` |
+| 8 | `step_8_needs_review_add_edition` |
+| 9 | `step_9_needs_review_add_edition` |
+| 10 | `step_10_needs_review_add_edition` |
+
+The existing Step 4 and Step 5 branch refs contain work from the old ordering.
+Rework those refs for their revised steps instead of creating alternate branch
+names; the old commits remain source material as described below.
 
 | Step | Scope and standalone result | Depends on | Current state |
 |---|---|---|---|
