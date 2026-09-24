@@ -43,19 +43,26 @@ The user-approved identifier rules for the completed flow (after Step 10) are:
   recorded ABS source identifier changes, the target edition is definitively unavailable, or
   the user explicitly forgets the match. It is correctable, not a permanent
   assertion about mutable catalogues.
-- Sync prefers an existing confirmed local association, then an exact Audible
-  `book_mappings` match, then ISBN and title/author discovery. The exact
-  mapping lookup queries every Hardcover Audible region form of the bare ASIN
-  in one read (see [Regions](#regions)); it needs no Audnex region discovery.
-  Agreeing hits on one edition with audiobook format are a match; hits on
-  different editions or books remain reviewable.
-- Do not use `editions.asin` to match an ABS book to Hardcover, to choose a
-  candidate, or as a duplicate guard for an Audible audiobook. Step 10 removes
-  the current `editions.asin` matching once the user-initiated create flow and
-  UI can resolve the items this exposes. An older edition that contains an
-  Audible ASIN only in that field may coexist with a newly imported edition
-  that has a proper Audible mapping. This accepted outcome does not change
-  ISBN or genuine retail-ASIN behavior for other formats.
+- For an audiobook, sync prefers an existing confirmed local association,
+  then an exact Audible `book_mappings` match, then ISBN and title/author
+  discovery. The exact mapping lookup queries every Hardcover Audible region
+  form of the bare ASIN in one read (see [Regions](#regions)); it needs no
+  Audnex region discovery. Agreeing hits on one edition with audiobook format
+  are a match; hits on different editions or books remain reviewable.
+- For an ebook, sync prefers an existing confirmed local association, then an
+  `editions.asin` match on an ebook-format edition, then ISBN and
+  title/author discovery. An ebook's ASIN is an Amazon retail (Kindle)
+  identifier, which is what `editions.asin` holds, so it stays a match and
+  ranks above ISBN, as it does today. Audible mappings are not queried for
+  ebooks.
+- Do not use `editions.asin` to match an ABS audiobook to Hardcover, to
+  choose a candidate, or as a duplicate guard for an audiobook import. Step 10
+  removes the current audiobook `editions.asin` matching once the
+  user-initiated create flow and UI can resolve the items this exposes. An
+  older edition that contains an Audible ASIN only in that field may coexist
+  with a newly imported edition that has a proper Audible mapping. Ebook
+  `editions.asin` matching, the ebook creator's ASIN duplicate check, and
+  writing an ebook's ASIN to `edition.asin` on ebook insertion are kept.
 - The user-initiated audiobook create path discovers the source ASIN's region
   before a regional import; it does not assume that an unqualified ASIN is US.
   It submits the regional external ID through `upsert_book` with the run
@@ -217,7 +224,8 @@ Audnex requests as before this step.
 The previous Step 5 implementation can supply this PR, but it must be rebased
 onto current `develop` and narrowed to ISBN normalization, counterpart search,
 and reading-format behavior. It must not reintroduce an ASIN fallback or
-silently modify the later Audible matching. The PR is useful immediately for
+silently modify the later Audible matching. An ebook's `editions.asin`
+match stays ahead of its ISBN match. The PR is useful immediately for
 ISBN-only and ebook items; no later step is needed for those matches to work.
 
 ### Step 5: durable association and read-only Audible matching
@@ -294,6 +302,12 @@ clause matched. Split it so a mapping match is distinguishable from the
 `editions.asin` fallback. A verified mapping match is saved as an
 association. An absence is not proof that the book is absent; continue to
 ISBN and title/author candidate discovery as appropriate.
+
+The Audible mapping lookup applies only to audiobooks. For an ebook, the
+split keeps today's order and results: an `editions.asin` match on an
+ebook-format edition is tried before ISBN and is a real match, not a legacy
+fallback. It is not saved as an association in this step, like an ISBN
+match; it is found again on each processed sync.
 
 `SearchBookByASIN` has callers besides sync matching. `GetEditionByASIN`
 wraps it, and the edition creator's duplicate check calls that. The mismatch
@@ -490,9 +504,10 @@ Hardcover book or edition:
 - `GetEditionByASIN` and the edition creator's duplicate check, for
   audiobooks.
 
-Ebook retail-ASIN behavior is unchanged. Re-audit the `SearchBookByASIN` and
+Ebook `editions.asin` matching stays, ahead of ISBN, and so does the ebook
+creator's ASIN duplicate check. Re-audit the `SearchBookByASIN` and
 `GetEditionByASIN` callers so none still reaches `editions.asin` for an
-audiobook.
+audiobook and every ebook caller still does.
 
 Items whose only link was `editions.asin` become reviewable on their next
 processed sync. When title/author search finds the book, they are
@@ -517,7 +532,8 @@ now. Existing associations and exact mapping matches are unaffected.
 Acceptance: a processed audiobook whose only Hardcover link is `editions.asin`
 is `needs_review` or `not_found`, not matched; the mismatch export attaches no
 `editions.asin`-only book; exact mapping, association, and ISBN matches are
-unchanged; ebook retail-ASIN behavior is unchanged.
+unchanged; an ebook with a matching `editions.asin` still matches by ASIN
+before ISBN.
 
 ## PR and branch handling
 
@@ -741,6 +757,9 @@ require the owner's instruction.
   `editions.asin` fallback. Accept agreeing results of audiobook format;
   leave conflicts reviewable. Do not query a bare-ASIN mapping. Save verified
   mapping matches as associations.
+- [ ] Keep ebook matching by `editions.asin` on an ebook-format edition ahead
+  of ISBN; query Audible mappings only for audiobooks. Test an ebook whose
+  ASIN and ISBN point to different editions.
 - [ ] Audit every production `SearchBookByASIN` caller, including
   `GetEditionByASIN`, the edition creator's duplicate check, and the mismatch
   export's book lookup; keep their current results and test them.
@@ -883,7 +902,8 @@ require the owner's instruction.
 - [ ] Test an `editions.asin`-only audiobook that title/author finds
   (`needs_review`) and one it does not (`not_found`), the mismatch export for
   such a book, an unchanged already-synced book that incremental sync skips,
-  exact mapping, association, ISBN, and ebook retail-ASIN paths.
+  exact mapping, association, ISBN, and an ebook that matches by
+  `editions.asin` ahead of a conflicting ISBN.
 - [ ] Document the change, both resolution paths, the unchanged-book skip,
   and forget-match as the way to rematch now in README and `MIGRATION.md`;
   add one CHANGELOG bullet, and complete the shared validation and PR gates.
