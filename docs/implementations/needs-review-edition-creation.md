@@ -297,6 +297,23 @@ capability map permits `upsert_book` and `update_edition` under
 scopes); `write:catalog:map` is separate. Runtime authorization and read-back
 remain the source of truth for a given token.
 
+Hardcover staff also describe an ISBN import variant of `upsert_book` with
+`platform_id: 8` and the ISBN as `external_id`. Platform 8 is not returned
+by the live `platforms` catalogue, so treat it as an undocumented import
+source rather than a discoverable mapping platform. A live call with an
+existing Outland ISBN and the known book ID returned the existing physical
+edition immediately; `book_import_statuses` still reported `not_found` for
+that platform and ISBN. This confirms ISBN reuse, not creation of a new
+edition or reliable status polling for that source. It also shows why ISBN
+upsert cannot replace the Step 8 ebook insertion path without a format
+decision: the mutation accepts no requested reading format or edition
+metadata, and an ISBN may resolve to a physical edition. Keep
+`insert_edition` for the format-specific ebook create path. If an ISBN
+import path is added later, pass the confirmed book ID and accept its result
+only after verifying the returned book and reading format; do not treat an
+immediate ID or a `not_found` import status alone as proof of a suitable
+edition.
+
 Create refetches the ABS item and uses the run record's Hardcover book ID,
 never a client-supplied book ID. It handles a changed submitted Audible ASIN
 as an explicit user correction: retain both the original ABS source value and
@@ -667,6 +684,11 @@ require the owner's instruction.
    from `write:catalog:map`. Tokens without catalogue-write capability
    retain ordinary library-progress sync and receive a reviewable unresolved
    item when import is required.
+5. **ISBN import option:** staff guidance identifies virtual platform 8 for
+   ISBN imports. A live request reused an existing physical edition, so this
+   path is not a format-aware replacement for Step 8's ebook insertion.
+   Retain the current insertion path unless a future ISBN import flow can
+   verify book and format before reporting success.
 
 Sources: [Audnex API schema](https://github.com/laxamentumtech/audnexus/blob/develop/docs/index.html),
 [Hardcover capability map](https://github.com/hardcoverapp/hardcover-docs/blob/main/capability-scopes.json),
