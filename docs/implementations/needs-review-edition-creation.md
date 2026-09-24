@@ -320,7 +320,10 @@ confirmed no ebook with that ISBN was added. Another ISBN,
 `9781680680065`, had no direct edition match before import. Its no-`book_id`
 upsert returned null IDs, then import status `loaded` resolved to **Flybot**
 book `1931466`, audiobook edition `32083414` (format 2); no ebook was added.
-Step 8 supplies the confirmed run-record book ID for an unresolved ISBN or
+A later edition read showed no persisted ISBN despite the `loaded` import
+status. A test of `update_edition` on the authorized Outland audiobook returned
+no error when asked to change format 2 to 4, but read-back stayed at 2; a
+restore request and final read also showed 2. Step 8 supplies the confirmed run-record book ID for an unresolved ISBN or
 ASIN so an import is directed to the intended book, then verifies the returned
 book and format. The mutation cannot request ebook format: if the ISBN resolves
 to a physical edition or another book, leave it reviewable rather than report
@@ -705,7 +708,9 @@ require the owner's instruction.
    instead reused a physical edition on another Outland book and created no
    ebook. ISBN `9781680680065`, absent from a direct ISBN lookup, loaded an
    existing **Flybot** audiobook after asynchronous import and created no
-   ebook. Step 8 uses `upsert_book` for both formats, without edition metadata
+   ebook; later reads showed no persisted ISBN on that edition. An ordinary
+   token's `update_edition` format change also returned success without a
+   persisted change. Step 8 uses `upsert_book` for both formats, without edition metadata
    fields. An unresolved identifier is imported with the
    confirmed book ID; every returned book and format is checked. A physical
    ISBN result or missing ISBN remains reviewable.

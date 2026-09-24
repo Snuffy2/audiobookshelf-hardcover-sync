@@ -283,11 +283,21 @@ use this mutation to specify ebook format or edition metadata.
 ISBN `9781680680065` was absent from a direct `editions.isbn_13` lookup before
 a no-`book_id` upsert. The mutation returned null book and edition IDs without
 errors; `book_import_statuses` subsequently reported `loaded`, book `1931466`,
-edition `32083414`. A fresh read found ISBN `9781680680065` on that existing
-**Flybot** audiobook edition (reading format 2), with no ebook edition for the
-ISBN. A pre-import ISBN lookup miss is therefore insufficient evidence that
-`upsert_book` will create a new ebook: asynchronous resolution can load an
-existing edition of another format.
+edition `32083414`. An initial read briefly showed the ISBN on that
+**Flybot** audiobook edition (reading format 2), but later reads by edition ID
+and ISBN showed its `isbn_13` as null and found no edition with that ISBN.
+The import-status alias remained `loaded` to the audiobook. Do not infer that
+ISBN metadata persisted from one post-import read. A pre-import ISBN lookup
+miss is insufficient evidence that `upsert_book` will create a new ebook:
+asynchronous resolution can load an existing edition of another format.
+
+The live `EditionInput.dto` schema accepts `reading_format_id`. On the
+previously authorized Outland audiobook edition `33340601`, an ordinary full
+API token submitted format 4 to `update_edition`; the mutation returned the
+edition ID with no errors, but an immediate fresh read still showed format 2.
+A restore request for format 2 was made, and final read confirmed format 2.
+This does not establish that every credential is unable to edit format; it
+shows that the tested API response is not evidence of a persisted change.
 
 ## Evidence sources
 
