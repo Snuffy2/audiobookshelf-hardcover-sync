@@ -264,9 +264,9 @@ Switch audiobook matching away from `edition.asin` in this PR. Do not query it
 as a fallback or duplicate guard. A title already represented only by a
 legacy `edition.asin` may receive another edition with a correct Audible
 mapping; that is accepted. A missing permission, external lookup failure, or
-poll timeout must not leave a partial local success record or make the whole
-sync fail. Existing library progress and ownership rules continue to use the
-normal sync path.
+poll timeout must not trigger `insert_edition` for an audiobook, leave a partial
+local success record, or make the whole sync fail. Existing library progress
+and ownership rules continue to use the normal sync path.
 
 Acceptance: when Hardcover returns an existing edition as `loaded` but keeps
 the regional alias absent, the next sync uses the durable association and
@@ -282,13 +282,20 @@ unchanged. Split its capability route, authorization, create-time name
 resolution, request validation, in-flight guard, and tests into reviewable
 Step 7 and Step 8 diffs. The application create endpoint uses regional
 `upsert_book` (platform 32) for audiobooks and `insert_edition` for ebooks.
+There is no audiobook `insert_edition` fallback after a missing region,
+permission denial, import failure, timeout, or identity conflict: the item
+remains reviewable.
+
 The ebook insertion supplies the confirmed book ID and edition metadata,
 including `dto.reading_format_id: 4` (`2` is audiobook). The GraphQL input
 permits this value, but an ordinary-token ebook insertion and read-back remain
-a Step 8 verification gate. The current checkout's `edition.Creator` still hardcodes audiobook format in its insertion payload;
-Step 8 must implement or adapt an ebook path and verify its result. Existing
-CLI callers are not automatically changed by this plan. Keep book and
-reading-format checks for both formats.
+a Step 8 verification gate. The current checkout's `edition.Creator` still
+hardcodes audiobook format in its insertion payload;
+Step 8 must implement or adapt an ebook path and verify its result. The
+standalone `cmd/edition` CLI currently calls the audiobook
+`edition.Creator`/`insert_edition` path; this plan does not route the new sync
+or create endpoint through that CLI. Existing CLI behavior is a separate
+migration decision. Keep book and reading-format checks for both formats.
 
 The live test with an ordinary full API token successfully called `upsert_book`
 for a known book and regional Audible ASIN; import status became `created`
@@ -638,8 +645,8 @@ require the owner's instruction.
   insert and read back an ebook with `dto.reading_format_id: 4` before
   advertising that path as available.
 - [ ] Route Audible imports through the regional resolver without an
-  `edition.asin` write or duplicate guard; insert ebooks with
-  `dto.reading_format_id: 4` and the supported draft metadata. Retain the original
+  `edition.asin` write, duplicate guard, or `insert_edition` fallback; insert
+  ebooks with `dto.reading_format_id: 4` and the supported draft metadata. Retain the original
   ABS and submitted Audible identifiers in the durable association. Derive
   the audiobook preview date from the response for the region that resolves
   the submitted ASIN, with the Step 3 ABS date fallback. Verify the returned
