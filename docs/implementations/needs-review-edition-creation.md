@@ -37,10 +37,12 @@ The user-approved identifier rules for the completed flow (after Step 6) are:
   import; do not assume that an unqualified ASIN is US. Conflicting or
   unresolvable regions remain reviewable.
 - For Audnex discovery, try the configured preferred region first (US when no
-  preference is set), then make a bounded sweep of other Audnex-supported
-  regions only on a true miss. Stop at the first response for the requested
-  ASIN. Use that response's region for the regional identifier and its
-  `releaseDate` for edition metadata; the preference is not an assertion that
+  preference is set), then sweep the remaining regions once in this fixed
+  order: US, CA, UK, AU, DE, FR, ES, IN, IT, JP. These are the ten regions in
+  Audnex's published `/books/{ASIN}` API schema; skip the preferred region
+  when it appears in the list, so there are at most ten requests. Stop at the
+  first response for the requested ASIN. Use that response's region for the
+  regional identifier and its `releaseDate` for edition metadata; the preference is not an assertion that
   every ABS ASIN belongs to that marketplace. Do not reject an ASIN hit merely
   because Audnex title, author, narrator, or edition details differ from ABS.
   Keep Hardcover book/edition identity checks separate from this lookup.
@@ -113,7 +115,7 @@ existing Step 4 and Step 5 branches implement the old ordering.
 |---|---|---|---|
 | 1 | ISBN and export foundations | `develop` | Merged |
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
-| 3 | Rework the read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Discover its region with preferred-first, bounded Audnex lookup and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown/ambiguous region. Expose only edit promises the eventual create path can honor. The endpoint still makes no Hardcover request and works by itself. | 2 | Existing draft branch and PR need revision; full rework is allowed |
+| 3 | Rework the read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Discover its region with preferred-first, bounded Audnex lookup and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown/ambiguous region. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint still makes no Hardcover request and works by itself. | 2 | Existing draft branch and PR need revision; full rework is allowed |
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
 | 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, shared preferred-first Audnex region discovery, and exact Audible `book_mappings` query. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. A discovery-blocking 429 is retryable per-book `failed`, not a catalogue miss. Keep the current legacy fallback for genuine misses during this additive step, without saving its result as a verified association. | 3, 4 | New work |
 | 6 | Add the bounded `upsert_book` fallback for a missing regional mapping, validate `loaded`/`created` IDs, and persist the resolution. Remove audiobook `editions.asin` matching and its duplicate guard in this same PR. A failure or missing write scope remains `needs_review`; normal sync stays usable. | 5 | New work |
@@ -133,10 +135,12 @@ must be reusable by the Step 5 and Step 6 sync paths rather than reimplemented
 inside the draft.
 
 The configured Audnex region is the first lookup preference, defaulting to US
-when unset. If the requested ASIN is absent there, probe the other supported
-Audnex regions in a fixed, bounded order and stop at the first response for
-that ASIN. Do not make title/author/narrator/ISBN/runtime similarity a hard
-gate for region discovery; these are not the Hardcover identity checks. Use
+when unset. If the requested ASIN is absent there, probe the remaining regions
+once in this order: US, CA, UK, AU, DE, FR, ES, IN, IT, JP. Skip the preferred
+region in that list, cap the sweep at ten requests, and stop at the first
+response for that ASIN. Normalize a configured preference to lowercase; an
+unsupported value warns and uses US as the lookup preference. Do not make
+title/author/narrator/ISBN/runtime similarity a hard gate for region discovery; these are not the Hardcover identity checks. Use
 `releaseDate` from the successful response, regardless of whether it came
 from the preferred or a fallback region. If that response has no release date,
 fall back to the existing ABS published date/year precedence. If no supported
@@ -145,18 +149,21 @@ fallback; do not automatically import a regional Audible identifier. A
 transport error or rate limit is not evidence that the ASIN is absent; report
 the lookup as temporarily unavailable rather than turning that failure into
 a guessed region. In the read-only draft, surface this as a retryable warning,
-not as a sync outcome; use the ABS date fallback for the preview. Align config
-validation with the verified Audnex-supported region list before enabling the
-sweep; a region seen only in Hardcover mappings is not thereby a supported
-Audnex lookup region.
+not as a sync outcome; use the ABS date fallback for the preview. Align
+config validation, environment values, and documentation with this ten-region Audnex list before enabling the sweep; a region seen only in
+Hardcover mappings is not thereby a supported Audnex lookup region.
 
 The existing draft PR is not protected from redesign. Reuse its ABS decoding,
 metadata preparation, eligibility, and tests where they still fit. Remove or
 change fields and assertions that present an audiobook ASIN as a future
-`BookDtoInput.asin`. A draft may offer an editable Audible identifier only if
-Step 8 can apply that edit without silently discarding it. Existing ISBN,
-reading-format, date, author/narrator, language-warning, and dry-run behavior
-remain within the draft's read-only scope.
+`BookDtoInput.asin`. For audiobooks, offer a correction to the submitted
+regional Audible identifier (ASIN and region), which Step 8 passes to
+`upsert_book`; show title, subtitle, date, edition information, ISBNs, and
+other imported metadata as read-only preview. Do not accept audiobook metadata
+edits that the import cannot save. Ebook insertion retains its separately
+supported editable fields. Existing reading-format, date, author/narrator,
+language-warning, and dry-run behavior remain within the draft's read-only
+scope.
 
 Acceptance: the draft works with a bare ABS ASIN, reports a discovered region
 when one is supported by evidence, reports uncertainty otherwise, and issues
@@ -175,10 +182,19 @@ ISBN-only and ebook items; no later step is needed for those matches to work.
 
 ### Step 5: durable association and read-only Audible matching
 
-Use the application's persistent profile data, rather than the cache
-directory, for a versioned association. The record needs the profile and ABS
-item identity, the ABS source ASIN, the resolved regional external ID, the
-Hardcover book and edition IDs, and resolution provenance. A changed source
+Extend the existing versioned `sync.state_file` JSON store, rather than the
+cache directory or the web-only database. The one-time CLI already uses this
+file; the web service derives a separate state path per profile, and deployment
+examples mount it in persistent `/data` or `/app/data`. Keep the association
+and incremental checkpoint in the same state-file transaction. The record
+needs the ABS item identity, the ABS source ASIN, the resolved regional
+external ID, the Hardcover book and edition IDs, and resolution provenance;
+the profile is identified by the state-file path. Bump the schema version and
+read existing v3 checkpoint files without losing their books. Serialize
+read-modify-write operations with a per-file lock, reload under that lock,
+reject stale overwrites, and retain the existing atomic replace/directory-sync
+durability. Coordinate forget-match with in-flight profile sync so a later
+stale save cannot recreate the forgotten association. A changed source
 identifier cannot reuse a stale association. Add an authenticated,
 profile-authorized API action to forget one ABS item's association, clear its
 incremental checkpoint, and make the next sync perform ordinary matching
@@ -266,15 +282,20 @@ are not automatically changed by this plan; Step 8 must explicitly route the
 new application audiobook path around any legacy `edition.asin` write or
 duplicate check. ISBN and ebook behavior remains format-aware.
 
-Before Step 3's edit promises and Step 8's POST contract are finalized, run a
-focused live test on a disposable catalogue record with ordinary API
-credentials: establish the required `upsert_book` scope and whether the token
-can update a `loaded` or `created` edition with user-edited metadata, then
-read it back. The existing `insert_edition` scope probe proves only insertion
-capability; it must not be reported as proof of Audible import or update
-capability. If edits cannot be applied, revise the audiobook draft and create
-contract explicitly rather than accepting fields and ignoring them. This is
-an open design gate, not an assumed API feature.
+The live test with an ordinary full API token successfully called `upsert_book`
+for a known book and regional Audible ASIN; import status became `created`
+and a subsequent read found the new edition and mapping. The same token's
+`update_edition` calls returned an ID and no errors for both a populated
+title and an empty subtitle, but fresh reads retained the original title and
+null subtitle. A success response is therefore not proof that submitted
+metadata persisted. Step 3 and Step 8 must not promise audiobook metadata
+edits. The audiobook correction is the regional identifier submitted to
+`upsert_book`; its returned edition metadata is preview-only. Ebook insertion
+uses the separately tested `insert_edition` path. Hardcover's published
+capability map permits `upsert_book` and `update_edition` under
+`write:catalog:append` (or the broader `write:catalog:edit`/`write:catalog`
+scopes); `write:catalog:map` is separate. Runtime authorization and read-back
+remain the source of truth for a given token.
 
 Create refetches the ABS item and uses the run record's Hardcover book ID,
 never a client-supplied book ID. It handles a changed submitted Audible ASIN
@@ -283,10 +304,9 @@ the regional identifier submitted for import in the local association. A
 create-time lookup of that submitted ASIN uses the same preferred-first
 discovery rule; when release date is server-derived, its baseline comes from
 the response for the region that actually resolves that ASIN, not a separate
-lookup forced to the configured region. A supported, explicit user date edit
-still takes precedence over that baseline. A
-create response must distinguish an edition already created remotely from a
-failure to save the local association, so retry cannot quietly create an
+lookup forced to the configured region. Audiobook date is not an editable
+request field. A create response must distinguish an edition already
+created remotely from a failure to save the local association, so retry cannot quietly create an
 unrelated second edition. Dry run makes no Hardcover mutation and saves no
 association. Step 8's POST must be usable with curl and findable by the next
 normal sync before Step 9 exists.
@@ -466,8 +486,9 @@ require the owner's instruction.
 
 - [x] The existing branch has an ABS/Audnex draft endpoint with no Hardcover
   call; its useful decoding and local metadata tests can be retained.
-- [ ] Establish the ordinary-token Audible import/update behavior needed to
-  decide which audiobook fields the draft may truthfully call editable.
+- [x] Establish ordinary-token Audible import/update behavior: import
+  succeeded, but attempted title and subtitle edits did not persist. Limit
+  audiobook correction to the submitted regional identifier.
 - [ ] Rework the draft schema and crosswalk R4 so it preserves the bare ABS
   source ASIN, optional established region, and uncertainty without implying
   an `edition.asin` write or silently choosing US.
@@ -480,8 +501,9 @@ require the owner's instruction.
   or no region resolves. Test preferred hit, fallback-region hit, no result,
   transient error (including 429 and a retryable draft warning), and malformed
   or mismatched returned ASIN.
-- [ ] Reconcile six-region config validation with the verified Audnex lookup
-  set; do not include a Hardcover-only mapping region without Audnex support.
+- [ ] Expand six-region config validation to the verified ten-region Audnex
+  lookup set and normalize the preferred region; do not include a
+  Hardcover-only mapping region without Audnex support.
 - [ ] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
   language and date warnings, eligibility, cancellation, and zero Hardcover
   requests at the HTTP boundary.
@@ -502,9 +524,9 @@ require the owner's instruction.
 
 ### Step 5 — durable association and exact Audible mapping
 
-- [ ] Choose and document the profile-scoped durable store and versioned
-  record, including ABS item/source ASIN, regional ID, Hardcover IDs, and
-  provenance; cover single-user and multiuser persistence.
+- [x] Choose the existing versioned sync state file for CLI and per-profile
+  web persistence; require a version bump, coordinated atomic association
+  and checkpoint updates, and safe concurrent writes in Step 5.
 - [ ] Read a valid local association first; invalidate it after a changed
   source identifier or definitively unavailable target. Do not make a missing
   regional mapping invalidate an otherwise confirmed association.
@@ -539,8 +561,9 @@ require the owner's instruction.
 
 ### Step 6 — regional import and matching switchover
 
-- [ ] Verify the ordinary API-token scope for `upsert_book` and keep normal
-  library sync usable without it.
+- [x] Verify the published `upsert_book` scope (`write:catalog:append` or
+  broader catalogue-write scope) and a successful ordinary-token live import.
+  Keep normal library sync usable without catalogue-write scope.
 - [ ] Require an unambiguous candidate book and established region; bound
   polling, handle `failed`/`loaded`/`created`, and verify returned book,
   edition, and reading format before saving.
@@ -558,9 +581,9 @@ require the owner's instruction.
 
 - [ ] Split the existing create branch so capability reporting is a standalone
   route, with authorization matching the eventual create operation.
-- [ ] Distinguish proven `insert_edition` capability from verified Audible
-  import and metadata-update capability; report unknown or failed probes as
-  unverified rather than allowed.
+- [ ] Distinguish `insert_edition` capability from Audible import capability;
+  never infer metadata editability from a successful `update_edition` response
+  without a read-back. Report unknown or failed probes as unverified.
 - [ ] Test no-mutation probes, scope denial, token change, transient errors,
   profile access, and dry run at the HTTP/client boundary.
 - [ ] Document the route and its truthful limits in README/OpenAPI, add one
@@ -568,8 +591,9 @@ require the owner's instruction.
 
 ### Step 8 — create endpoint
 
-- [ ] Set the request's editable fields from the Step 3 live capability result;
-  reject unsupported edits rather than accepting and dropping them.
+- [ ] Accept only a corrected regional Audible identifier for audiobook
+  imports; reject audiobook metadata edits rather than accepting and dropping
+  them. Keep ebook insertion edits tied to its tested creator path.
 - [ ] Refetch the ABS item, use the run record's book ID, derive non-editable
   fields server-side, and resolve required/optional people and publisher
   metadata only after confirmation.
@@ -609,7 +633,8 @@ require the owner's instruction.
   normal matching priority and may find the same edition again; do not imply
   any Hardcover record is deleted or another edition is forced.
 - [ ] Render the draft's source identifier, established/uncertain region,
-  warnings, and only supported editable fields; escape ABS-provided strings.
+  warnings, and only supported editable fields (regional identifier
+  correction for audiobooks); escape ABS-provided strings.
 - [ ] Confirm through the create POST, display reused/created and error
   outcomes, and make resync an explicit option except in dry run.
 - [ ] Test capability denial, preview, edits, confirmation, transient errors,
@@ -618,26 +643,31 @@ require the owner's instruction.
 - [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared validation and PR gates.
 
-## Remaining decisions and evidence gates
+## Resolved decisions and evidence
 
-1. **Audible edit capability:** test `upsert_book` permission and whether
-   ordinary credentials can update and read back metadata on an imported
-   edition. Set the Step 3 and Step 8 editable fields from that result.
-2. **Region discovery implementation:** verify the Audnex-supported
-   marketplace set, reconcile the current six-region config validation, and
-   define a fixed bounded sweep order after the configured preference (US
-   when unset). Stop at the first response for the requested ASIN; do not
-   continue probing just to compare metadata across regions. A true miss
-   leaves the region unknown, while conflict with independent Hardcover
-   evidence remains reviewable. The matched response supplies `releaseDate`
-   when present, otherwise use the ABS date fallback.
-3. **Durable-store location:** select the existing persistence boundary that
-   works in single-user and multiuser modes, survives restarts/backups, and
-   permits profile-scoped correction and safe concurrent writes.
-4. **Catalogue-write scope:** verify the `upsert_book` authorization needed by
-   ordinary API credentials. The absence of that scope must not become a new
-   requirement for normal library-progress sync.
+1. **Audible edit capability:** the ordinary full API token imported an
+   Outland edition with `B07NHP9F58:uk` as `created`. A populated title and
+   empty subtitle each produced a successful `update_edition` response but
+   did not change on a fresh read. The original title and null subtitle
+   remain intact. Audiobook metadata is therefore preview-only in Steps 3
+   and 8; only the submitted regional Audible identifier is correctable.
+2. **Region discovery:** Audnex's published `/books/{ASIN}` schema accepts
+   AU, CA, DE, ES, FR, IN, IT, JP, US, and UK. Use the preferred region
+   first, then US, CA, UK, AU, DE, FR, ES, IN, IT, JP without repeating it.
+   A first matching response wins; a complete miss leaves the region unknown,
+   and independent Hardcover identity conflicts remain reviewable. Use its
+   `releaseDate` or the existing ABS date fallback.
+3. **Durable store:** extend the versioned `sync.state_file` JSON store.
+   The CLI uses it directly; web profiles each get a separate path. Step 5
+   must serialize, reload, and atomically save association plus checkpoint
+   under a per-file lock, and coordinate with active syncs.
+4. **Catalogue-write scope:** Hardcover's published capabilities permit
+   `upsert_book` with `write:catalog:append` or broader catalogue-write
+   scopes; the ordinary full token completed a live import. This is separate
+   from `write:catalog:map`. Tokens without catalogue-write capability
+   retain ordinary library-progress sync and receive a reviewable unresolved
+   item when import is required.
 
-These gates may refine fields and PR boundaries. They do not change the
-confirmed separation between Audible mappings, local resolution, and the
-legacy `editions.asin` field.
+Sources: [Audnex API schema](https://github.com/laxamentumtech/audnexus/blob/develop/docs/index.html),
+[Hardcover capability map](https://github.com/hardcoverapp/hardcover-docs/blob/main/capability-scopes.json),
+and the [Audible mapping findings](../hardcover-audible-mapping-findings.md).

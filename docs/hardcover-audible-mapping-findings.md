@@ -234,6 +234,33 @@ the available Hardcover identifiers and matching paths.
   `upsert_book` result of `loaded`; the tested mapping remained absent through
   the observation window.
 
+## 14. Ordinary-token import and post-import edit test
+
+A later live test used an ordinary full API token, a known Hardcover book, and
+a regional Audible ASIN absent from `book_mappings`. `upsert_book` was accepted;
+`book_import_statuses` returned `created` with the expected book ID and a new
+edition ID. A fresh catalogue read found the new edition and its exact regional
+Audible mapping.
+
+On that imported edition, `update_edition` returned an edition ID and no
+errors when asked to replace a populated title. A fresh read still showed the
+original title. Repeating the test with a previously null subtitle also
+returned an ID and no errors, but a fresh read still showed null. Restore calls
+were made and the final read confirmed the original title and null subtitle.
+The test did not establish that *every* metadata field is immutable; it did
+establish that mutation success alone cannot support a promise to save draft
+metadata edits. The application should treat imported audiobook metadata as
+preview-only and allow only the regional identifier correction that is actually
+submitted to `upsert_book`.
+
+Hardcover's published capability map lists `write:catalog:append`,
+`write:catalog:edit`, or `write:catalog` for `upsert_book` and
+`update_edition`. The ordinary append scope is described as filling empty
+fields; the tested token's exact granted scopes were not independently read.
+`write:catalog:map` is a separate capability for direct mapping mutations.
+This catalogue-write capability is needed only for the import/create path, not
+normal library-progress sync.
+
 ## Evidence sources
 
 - Audiobookshelf models and the checked-in Audiobookshelf API schema in this
@@ -243,5 +270,7 @@ the available Hardcover identifiers and matching paths.
   mapping actions, and New Book import status handling.
 - Live Audnex marketplace lookups.
 - Direct API tests against existing and absent Hardcover catalogue records.
+- A later ordinary-token import, metadata update, read-back, and restore test.
+- [Hardcover's published capability scope map](https://github.com/hardcoverapp/hardcover-docs/blob/main/capability-scopes.json).
 - Manual reproduction through the ordinary Hardcover webpage.
 - The application's current ASIN matching and persistent-cache code.
