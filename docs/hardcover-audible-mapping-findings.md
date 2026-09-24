@@ -280,6 +280,15 @@ not establish how an absent ISBN is imported. An application create flow must
 verify returned book and reading format before claiming success, and cannot
 use this mutation to specify ebook format or edition metadata.
 
+ISBN `9781680680065` was absent from a direct `editions.isbn_13` lookup before
+a no-`book_id` upsert. The mutation returned null book and edition IDs without
+errors; `book_import_statuses` subsequently reported `loaded`, book `1931466`,
+edition `32083414`. A fresh read found ISBN `9781680680065` on that existing
+**Flybot** audiobook edition (reading format 2), with no ebook edition for the
+ISBN. A pre-import ISBN lookup miss is therefore insufficient evidence that
+`upsert_book` will create a new ebook: asynchronous resolution can load an
+existing edition of another format.
+
 ## Evidence sources
 
 - Audiobookshelf models and the checked-in Audiobookshelf API schema in this

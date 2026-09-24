@@ -308,15 +308,20 @@ existing Outland ISBN and the known book ID returned the existing physical
 edition immediately; `book_import_statuses` still reported `not_found` for
 that platform and ISBN. This confirms ISBN reuse, not creation of a new
 edition or reliable status polling for that source. A second live request
-omitted `book_id` and returned Outland's existing ebook edition for ISBN `9781507000885` (format 4); the same
+omitted `book_id` and returned Outland's existing ebook edition for ISBN
+`9781507000885` (format 4); the same
 no-`book_id` form returned its existing audiobook for `B07NHP9F58:uk`
 (format 2). Omitting `book_id` is valid for these existing identifiers, but
 these calls do not establish where an absent identifier will be imported.
 A requested no-`book_id` import of ISBN `9781680681420` returned existing
 physical edition `33271167` (format 1) on a different Outland book
 (`2933828`), not a new ebook on the intended book (`461193`). A fresh read
-confirmed no ebook with that ISBN was added. Step 8 supplies the confirmed
-run-record book ID for an unresolved ISBN or ASIN so an import is directed to the intended book, then verifies the returned
+confirmed no ebook with that ISBN was added. Another ISBN,
+`9781680680065`, had no direct edition match before import. Its no-`book_id`
+upsert returned null IDs, then import status `loaded` resolved to **Flybot**
+book `1931466`, audiobook edition `32083414` (format 2); no ebook was added.
+Step 8 supplies the confirmed run-record book ID for an unresolved ISBN or
+ASIN so an import is directed to the intended book, then verifies the returned
 book and format. The mutation cannot request ebook format: if the ISBN resolves
 to a physical edition or another book, leave it reviewable rather than report
 a successful ebook create. Do not treat an immediate ID or a `not_found` ISBN
@@ -698,6 +703,8 @@ require the owner's instruction.
    for ISBN `9781507000885` and audiobook edition for regional Audible ASIN
    `B07NHP9F58:uk`. A no-`book_id` request for ISBN `9781680681420`
    instead reused a physical edition on another Outland book and created no
+   ebook. ISBN `9781680680065`, absent from a direct ISBN lookup, loaded an
+   existing **Flybot** audiobook after asynchronous import and created no
    ebook. Step 8 uses `upsert_book` for both formats, without edition metadata
    fields. An unresolved identifier is imported with the
    confirmed book ID; every returned book and format is checked. A physical
