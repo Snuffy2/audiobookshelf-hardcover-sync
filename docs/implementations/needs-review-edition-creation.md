@@ -60,8 +60,9 @@ The user-approved identifier rules for the completed flow (after Step 10) are:
   It submits the regional external ID through `upsert_book` with the run
   record's confirmed book ID. A validated `loaded` result is a successful
   resolution even if Hardcover never stores that alias; a validated `created`
-  result identifies the new edition. The create API persists either result
-  locally only after its book and edition IDs are confirmed.
+  result identifies the new edition. The create API, and `edition create`
+  when given an ABS item ID, persist either result locally only after its
+  book and edition IDs are confirmed.
 - Do not call `insert_book_mapping`. Ordinary API credentials cannot be
   assumed to have `write:catalog:map`, even though ordinary web users may add
   Audible identifiers through Hardcover's webpage.
@@ -154,7 +155,7 @@ existing Step 4 and Step 5 branches implement the old ordering.
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
 | 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 11-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | New work |
 | 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Extract from the old Step 4 branch and revise |
-| 7 | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and a bounded regional `upsert_book` resolver for audiobooks. Migrate standalone `edition create` to the same resolver and remove its audiobook `insert_edition` route. Validate returned book and format; the API saves a local association before reporting success. | 3, 5, 6 | Rebuild from the old Step 4 branch |
+| 7 | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and a bounded regional `upsert_book` resolver for audiobooks. Migrate standalone `edition create` to the same resolver and remove its audiobook `insert_edition` route. Validate returned book and format; the API, and the CLI when given an ABS item ID, save a local association before reporting success. Add the cross-process state-file lock. | 3, 5, 6 | Rebuild from the old Step 4 branch |
 | 8 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7 | Not started |
 | 9 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. | 8 | Not started |
 | 10 | Stop matching ABS books to Hardcover by `editions.asin`: remove the sync fallback and the audiobook `editions.asin` duplicate guard. Items that relied on it become `needs_review`, which the Step 7–9 create flow resolves. | 9 | Not started |
@@ -345,6 +346,39 @@ working; it documents which fields an audiobook import uses. Ebook creation
 keeps using the supplied metadata. Keep book and reading-format checks for
 both formats.
 
+The CLI can also save the local association, so a CLI-only user whose
+audiobook import returns `loaded` without a stored mapping is not left in
+`needs_review`. `edition create` accepts an ABS item ID from a flag or from an
+`abs_item_id` field that the mismatch export adds (an additive field; older
+export files without it still work but save nothing). When an item ID is
+given, the CLI:
+
+- fetches that item from the configured Audiobookshelf server before any
+  Hardcover mutation, refuses if it is missing or its format differs from the
+  request, and records the item's own source ASIN; a different submitted ASIN
+  is recorded as the user's correction, as in the API;
+- writes to the configured `sync.state_file`, or to an explicit
+  `--state-file` path, using the same Step 5 record, version, and atomic save;
+- saves the association, for both `loaded` and `created` results and for
+  ebooks, only after the returned book, edition, and reading format are
+  verified;
+- refuses before any Hardcover mutation, with a clear non-zero exit, while a
+  sync holds that state file, and holds the state-file lock itself until the
+  association is saved;
+- reports a remote success followed by a failed local save as a distinct
+  outcome, so a retry is safe;
+- saves nothing in dry run.
+
+Without an item ID, the CLI reports the verified IDs and status and saves
+nothing.
+
+The in-process active-run guard from Step 5 does not protect against a
+separate CLI process. This step adds a cross-process lock on the state file:
+every sync run (web profile or one-shot CLI) holds it for the run, and the
+create API, forget-match API, and `edition create` take it before writing.
+The lock must work on every supported platform and recover from a stale lock
+left by a crashed process.
+
 The live test with an ordinary full API token successfully called `upsert_book`
 for a known book and regional Audible ASIN; import status became `created`
 and a subsequent read found the new edition and mapping. The same token's
@@ -489,7 +523,7 @@ non-default `develop`.
 
 6. Create capability: Report whether the profile can insert ebook editions or import regional Audible identifiers before offering the applicable create action.
 
-7. Edition create endpoint and CLI: On user request, insert format-aware ebook editions or import regional Audible identifiers, validate book and format, save the API's confirmed local association, and migrate standalone audiobook creation to the regional importer.
+7. Edition create endpoint and CLI: On user request, insert format-aware ebook editions or import regional Audible identifiers, validate book and format, save the confirmed local association from the API or from the CLI when given an ABS item ID, and migrate standalone audiobook creation to the regional importer.
 
 8. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status without overlapping a full sync.
 
@@ -537,8 +571,8 @@ evidence:
 - **Step 7 — Added:** `**Create editions from needs-review items (API and CLI)**:
   On request, create or reuse an edition through format-aware ebook insertion
   or regional Audible import, migrate the standalone audiobook CLI to the
-  regional importer, and validate book and format; dry runs make no external
-  change. By @Snuffy2`.
+  regional importer, let the CLI save the match for an ABS item, and validate
+  book and format; dry runs make no external change. By @Snuffy2`.
 - **Step 8 — Added:** `**Immediate one-book resync**: Optionally sync read
   status after edition creation while excluding an overlapping full sync. By
   @Snuffy2`.
@@ -691,8 +725,8 @@ require the owner's instruction.
 - [ ] Add the bounded regional `upsert_book` resolver: require the run
   record's book ID and an established or user-supplied region, bound polling,
   handle `failed`/`loaded`/`created`, and verify returned book, edition, and
-  reading format. Callable by the API and CLI; only the API saves an
-  association.
+  reading format. Callable by the API and CLI; each saves an association
+  only when it has an ABS item.
 - [ ] Accept only a corrected regional Audible identifier for audiobook
   imports through the API; reject audiobook metadata edits rather than
   accepting and dropping them. Keep ebook edits tied to fields the
@@ -720,16 +754,20 @@ require the owner's instruction.
   audiobook insertion so no production caller can still use `insert_edition`
   for an audiobook.
 - [ ] Update `edition prepopulate`, help, and `cmd/edition/README.md` to
-  describe which fields an audiobook import reads. The CLI has no ABS item or
-  profile association to save; report the verified IDs and status, and
-  document that normal sync finds a `created` edition by its mapping, while a
-  `loaded` result without a stored mapping needs the API to save an
-  association.
-- [ ] **Open decision:** a CLI-only user (no web service) whose import
-  returns `loaded` without a stored mapping has no way to save an
-  association, so that item stays `needs_review` after Step 10. Decide
-  whether `edition create` accepts an ABS item ID and uses the configured
-  `sync.state_file` to save one, or document the limitation.
+  describe which fields an audiobook import reads, the ABS item ID option,
+  and the state-file flag. Document that without an item ID a `loaded`
+  result without a stored mapping stays unresolved for sync.
+- [x] Decide how a CLI-only user saves a `loaded` result: `edition create`
+  takes an ABS item ID and saves the association to the state file.
+- [ ] Accept an ABS item ID by flag or the export's new `abs_item_id` field.
+  Fetch and verify the item before any mutation, then save the verified
+  association to `sync.state_file` or `--state-file` for `loaded` and
+  `created` audiobooks and inserted ebooks; distinguish a failed local save
+  after remote success; save nothing in dry run or without an item ID.
+- [ ] Add the cross-process state-file lock. Sync runs hold it for the run;
+  the create API, forget-match API, and `edition create` take it before
+  writing and refuse while a sync holds it. Recover from a stale lock and
+  support every platform the state package supports.
 - [ ] Refuse the create POST with 409 while the profile is syncing, before any
   Hardcover mutation, and hold the profile's run guard until the association
   is saved.
@@ -740,8 +778,11 @@ require the owner's instruction.
   invalid fields, missing author, optional misses, missing scope, timeouts,
   double submit, shutdown, existing edition, ISBN conflicts, and dry run at
   the HTTP boundary. Test CLI `loaded`/`created`, unknown region, an existing
-  mismatch-export file, wrong book/format, missing scope, import failure,
-  timeout, prepopulate, and dry run at its command boundary; assert no
+  mismatch-export file with and without `abs_item_id`, a missing or
+  mismatched ABS item, a state file locked by a running sync, a failed local
+  save, a saved association found by the next sync, wrong book/format,
+  missing scope, import failure, timeout, prepopulate, and dry run at its
+  command boundary; assert no
   audiobook `insert_edition` call and audit remaining production callers.
 - [ ] Update README/OpenAPI/crosswalk and the CLI documentation, add one
   CHANGELOG bullet, and complete the shared validation and PR gates before
@@ -811,15 +852,20 @@ require the owner's instruction.
    first ten. Exact mapping lookup uses all 11; region discovery uses the
    Audnex ten, preferred region first, and the first matching response wins.
 5. **Durable store:** extend the versioned `sync.state_file` JSON store.
-   The CLI uses it directly; web profiles each get a separate path. How
+   The CLI uses it directly; web profiles each get a separate path.
    Forget-match and create-API writes are refused with HTTP 409 while the
    profile is syncing, and hold the profile's run guard while they run.
-6. **Catalogue-write scope:** Hardcover's published capabilities permit
+   Step 7 adds a cross-process state-file lock so `edition create` can save
+   an association safely.
+6. **CLI association:** `edition create` accepts an ABS item ID and saves the
+   verified match to the state file, so a CLI-only user's `loaded` import is
+   found by later syncs.
+7. **Catalogue-write scope:** Hardcover's published capabilities permit
    `upsert_book` with `write:catalog:append` or broader catalogue-write
    scopes; the ordinary full token completed a live import. This is separate
    from `write:catalog:map`. Tokens without catalogue-write capability
    retain ordinary library-progress sync; only the create action fails.
-7. **ISBN import is not the ebook create path:** staff guidance identifies
+8. **ISBN import is not the ebook create path:** staff guidance identifies
    virtual platform 8 for ISBN imports. Live no-`book_id` requests reused
    Outland's ebook edition for ISBN `9781507000885` and audiobook edition for regional Audible ASIN
    `B07NHP9F58:uk`. A no-`book_id` request for ISBN `9781680681420`
