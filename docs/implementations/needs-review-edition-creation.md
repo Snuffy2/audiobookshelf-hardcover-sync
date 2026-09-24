@@ -70,6 +70,19 @@ mutates Hardcover nor persists an association that would skip a later real
 sync. No step may rely on a subsequent PR to make its newly shipped behavior
 safe.
 
+Distinguish an actual region miss from a transient Audnex failure. If a valid
+local association, exact Hardcover mapping, or other independently verified
+match has resolved the edition, an Audnex rate limit affects only optional
+release-date enrichment; normal sync continues with the ABS date fallback.
+Otherwise, when HTTP 429 or another transient Audnex error prevents required
+region discovery, stop the regional sweep. Other independent matching reads
+may still resolve the item; if none does, record that book as retryable
+`failed` with a specific reason. Do not mark it `not_found` or `needs_review`,
+import an unconfirmed regional ID, or persist state that would cause an
+unchanged incremental sync to skip retrying it. Other books in the run
+continue. A completed sweep with genuine misses is different: the unresolved
+region remains `needs_review`.
+
 Keep the existing Hardcover `Owned`-list ownership checks and Audiobookshelf
 finished-state behavior throughout the matching and resync changes.
 
@@ -87,7 +100,7 @@ existing Step 4 and Step 5 branches implement the old ordering.
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
 | 3 | Rework the read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Discover its region with preferred-first, bounded Audnex lookup and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown/ambiguous region. Expose only edit promises the eventual create path can honor. The endpoint still makes no Hardcover request and works by itself. | 2 | Existing draft branch and PR need revision; full rework is allowed |
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
-| 5 | Add the durable local association, read-first lookup, shared preferred-first Audnex region discovery, and exact Audible `book_mappings` query. Replace the positive 24-hour cache; persist only verified matches. Keep the current legacy fallback for misses during this additive step, without saving its result as a verified association. | 3, 4 | New work |
+| 5 | Add the durable local association, read-first lookup, shared preferred-first Audnex region discovery, and exact Audible `book_mappings` query. Replace the positive 24-hour cache; persist only verified matches. A discovery-blocking 429 is retryable per-book `failed`, not a catalogue miss. Keep the current legacy fallback for genuine misses during this additive step, without saving its result as a verified association. | 3, 4 | New work |
 | 6 | Add the bounded `upsert_book` fallback for a missing regional mapping, validate `loaded`/`created` IDs, and persist the resolution. Remove audiobook `editions.asin` matching and its duplicate guard in this same PR. A failure or missing write scope remains `needs_review`; normal sync stays usable. | 5 | New work |
 | 7 | Provide create eligibility and capability reporting, with separate truthful outcomes for edition insertion and Audible import where their permissions differ. Keep the route independently useful without exposing a create action that is not implemented. | 3, 6 | Extract from the old Step 4 branch and revise |
 | 8 | Add the create POST using the resolved identifier contract. ISBN/ebook insertion uses the applicable creator behavior; Audible import uses the regional path and saves a local association before reporting success. It works through the API without resync or UI. | 3, 6, 7 | Rebuild from the old Step 4 branch |
@@ -115,10 +128,12 @@ fall back to the existing ABS published date/year precedence. If no supported
 region resolves the ASIN, keep the region unknown and use the same ABS date
 fallback; do not automatically import a regional Audible identifier. A
 transport error or rate limit is not evidence that the ASIN is absent; report
-the lookup as unresolved rather than turning that failure into a guessed
-region. Align config validation with the verified Audnex-supported region
-list before enabling the sweep; a region seen only in Hardcover mappings is
-not thereby a supported Audnex lookup region.
+the lookup as temporarily unavailable rather than turning that failure into
+a guessed region. In the read-only draft, surface this as a retryable warning,
+not as a sync outcome; use the ABS date fallback for the preview. Align config
+validation with the verified Audnex-supported region list before enabling the
+sweep; a region seen only in Hardcover mappings is not thereby a supported
+Audnex lookup region.
 
 The existing draft PR is not protected from redesign. Reuse its ABS decoding,
 metadata preparation, eligibility, and tests where they still fit. Remove or
@@ -162,6 +177,13 @@ preferred-first, bounded, first-ASIN-hit lookup. Do not impose a strict
 Audnex-to-ABS metadata comparison on that lookup. An absence or conflict with
 independent Hardcover evidence is not proof that the book is absent. Continue
 to ISBN and title/author candidate discovery as appropriate.
+
+If a 429 or other transient error interrupts discovery, do not continue
+probing regions. Complete any independent matching reads; if they cannot
+verify an edition, the per-book outcome is retryable `failed`, not
+`needs_review` or `not_found`. An already verified match is unaffected by an
+optional Audnex enrichment failure.
+
 During this step only, preserve the existing `edition.asin` fallback on an
 unresolved audiobook so behavior does not regress before Step 6. Never write
 that fallback into the durable association. Retire the old 24-hour positive
@@ -294,7 +316,7 @@ non-default `develop`.
 
 4. ISBN counterpart matching: Find ISBN-10 and ISBN-13 counterparts during sync while preserving reading-format checks.
 
-5. Durable Audible resolution: Store confirmed ABS-to-Hardcover book/edition associations, reuse preferred-first Audnex region discovery, read exact regional Audible mappings, and retire the 24-hour positive ASIN cache.
+5. Durable Audible resolution: Store confirmed ABS-to-Hardcover book/edition associations, reuse preferred-first Audnex region discovery, read exact regional Audible mappings, and treat discovery-blocking rate limits as retryable per-book failures.
 
 6. Missing regional mapping: Resolve a known candidate with `upsert_book`, retain validated `loaded` or `created` IDs locally, and stop matching audiobooks by `editions.asin`.
 
@@ -338,8 +360,9 @@ evidence:
   reading-format separation. By @Snuffy2`.
 - **Step 5 — Added:** `**Durable Audible matches**: Persist verified ABS item
   to Hardcover book and edition resolutions, search exact regional Audible
-  mappings using preferred-first region discovery, and retire the expiring
-  positive ASIN cache. By @Snuffy2`.
+  mappings using preferred-first region discovery, treat blocking rate limits
+  as retryable per-book failures, and retire the expiring positive ASIN cache.
+  By @Snuffy2`.
 - **Step 6 — Changed:** `**Audible identifier resolution**: Resolve a missing
   regional mapping through Hardcover import when permitted, retain confirmed
   results locally, and stop treating edition ASINs as Audible matches; items
@@ -411,7 +434,8 @@ require the owner's instruction.
 - [ ] Populate the draft release date from that successful region's Audnex
   `releaseDate`, falling back to the ABS published date/year if it is absent
   or no region resolves. Test preferred hit, fallback-region hit, no result,
-  transient error, and malformed or mismatched returned ASIN.
+  transient error (including 429 and a retryable draft warning), and malformed
+  or mismatched returned ASIN.
 - [ ] Reconcile six-region config validation with the verified Audnex lookup
   set; do not include a Hardcover-only mapping region without Audnex support.
 - [ ] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
@@ -443,11 +467,17 @@ require the owner's instruction.
   `book_mappings` exactly; accept agreeing results of the correct format and
   leave conflicts or unknown regions reviewable. Reuse Step 3's first-ASIN-hit
   Audnex discovery on a mapping miss without a strict metadata gate.
+- [ ] On Audnex 429 or another transient discovery failure, stop the sweep.
+  Preserve independently verified matches; otherwise record a retryable
+  per-book `failed` outcome without a durable association or incremental
+  checkpoint that would suppress the next attempt. Genuine completed misses
+  remain `needs_review`, and the rest of the run continues.
 - [ ] Retire the in-memory and 24-hour positive ASIN caches without trusting
   or migrating old hits; do not persist the temporary legacy fallback.
 - [ ] Test restart, concurrent save, storage failure, source change, mapping
-  conflict with independent Hardcover evidence, no-op, and dry-run paths
-  through real persistence and client boundaries.
+  conflict with independent Hardcover evidence, verified-match-plus-429,
+  discovery-blocking-429, all-regions-miss, no-op, and dry-run paths through
+  real persistence and client boundaries.
 - [ ] Document the persistence and read-only matching behavior, add one
   CHANGELOG bullet, and complete the shared validation and PR gates.
 
