@@ -29,8 +29,9 @@ The user-approved identifier rules for the completed flow (after Step 6) are:
   identifier to the resolved Hardcover `book_id` and `edition_id`. Record the
   region-qualified identifier used for resolution and how the IDs were
   confirmed. Invalidate or re-evaluate the association when the ABS identifier
-  changes, the target edition is unavailable, or the user explicitly rematches
-  it. It is correctable, not a permanent assertion about mutable catalogues.
+  changes, the target edition is definitively unavailable, or the user
+  explicitly forgets the match. It is correctable, not a permanent assertion
+  about mutable catalogues.
 - Prefer an existing confirmed local association, then an exact Audible
   `book_mappings` match. Discover the source ASIN's region before a regional
   import; do not assume that an unqualified ASIN is US. Conflicting or
@@ -61,6 +62,20 @@ The user-approved identifier rules for the completed flow (after Step 6) are:
   some came from the old `editions.asin`
   lookup and are not verified Audible mappings. A separate short-lived
   performance cache is not part of this plan.
+- Provide a profile-scoped API action to forget one ABS item's local
+  association and its incremental checkpoint. The next sync reruns the normal
+  matching priority order; it may choose the same edition again if the
+  Hardcover catalogue is unchanged, or a different edition if the previous
+  target changed or disappeared or a higher-priority match is now available.
+  This action does not delete a Hardcover edition or `book_mappings` row.
+- If a sync operation suggests the associated edition was deleted, confirm
+  that exact edition is absent with a fresh Hardcover read that bypasses the
+  edition cache. Only a definitive edition-not-found result removes the local
+  association and checkpoint; missing user-book/read records, permissions,
+  timeouts, rate limits, and other transient errors do not. Leave that book
+  retryable for the next sync while other books continue. A `book_mappings`
+  row can legitimately be absent for a valid association, so its absence
+  alone never triggers automatic invalidation.
 
 Normal sync must continue for profiles without catalogue-write capability.
 An `upsert_book` permission failure, timeout, ambiguous candidate, or unknown
@@ -100,12 +115,12 @@ existing Step 4 and Step 5 branches implement the old ordering.
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
 | 3 | Rework the read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Discover its region with preferred-first, bounded Audnex lookup and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown/ambiguous region. Expose only edit promises the eventual create path can honor. The endpoint still makes no Hardcover request and works by itself. | 2 | Existing draft branch and PR need revision; full rework is allowed |
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
-| 5 | Add the durable local association, read-first lookup, shared preferred-first Audnex region discovery, and exact Audible `book_mappings` query. Replace the positive 24-hour cache; persist only verified matches. A discovery-blocking 429 is retryable per-book `failed`, not a catalogue miss. Keep the current legacy fallback for genuine misses during this additive step, without saving its result as a verified association. | 3, 4 | New work |
+| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, shared preferred-first Audnex region discovery, and exact Audible `book_mappings` query. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. A discovery-blocking 429 is retryable per-book `failed`, not a catalogue miss. Keep the current legacy fallback for genuine misses during this additive step, without saving its result as a verified association. | 3, 4 | New work |
 | 6 | Add the bounded `upsert_book` fallback for a missing regional mapping, validate `loaded`/`created` IDs, and persist the resolution. Remove audiobook `editions.asin` matching and its duplicate guard in this same PR. A failure or missing write scope remains `needs_review`; normal sync stays usable. | 5 | New work |
 | 7 | Provide create eligibility and capability reporting, with separate truthful outcomes for edition insertion and Audible import where their permissions differ. Keep the route independently useful without exposing a create action that is not implemented. | 3, 6 | Extract from the old Step 4 branch and revise |
 | 8 | Add the create POST using the resolved identifier contract. ISBN/ebook insertion uses the applicable creator behavior; Audible import uses the regional path and saves a local association before reporting success. It works through the API without resync or UI. | 3, 6, 7 | Rebuild from the old Step 4 branch |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 8 | Not started |
-| 10 | Add the Sync Status preview, confirmation, capability, and optional resync UI. | 9 | Not started |
+| 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI for already matched items. | 9 | Not started |
 
 ### Step 3: source draft
 
@@ -164,10 +179,30 @@ Use the application's persistent profile data, rather than the cache
 directory, for a versioned association. The record needs the profile and ABS
 item identity, the ABS source ASIN, the resolved regional external ID, the
 Hardcover book and edition IDs, and resolution provenance. A changed source
-identifier cannot reuse a stale association. Define a controlled rematch path
-and recover from a removed or merged Hardcover edition. Writes must be safe
-across restarts and concurrent syncs; failures must not masquerade as a saved
-match.
+identifier cannot reuse a stale association. Add an authenticated,
+profile-authorized API action to forget one ABS item's association, clear its
+incremental checkpoint, and make the next sync perform ordinary matching
+again. Serialize this with any in-flight sync for that item/profile so a
+concurrent save cannot restore the forgotten record. Return the previous
+resolution and whether an association was removed; an absent association is a
+safe no-op. The action changes no Hardcover catalogue or library record.
+Dry run does not delete the association or checkpoint; the API reports that
+no persistent change was made.
+It does not promise a different result: unchanged Hardcover identifiers may
+resolve to the same edition; a changed, removed, or newly higher-priority
+candidate may resolve differently. Writes must be safe across restarts and
+concurrent syncs; failures must not masquerade as a saved match.
+
+An unchanged item may be skipped by incremental sync before any Hardcover
+read, so this plan does not promise continuous deletion detection. When an
+item is processed and a Hardcover operation indicates the mapped edition may
+be gone, bypass the existing `GetEdition` cache and check that edition ID
+directly. Only a definitive absent edition invalidates the association and
+checkpoint. Do not infer edition deletion from a missing user book, missing
+read, GraphQL transport failure, permission error, or absent regional
+`book_mappings` row. Record the current item as retryable `failed` without
+applying progress to another edition; let the next sync rematch. Clearing an
+association must not erase historical Hardcover reads or ownership.
 
 On a local miss, probe exact regional Audible mappings with supported
 marketplace identifiers and confirm that any multiple hits agree on the same
@@ -191,7 +226,9 @@ ASIN cache without importing it into the new store.
 
 Acceptance: exact mapping and already-confirmed local association produce the
 correct IDs after a restart; old unverified cache entries do not; an
-unresolved regional alias remains reviewable; dry run writes no association.
+unresolved regional alias remains reviewable; the forget API forces the next
+sync to re-evaluate; a freshly confirmed deleted edition invalidates only its
+local association; dry run writes no association.
 
 ### Step 6: missing-mapping resolution and the matching switchover
 
@@ -273,6 +310,13 @@ uncertain region or unresolved candidate results as review states. Confirmation
 uses the create POST; the resync checkbox is opt-in. Dry run is clearly
 identified and does not offer a real resync.
 
+Also expose the Step 5 forget-match action for already matched items, not only
+`needs_review` items. Show the current Hardcover book/edition target and ask
+for confirmation. Explain that the next sync reruns normal matching and may
+select the same edition if Hardcover has not changed. Do not describe this as
+deleting a Hardcover edition or mapping, or as forcing a different target.
+Disable the real forget action in dry run.
+
 ## PR and branch handling
 
 - Steps 1 and 2 are merged; do not reopen their PRs for this change.
@@ -316,7 +360,7 @@ non-default `develop`.
 
 4. ISBN counterpart matching: Find ISBN-10 and ISBN-13 counterparts during sync while preserving reading-format checks.
 
-5. Durable Audible resolution: Store confirmed ABS-to-Hardcover book/edition associations, reuse preferred-first Audnex region discovery, read exact regional Audible mappings, and treat discovery-blocking rate limits as retryable per-book failures.
+5. Durable Audible resolution: Store confirmed ABS-to-Hardcover associations, offer a forget-match API, recover from confirmed edition deletion, and match exact regional Audible identifiers with bounded discovery.
 
 6. Missing regional mapping: Resolve a known candidate with `upsert_book`, retain validated `loaded` or `created` IDs locally, and stop matching audiobooks by `editions.asin`.
 
@@ -326,7 +370,7 @@ non-default `develop`.
 
 9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status without overlapping a full sync.
 
-10. Sync Status UI: Preview, confirm, and report edition creation for an eligible needs-review item, with an optional resync.
+10. Sync Status UI: Preview and confirm edition creation for eligible needs-review items, offer optional resync, and let users forget a stored match for a future retry.
 
 [Full Plan Document](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
 ```
@@ -359,10 +403,9 @@ evidence:
   its valid ISBN-13 counterpart, and the reverse, without changing
   reading-format separation. By @Snuffy2`.
 - **Step 5 — Added:** `**Durable Audible matches**: Persist verified ABS item
-  to Hardcover book and edition resolutions, search exact regional Audible
-  mappings using preferred-first region discovery, treat blocking rate limits
-  as retryable per-book failures, and retire the expiring positive ASIN cache.
-  By @Snuffy2`.
+  to Hardcover book and edition resolutions, offer a per-item forget-match
+  API, recover from confirmed edition deletion, and search exact regional
+  Audible mappings while retiring the expiring ASIN cache. By @Snuffy2`.
 - **Step 6 — Changed:** `**Audible identifier resolution**: Resolve a missing
   regional mapping through Hardcover import when permitted, retain confirmed
   results locally, and stop treating edition ASINs as Audible matches; items
@@ -379,7 +422,8 @@ evidence:
   @Snuffy2`.
 - **Step 10 — Added:** `**Edition creation in Sync Status**: Preview and
   confirm an eligible needs-review edition in the UI, show capability and
-  region uncertainty, and optionally resync its read status. By @Snuffy2`.
+  region uncertainty, optionally resync its read status, and forget a stored
+  match for future rematching. By @Snuffy2`.
 
 Step 3 owns the draft README/OpenAPI description; Steps 4–6 document matching
 and any new persistence or permission behavior; Step 7 documents its
@@ -462,7 +506,17 @@ require the owner's instruction.
   record, including ABS item/source ASIN, regional ID, Hardcover IDs, and
   provenance; cover single-user and multiuser persistence.
 - [ ] Read a valid local association first; invalidate it after a changed
-  source identifier or unavailable target, and provide a controlled rematch.
+  source identifier or definitively unavailable target. Do not make a missing
+  regional mapping invalidate an otherwise confirmed association.
+- [ ] Add an authenticated, profile-scoped, per-ABS-item forget-match API.
+  Remove the association and incremental checkpoint together, prevent an
+  in-flight sync from restoring it, and make repeat deletion a safe no-op.
+  Return the previous target and document that the next sync may rematch the
+  same edition under the normal priority order; dry run makes no deletion.
+- [ ] On an edition-specific failure during sync, bypass the edition cache to
+  confirm the target edition is absent before invalidating the association
+  and checkpoint. Keep user-book/read not-found and transient errors distinct;
+  mark a confirmed deletion retryable without applying progress elsewhere.
 - [ ] Discover or enumerate supported regions and query Audible
   `book_mappings` exactly; accept agreeing results of the correct format and
   leave conflicts or unknown regions reviewable. Reuse Step 3's first-ASIN-hit
@@ -476,8 +530,10 @@ require the owner's instruction.
   or migrating old hits; do not persist the temporary legacy fallback.
 - [ ] Test restart, concurrent save, storage failure, source change, mapping
   conflict with independent Hardcover evidence, verified-match-plus-429,
-  discovery-blocking-429, all-regions-miss, no-op, and dry-run paths through
-  real persistence and client boundaries.
+  discovery-blocking-429, all-regions-miss, forget/rematch-to-same-or-new,
+  concurrent forget, confirmed edition deletion versus cached edition or
+  unrelated not-found, no-op, and dry-run paths through real persistence and
+  client boundaries.
 - [ ] Document the persistence and read-only matching behavior, add one
   CHANGELOG bullet, and complete the shared validation and PR gates.
 
@@ -548,12 +604,17 @@ require the owner's instruction.
 
 - [ ] Show the action only for eligible needs-review records with the
   applicable verified capability and permitted profile access.
+- [ ] Separately show the current stored Hardcover target and a confirmed
+  forget-match action for matched items. Explain that the next sync uses
+  normal matching priority and may find the same edition again; do not imply
+  any Hardcover record is deleted or another edition is forced.
 - [ ] Render the draft's source identifier, established/uncertain region,
   warnings, and only supported editable fields; escape ABS-provided strings.
 - [ ] Confirm through the create POST, display reused/created and error
   outcomes, and make resync an explicit option except in dry run.
 - [ ] Test capability denial, preview, edits, confirmation, transient errors,
-  status polling, and resync results at the web boundary.
+  status polling, forget-match authorization/confirmation/same-result, and
+  resync results at the web boundary.
 - [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared validation and PR gates.
 
