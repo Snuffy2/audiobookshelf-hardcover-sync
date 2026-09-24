@@ -103,7 +103,8 @@ Two region lists are used, for different purposes:
   exact mapping lookup and create-time validation use this list.
 - **Audnex lookup regions (10):** US, CA, UK, AU, DE, FR, ES, IN, IT, JP, the
   regions in Audnex's published `/books/{ASIN}` API schema. Region discovery
-  and the `audnexus_region` setting use this list. `br` cannot be discovered
+  and the `audnexus_region` setting use this list. `br` (Brazil) is an
+  Audible region but not an Audnexus region, so it cannot be discovered
   through Audnex; a Brazilian identifier can still match an existing
   `ASIN:br` mapping or be supplied explicitly by the user at create time.
 
@@ -237,13 +238,15 @@ Each sync run currently loads the state once and rewrites the whole file from
 its in-memory copy after every book and at the end. An out-of-band write to
 the same file, such as forget-match or the Step 7 create API saving an
 association, would be overwritten by the running sync's next checkpoint.
-**Decision pending:** how forget-match and create-API association writes
-coordinate with a running sync for the same profile. The recommended option
-is to reject those writes with HTTP 409 while that profile has an active run
-(the multi-user service already tracks active runs) and have the UI disable
-the actions during a sync. Alternatives are queuing the write until the run
-ends, applying it to the running sync's in-memory state, or changing the state
-store to merge per-book changes on save.
+Forget-match and the Step 7 create API are therefore refused with HTTP 409
+while that profile has an active sync run; the multi-user service already
+tracks active runs. The check happens before any state change or Hardcover
+mutation, so a refused create has written nothing. While a forget or create
+request is in progress it holds the profile's run guard, so a sync cannot
+start until it finishes and a sync start during that window is refused or
+waits as an ordinary overlapping run would. The UI disables these actions
+during a sync and explains why. Queuing, writing into the running sync's
+memory, and merge-on-save were considered and not chosen.
 
 Add an authenticated, profile-authorized API action to forget one ABS item's
 association, clear its incremental checkpoint, and make the next sync perform
@@ -632,8 +635,11 @@ require the owner's instruction.
 
 - [x] Choose the existing versioned sync state file for CLI and per-profile
   web persistence.
-- [ ] Resolve the pending decision on coordinating forget-match and create-API
-  association writes with a running sync, and implement it.
+- [x] Decide how forget-match and create-API writes coordinate with a running
+  sync: refuse with HTTP 409 while the profile is syncing.
+- [ ] Refuse forget-match with 409 during an active run before any state
+  change, and hold the profile's run guard while it runs so a sync cannot
+  start mid-write.
 - [ ] Bump the state version, read v3 files without loss, and document the
   downgrade limit in `MIGRATION.md`.
 - [ ] Read a valid local association first; invalidate it after a changed
@@ -724,6 +730,9 @@ require the owner's instruction.
   association, so that item stays `needs_review` after Step 10. Decide
   whether `edition create` accepts an ABS item ID and uses the configured
   `sync.state_file` to save one, or document the limitation.
+- [ ] Refuse the create POST with 409 while the profile is syncing, before any
+  Hardcover mutation, and hold the profile's run guard until the association
+  is saved.
 - [ ] Make successful API create immediately findable by normal sync.
   Distinguish a remote success followed by local-store failure so a retry is
   safe.
@@ -765,6 +774,8 @@ require the owner's instruction.
   format-aware insertion fields for ebooks); escape ABS-provided strings.
 - [ ] Confirm through the create POST, display reused/created and error
   outcomes, and make resync an explicit option except in dry run.
+- [ ] Disable create and forget-match while the profile is syncing, explain
+  why, and handle a 409 from a sync that started after the page loaded.
 - [ ] Test capability denial, preview, edits, confirmation, transient errors,
   status polling, forget-match authorization/confirmation/same-result, and
   resync results at the web boundary.
@@ -801,7 +812,8 @@ require the owner's instruction.
    Audnex ten, preferred region first, and the first matching response wins.
 5. **Durable store:** extend the versioned `sync.state_file` JSON store.
    The CLI uses it directly; web profiles each get a separate path. How
-   out-of-band writes coordinate with a running sync is pending (Step 5).
+   Forget-match and create-API writes are refused with HTTP 409 while the
+   profile is syncing, and hold the profile's run guard while they run.
 6. **Catalogue-write scope:** Hardcover's published capabilities permit
    `upsert_book` with `write:catalog:append` or broader catalogue-write
    scopes; the ordinary full token completed a live import. This is separate
