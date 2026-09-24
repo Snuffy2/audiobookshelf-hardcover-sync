@@ -743,10 +743,12 @@ require the owner's instruction.
   for a different ASIN treated as a miss.
 - [x] Expand six-region config validation to the ten Audnex regions and
   normalize the preferred region; warn and use US for an unsupported value.
-- [ ] Verify sync's mismatch export makes no additional Audnex requests.
+- [x] Verify sync's mismatch export makes no additional Audnex requests.
   Accepted refinement: the shared client now rejects an ASIN that is not
   exactly ten ASCII letters or digits before any request, uppercases it, and
-  retries a 408. Test the unchanged request count for valid ASINs.
+  retries a 408. The mismatch tests assert the unchanged request sequence for
+  valid ASINs (configured region then US; one request when it hits or none is
+  configured).
 - [x] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
   language and date warnings, usable-ASIN-or-ISBN eligibility (including
   neither present and a malformed ASIN), cancellation, and zero Hardcover requests at the HTTP boundary.
