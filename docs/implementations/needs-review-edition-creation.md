@@ -112,18 +112,15 @@ finished-state behavior throughout the matching and resync changes.
 
 ### Regions
 
-Two region lists are used, for different purposes:
+The same ten regions are used for two different operations:
 
-- **Hardcover Audible mapping regions (11):** `us`, `ca`, `uk`, `au`, `de`,
-  `fr`, `es`, `in`, `it`, `jp`, `br`. Each has been observed as the suffix of
+- **Hardcover Audible mapping regions (10):** `us`, `ca`, `uk`, `au`, `de`,
+  `fr`, `es`, `in`, `it`, `jp`. Each has been observed as the suffix of
   an Audible `book_mappings.external_id` on a real Hardcover book. Sync's
   exact mapping lookup and create-time validation use this list.
 - **Audnex lookup regions (10):** US, CA, UK, AU, DE, FR, ES, IN, IT, JP, the
   regions in Audnex's published `/books/{ASIN}` API schema. Region discovery
-  and the `audnexus_region` setting use this list. `br` (Brazil) is an
-  Audible region but not an Audnexus region, so it cannot be discovered
-  through Audnex; a Brazilian identifier can still match an existing
-  `ASIN:br` mapping or be supplied explicitly by the user at create time.
+  and the `audnexus_region` setting use this list.
 
 ### Audnex region discovery
 
@@ -169,7 +166,7 @@ existing Step 4 and Step 5 branches implement the old ordering.
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
 | 3 | Read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Add the shared Audnex region discovery with typed client errors and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown and temporarily unavailable. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint makes no Hardcover request and works by itself. | 2 | Rewrite from current `develop`; the existing branch follows the old plan and is not a source |
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
-| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 11-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | New work |
+| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | New work |
 | 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Extract from the old Step 4 branch and revise |
 | 7 | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and a bounded regional `upsert_book` resolver for audiobooks. Migrate standalone `edition create` to the same resolver and remove its audiobook `insert_edition` route. Validate returned book and format; the API, and the CLI when given an ABS item ID, save a local association before reporting success. Reuse Step 5's state-file lock. | 3, 5, 6 | Rebuild from the old Step 4 branch |
 | 8 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7 | Not started |
@@ -199,8 +196,7 @@ is a retryable warning with the ABS date fallback, not a sync outcome.
 
 Expand `audnexus_region` validation from six to the ten Audnex regions,
 normalize the value to lowercase, and warn and use US for an unsupported
-value. Update environment handling and README to match. `br` is not an
-accepted Audnex preference.
+value. Update environment handling and README to match.
 
 Add the Audnex client's typed not-found, rate-limited, and transient errors in
 this step, and stop logging an expected per-region miss as an error. Sync's
@@ -209,7 +205,7 @@ reuses the mismatch enrichment code, the region sweep must be injected only
 for the draft so sync makes no additional Audnex requests.
 
 For audiobooks, offer a correction to the submitted regional Audible
-identifier (ASIN and region, including `br`), which Step 7 passes to
+identifier (ASIN and one of the supported regions), which Step 7 passes to
 `upsert_book`; show title, subtitle, date, edition information, ISBNs, and
 other imported metadata as read-only preview. Do not accept audiobook metadata
 edits that the import cannot save. For ebooks, retain candidate edition fields
@@ -312,7 +308,7 @@ applying progress to another edition; let the next sync rematch. Clearing an
 association must not erase historical Hardcover reads or ownership.
 
 On a local miss, query exact Audible mappings for the bare ASIN combined with
-each of the 11 Hardcover mapping regions in one read. Hardcover stores no
+each of the 10 Hardcover mapping regions in one read. Hardcover stores no
 Audible mapping without a region, so the bare ASIN alone is not queried as a
 mapping `external_id`. Confirm that any multiple hits agree on the same book
 and edition and have audiobook format; disagreement remains `needs_review`.
@@ -740,7 +736,7 @@ require the owner's instruction.
   429 and transient error with a retryable warning, and a response for a
   different ASIN treated as a miss.
 - [ ] Expand six-region config validation to the ten Audnex regions and
-  normalize the preferred region; keep `br` out of the Audnex setting.
+  normalize the preferred region; reject unsupported values.
 - [ ] Verify sync's mismatch export makes no additional Audnex requests.
 - [ ] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
   language and date warnings, ASIN-or-ISBN eligibility (including neither
@@ -793,7 +789,7 @@ require the owner's instruction.
   before invalidating the association and checkpoint. Keep user-book/read
   not-found and transient errors distinct; mark a confirmed deletion retryable
   without applying progress elsewhere.
-- [ ] Split `SearchBookByASIN` so exact Audible mappings for all 11 Hardcover
+- [ ] Split `SearchBookByASIN` so exact Audible mappings for all 10 Hardcover
   regions are queried in one read and are distinguishable from the
   `editions.asin` fallback. Accept agreeing results of audiobook format;
   leave conflicts reviewable. Do not query a bare-ASIN mapping. Save verified
@@ -982,7 +978,7 @@ require the owner's instruction.
    export, and the audiobook duplicate check. A book whose only link was
    `editions.asin` and that title/author search cannot find becomes
    `not_found` without an in-app fix; this is accepted. Hardcover stores no
-   Audible mapping without a region, so exact lookups use only the 11
+   Audible mapping without a region, so exact lookups use only the 10
    regional forms.
 3. **Audible edit capability:** the ordinary full API token imported an
    Outland edition with `B07NHP9F58:uk` as `created`. A populated title and
@@ -990,11 +986,12 @@ require the owner's instruction.
    did not change on a fresh read. The original title and null subtitle
    remain intact. Audiobook metadata is therefore preview-only in Steps 3
    and 7; only the submitted regional Audible identifier is correctable.
-4. **Regions:** all 11 Hardcover Audible mapping regions (`us`, `ca`, `uk`,
-   `au`, `de`, `fr`, `es`, `in`, `it`, `jp`, `br`) were observed on real
-   Hardcover books. Audnex's published `/books/{ASIN}` schema accepts the
-   first ten. Exact mapping lookup uses all 11; region discovery uses the
-   Audnex ten, preferred region first, and the first matching response wins.
+4. **Regions:** the ten supported Hardcover Audible mapping regions (`us`,
+   `ca`, `uk`, `au`, `de`, `fr`, `es`, `in`, `it`, `jp`) were observed on real
+   Hardcover books and are accepted by Audnex's published `/books/{ASIN}`
+   schema. Exact mapping lookup and region discovery use these ten, with
+   discovery checking the preferred region first and accepting its first
+   matching response.
 5. **Durable store:** extend the versioned `sync.state_file` JSON store.
    The CLI uses it directly; web profiles each get a separate path.
    Forget-match and create-API writes are refused with HTTP 409 while the
