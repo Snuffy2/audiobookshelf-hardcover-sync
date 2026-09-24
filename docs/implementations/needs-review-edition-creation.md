@@ -147,7 +147,9 @@ export enrichment (the configured region, then US) is unchanged by this plan.
   miss is expected during a sweep and is not logged as an error.
 - A 429 or transient error stops the sweep. It is not evidence that the ASIN
   is absent: report the region as temporarily unavailable, never as a guessed
-  or unknown region. A completed sweep with only misses leaves the region
+  or unknown region. A 400 or 403 response is treated the same way: typed as
+  transient (not retried inside the client), because it is not evidence that
+  the ASIN is absent. A completed sweep with only misses leaves the region
   unknown. Neither outcome triggers an import. The draft shows a retryable
   warning; the create API and CLI refuse the import with a retryable error
   unless the user supplied an explicit regional identifier.
@@ -164,7 +166,7 @@ existing Step 4 and Step 5 branches implement the old ordering.
 |---|---|---|---|
 | 1 | ISBN and export foundations | `develop` | Merged |
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
-| 3 | Read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Add the shared Audnex region discovery with typed client errors and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown and temporarily unavailable. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint makes no Hardcover request and works by itself. | 2 | Rewrite from current `develop`; the existing branch follows the old plan and is not a source |
+| 3 | Read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Add the shared Audnex region discovery with typed client errors and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown and temporarily unavailable. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint makes no Hardcover request and works by itself. | 2 | Implemented on `feature/needs-review-edition-source-draft`; open items are in the Step 3 checklist |
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
 | 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | New work |
 | 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Extract from the old Step 4 branch and revise |
@@ -211,7 +213,10 @@ other imported metadata as read-only preview. Do not accept audiobook metadata
 edits that the import cannot save. For ebooks, retain candidate edition fields
 in the draft, including an optional corrected ISBN; Step 7 may accept only
 fields its format-aware insertion has verified to persist. An ISBN is optional
-only when a usable ASIN is present; an item with neither cannot add an edition.
+only when a usable ASIN is present. A usable ASIN is exactly ten ASCII letters
+or digits; a malformed ASIN is kept visible with an `invalid_source_asin`
+warning but does not count. An item with neither a usable ASIN nor an ISBN is
+ineligible and cannot add an edition.
 Reading-format, date, author/narrator, language-warning, and dry-run behavior
 remain within the draft's read-only scope.
 
@@ -719,28 +724,32 @@ require the owner's instruction.
 - [x] Establish ordinary-token Audible import/update behavior: import
   succeeded, but attempted title and subtitle edits did not persist. Limit
   audiobook correction to the submitted regional identifier.
-- [ ] Start from current `develop`; do not carry the old Step 3 branch.
-- [ ] Define the draft schema and crosswalk R4 so they preserve the bare ABS
+- [x] Start from current `develop`; do not carry the old Step 3 branch.
+- [x] Define the draft schema and crosswalk R4 so they preserve the bare ABS
   source ASIN, optional established region, and unknown or temporarily
   unavailable state without implying an `edition.asin` write or silently
   choosing US.
-- [ ] Add typed Audnex not-found, rate-limited, and transient errors; log an
-  expected per-region miss below Error level.
-- [ ] Add the shared region discovery: preferred region first (US when
+- [x] Add typed Audnex not-found, rate-limited, and transient errors; log an
+  expected per-region miss below Error level. A 400 or 403 is also typed
+  transient (retryable), not a miss.
+- [x] Add the shared region discovery: preferred region first (US when
   unset), then the fixed ten-region sweep, stopping at the first response for
   the requested ASIN, under one overall deadline. Do not require close
   title/author/narrator/edition agreement.
-- [ ] Populate the draft release date from the successful region's Audnex
+- [x] Populate the draft release date from the successful region's Audnex
   `releaseDate`, falling back to the ABS published date/year if it is absent
   or no region resolves. Test preferred hit, fallback-region hit, no result,
-  429 and transient error with a retryable warning, and a response for a
-  different ASIN treated as a miss.
-- [ ] Expand six-region config validation to the ten Audnex regions and
-  normalize the preferred region; reject unsupported values.
+  429, transient, 400 and 403 errors with a retryable warning, and a response
+  for a different ASIN treated as a miss.
+- [x] Expand six-region config validation to the ten Audnex regions and
+  normalize the preferred region; warn and use US for an unsupported value.
 - [ ] Verify sync's mismatch export makes no additional Audnex requests.
-- [ ] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
-  language and date warnings, ASIN-or-ISBN eligibility (including neither
-  present), cancellation, and zero Hardcover requests at the HTTP boundary.
+  Accepted refinement: the shared client now rejects an ASIN that is not
+  exactly ten ASCII letters or digits before any request, uppercases it, and
+  retries a 408. Test the unchanged request count for valid ASINs.
+- [x] Verify audiobook/ebook metadata, ISBN flags, author/narrator names,
+  language and date warnings, usable-ASIN-or-ISBN eligibility (including
+  neither present and a malformed ASIN), cancellation, and zero Hardcover requests at the HTTP boundary.
 - [ ] Update README, OpenAPI, the single CHANGELOG bullet, and the PR
   description; run the shared validation and PR gates.
 
