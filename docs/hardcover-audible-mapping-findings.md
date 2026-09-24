@@ -261,6 +261,25 @@ fields; the tested token's exact granted scopes were not independently read.
 This catalogue-write capability is needed only for the import/create path, not
 normal library-progress sync.
 
+## ISBN import and omitted book ID
+
+Hardcover staff describe `upsert_book` with virtual ISBN platform ID 8 and the
+ISBN as `external_id`; `book_id` is optional. The live `platforms` list omits
+platform 8, but the mutation accepts it. A full API token used the no-`book_id`
+form and returned Outland book `461193` and its existing ebook edition
+`32617178` for ISBN `9781507000885` (reading format 4). The same form
+returned that book and existing audiobook edition `33340601` for regional
+Audible ID `B07NHP9F58:uk` (format 2).
+
+A requested no-`book_id` upsert of ISBN `9781680681420` returned existing
+physical edition `33271167` (format 1) on a different Outland book
+`2933828`; a fresh catalogue read confirmed no ebook with that ISBN was
+created on book `461193`. The mutation's success means the external ID was
+resolved, not that the desired ebook was added. These existing-ID tests do
+not establish how an absent ISBN is imported. An application create flow must
+verify returned book and reading format before claiming success, and cannot
+use this mutation to specify ebook format or edition metadata.
+
 ## Evidence sources
 
 - Audiobookshelf models and the checked-in Audiobookshelf API schema in this

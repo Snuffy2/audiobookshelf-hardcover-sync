@@ -119,8 +119,8 @@ existing Step 4 and Step 5 branches implement the old ordering.
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
 | 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, shared preferred-first Audnex region discovery, and exact Audible `book_mappings` query. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. A discovery-blocking 429 is retryable per-book `failed`, not a catalogue miss. Keep the current legacy fallback for genuine misses during this additive step, without saving its result as a verified association. | 3, 4 | New work |
 | 6 | Add the bounded `upsert_book` fallback for a missing regional mapping, validate `loaded`/`created` IDs, and persist the resolution. Remove audiobook `editions.asin` matching and its duplicate guard in this same PR. A failure or missing write scope remains `needs_review`; normal sync stays usable. | 5 | New work |
-| 7 | Provide create eligibility and capability reporting, with separate truthful outcomes for edition insertion and Audible import where their permissions differ. Keep the route independently useful without exposing a create action that is not implemented. | 3, 6 | Extract from the old Step 4 branch and revise |
-| 8 | Add the create POST using the resolved identifier contract. ISBN/ebook insertion uses the applicable creator behavior; Audible import uses the regional path and saves a local association before reporting success. It works through the API without resync or UI. | 3, 6, 7 | Rebuild from the old Step 4 branch |
+| 7 | Provide create eligibility and capability reporting for `upsert_book` imports by ISBN or regional Audible identifier. Keep the route independently useful without exposing a create action that is not implemented. | 3, 6 | Extract from the old Step 4 branch and revise |
+| 8 | Add the create POST using `upsert_book` for ISBN/ebook and regional Audible imports. Validate the returned book and reading format, save a local association before reporting success, and work through the API without resync or UI. | 3, 6, 7 | Rebuild from the old Step 4 branch |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 8 | Not started |
 | 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI for already matched items. | 9 | Not started |
 
@@ -160,8 +160,10 @@ change fields and assertions that present an audiobook ASIN as a future
 regional Audible identifier (ASIN and region), which Step 8 passes to
 `upsert_book`; show title, subtitle, date, edition information, ISBNs, and
 other imported metadata as read-only preview. Do not accept audiobook metadata
-edits that the import cannot save. Ebook insertion retains its separately
-supported editable fields. Existing reading-format, date, author/narrator,
+edits that the import cannot save. For ebooks, offer only a correction to the
+ISBN submitted to `upsert_book`; all edition metadata is read-only preview. An
+ebook without a usable ISBN stays reviewable because this create path has no
+import identifier. Existing reading-format, date, author/narrator,
 language-warning, and dry-run behavior remain within the draft's read-only
 scope.
 
@@ -250,8 +252,9 @@ local association; dry run writes no association.
 
 Only a credible, unambiguous candidate book may be supplied to `upsert_book`.
 The existing title/author result is a candidate, not by itself an edition
-match. Do not depend on `upsert_book` without a `book_id`; that behavior has
-not been established by live testing. Bound asynchronous polling, preserve
+match. The no-`book_id` form has been tested only with identifiers already present
+in Hardcover, including one that resolved to a different book; supply the
+confirmed candidate book ID when resolving a missing regional mapping. Bound asynchronous polling, preserve
 the client's rate limiting and retry behavior, and distinguish `failed`,
 `loaded`, and `created`. Confirm returned book and edition IDs, the expected
 candidate book, and audiobook reading format before saving the association.
@@ -275,12 +278,13 @@ produces an actionable review outcome for the unresolved item.
 
 The current create branch assumes `insert_edition` plus a duplicate search in
 `edition.asin` can handle an Audible ASIN. That behavior cannot merge
-unchanged. Split its capability route, authorization, create-time name
-resolution, request validation, in-flight guard, and tests into reviewable
-Step 7 and Step 8 diffs. Existing Step 2 `edition.Creator` and its CLI callers
-are not automatically changed by this plan; Step 8 must explicitly route the
-new application audiobook path around any legacy `edition.asin` write or
-duplicate check. ISBN and ebook behavior remains format-aware.
+unchanged. Split its capability route, authorization, request validation,
+in-flight guard, and tests into reviewable Step 7 and Step 8 diffs. The new
+application create endpoint uses `upsert_book` exclusively: platform 32 with a
+regional Audible identifier for audiobooks, or virtual platform 8 with an ISBN
+for ebooks. It supplies no title, author, narrator, or other edition metadata.
+Existing Step 2 `edition.Creator` and its CLI callers are not automatically
+changed by this plan. Keep book and reading-format checks for both formats.
 
 The live test with an ordinary full API token successfully called `upsert_book`
 for a known book and regional Audible ASIN; import status became `created`
@@ -288,10 +292,9 @@ and a subsequent read found the new edition and mapping. The same token's
 `update_edition` calls returned an ID and no errors for both a populated
 title and an empty subtitle, but fresh reads retained the original title and
 null subtitle. A success response is therefore not proof that submitted
-metadata persisted. Step 3 and Step 8 must not promise audiobook metadata
-edits. The audiobook correction is the regional identifier submitted to
-`upsert_book`; its returned edition metadata is preview-only. Ebook insertion
-uses the separately tested `insert_edition` path. Hardcover's published
+metadata persisted. Step 3 and Step 8 must not promise edition
+metadata edits. The supported corrections are the regional Audible identifier for an audiobook and ISBN for
+an ebook; the returned edition metadata is preview-only. Hardcover's published
 capability map permits `upsert_book` and `update_edition` under
 `write:catalog:append` (or the broader `write:catalog:edit`/`write:catalog`
 scopes); `write:catalog:map` is separate. Runtime authorization and read-back
@@ -304,19 +307,24 @@ source rather than a discoverable mapping platform. A live call with an
 existing Outland ISBN and the known book ID returned the existing physical
 edition immediately; `book_import_statuses` still reported `not_found` for
 that platform and ISBN. This confirms ISBN reuse, not creation of a new
-edition or reliable status polling for that source. It also shows why ISBN
-upsert cannot replace the Step 8 ebook insertion path without a format
-decision: the mutation accepts no requested reading format or edition
-metadata, and an ISBN may resolve to a physical edition. Keep
-`insert_edition` for the format-specific ebook create path. If an ISBN
-import path is added later, pass the confirmed book ID and accept its result
-only after verifying the returned book and reading format; do not treat an
-immediate ID or a `not_found` import status alone as proof of a suitable
-edition.
+edition or reliable status polling for that source. A second live request
+omitted `book_id` and returned Outland's existing ebook edition for ISBN `9781507000885` (format 4); the same
+no-`book_id` form returned its existing audiobook for `B07NHP9F58:uk`
+(format 2). Omitting `book_id` is valid for these existing identifiers, but
+these calls do not establish where an absent identifier will be imported.
+A requested no-`book_id` import of ISBN `9781680681420` returned existing
+physical edition `33271167` (format 1) on a different Outland book
+(`2933828`), not a new ebook on the intended book (`461193`). A fresh read
+confirmed no ebook with that ISBN was added. Step 8 supplies the confirmed
+run-record book ID for an unresolved ISBN or ASIN so an import is directed to the intended book, then verifies the returned
+book and format. The mutation cannot request ebook format: if the ISBN resolves
+to a physical edition or another book, leave it reviewable rather than report
+a successful ebook create. Do not treat an immediate ID or a `not_found` ISBN
+import status alone as proof of a suitable edition.
 
-Create refetches the ABS item and uses the run record's Hardcover book ID,
-never a client-supplied book ID. It handles a changed submitted Audible ASIN
-as an explicit user correction: retain both the original ABS source value and
+Create refetches the ABS item and uses the run record's Hardcover book ID
+when importing an unresolved identifier, never a client-supplied book ID. It
+handles a changed submitted Audible ASIN as an explicit user correction: retain both the original ABS source value and
 the regional identifier submitted for import in the local association. A
 create-time lookup of that submitted ASIN uses the same preferred-first
 discovery rule; when release date is server-derived, its baseline comes from
@@ -401,9 +409,9 @@ non-default `develop`.
 
 6. Missing regional mapping: Resolve a known candidate with `upsert_book`, retain validated `loaded` or `created` IDs locally, and stop matching audiobooks by `editions.asin`.
 
-7. Create capability: Report whether the profile can perform the applicable edition insertion or Audible import before offering the create action.
+7. Create capability: Report whether the profile can perform `upsert_book` imports before offering the create action.
 
-8. Edition create endpoint: Add or reuse a Hardcover edition for a needs-review item, using regional Audible import for audiobooks and saving a confirmed local association.
+8. Edition create endpoint: Import by ISBN or regional Audible identifier with `upsert_book`, validate book and format, and save a confirmed local association.
 
 9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status without overlapping a full sync.
 
@@ -448,12 +456,12 @@ evidence:
   results locally, and stop treating edition ASINs as Audible matches; items
   without a verified resolution remain reviewable. By @Snuffy2`.
 - **Step 7 — Added:** `**Edition creation capability**: Report the profile's
-  applicable insertion and Audible import capabilities without promising
-  permission from an unrelated scope check. By @Snuffy2`.
+  `upsert_book` import capability without promising permission from an
+  unrelated scope check. By @Snuffy2`.
 - **Step 8 — Added:** `**Create editions from needs-review items (API)**:
-  Create or reuse an edition after confirmation, import Audible identifiers
-  through the regional path, and retain its confirmed local resolution; dry
-  runs make no external change. By @Snuffy2`.
+  Create or reuse an edition after confirmation through ISBN or regional
+  Audible `upsert_book`, validate book and format, and retain its confirmed
+  local resolution; dry runs make no external change. By @Snuffy2`.
 - **Step 9 — Added:** `**Immediate one-book resync**: Optionally sync read
   status after edition creation while excluding an overlapping full sync. By
   @Snuffy2`.
@@ -464,8 +472,8 @@ evidence:
 
 Step 3 owns the draft README/OpenAPI description; Steps 4–6 document matching
 and any new persistence or permission behavior; Step 7 documents its
-capability route; Step 8 documents the create route and its exact editable
-fields; Step 9 documents the `resync` request/response; Step 10 documents the
+capability route; Step 8 documents the create route and its exact
+identifier corrections; Step 9 documents the `resync` request/response; Step 10 documents the
 user flow. Update the field crosswalk as the relevant step lands, rather than
 leaving its old R4 destination as an implementation contract.
 
@@ -598,7 +606,7 @@ require the owner's instruction.
 
 - [ ] Split the existing create branch so capability reporting is a standalone
   route, with authorization matching the eventual create operation.
-- [ ] Distinguish `insert_edition` capability from Audible import capability;
+- [ ] Report `upsert_book` capability for ISBN and regional Audible imports;
   never infer metadata editability from a successful `update_edition` response
   without a read-back. Report unknown or failed probes as unverified.
 - [ ] Test no-mutation probes, scope denial, token change, transient errors,
@@ -609,22 +617,23 @@ require the owner's instruction.
 ### Step 8 — create endpoint
 
 - [ ] Accept only a corrected regional Audible identifier for audiobook
-  imports; reject audiobook metadata edits rather than accepting and dropping
-  them. Keep ebook insertion edits tied to its tested creator path.
-- [ ] Refetch the ABS item, use the run record's book ID, derive non-editable
-  fields server-side, and resolve required/optional people and publisher
-  metadata only after confirmation.
+  imports or a corrected ISBN for ebook imports; reject edition metadata edits
+  rather than accepting and dropping them. Require a usable import identifier.
+- [ ] Refetch the ABS item, use the run record's book ID for an unresolved
+  identifier, and submit only platform ID, external ID, and that book ID to
+  `upsert_book`. Verify the returned book ID and reading format.
 - [ ] Route Audible imports through the regional resolver without an
-  `edition.asin` write or duplicate guard; retain the original ABS and
-  submitted identifiers in the durable association. Derive an unedited
-  release date from the response for the region that resolves the submitted
-  ASIN, with the Step 3 ABS date fallback. Preserve ISBN/ebook insertion and
-  same-book checks.
+  `edition.asin` write or duplicate guard; import ebooks by ISBN platform 8.
+  Retain the original ABS and submitted identifiers in the durable
+  association. Derive the audiobook preview date from the response for the
+  region that resolves the submitted ASIN, with the Step 3 ABS date fallback.
+  Reject a physical-format or wrong-book ISBN result as reviewable.
 - [ ] Make successful create immediately findable by normal sync. Distinguish
   a remote success followed by local-store failure so a retry is safe.
-- [ ] Test unauthorized/foreign profiles, wrong book, invalid fields,
-  missing author, optional misses, missing scope, timeouts, double submit,
-  shutdown, existing edition, and dry run at the HTTP boundary.
+- [ ] Test unauthorized/foreign profiles, wrong book, wrong reading format,
+  missing or invalid identifiers, missing scope, timeouts, double submit,
+  shutdown, existing edition, ISBN status uncertainty, and dry run at the
+  HTTP boundary.
 - [ ] Update README/OpenAPI/crosswalk, add one CHANGELOG bullet, and complete
   the shared validation and PR gates before offering the API for use.
 
@@ -650,8 +659,8 @@ require the owner's instruction.
   normal matching priority and may find the same edition again; do not imply
   any Hardcover record is deleted or another edition is forced.
 - [ ] Render the draft's source identifier, established/uncertain region,
-  warnings, and only supported editable fields (regional identifier
-  correction for audiobooks); escape ABS-provided strings.
+  warnings, and only supported identifier corrections (regional Audible
+  identifier or ebook ISBN); escape ABS-provided strings.
 - [ ] Confirm through the create POST, display reused/created and error
   outcomes, and make resync an explicit option except in dry run.
 - [ ] Test capability denial, preview, edits, confirmation, transient errors,
@@ -684,11 +693,15 @@ require the owner's instruction.
    from `write:catalog:map`. Tokens without catalogue-write capability
    retain ordinary library-progress sync and receive a reviewable unresolved
    item when import is required.
-5. **ISBN import option:** staff guidance identifies virtual platform 8 for
-   ISBN imports. A live request reused an existing physical edition, so this
-   path is not a format-aware replacement for Step 8's ebook insertion.
-   Retain the current insertion path unless a future ISBN import flow can
-   verify book and format before reporting success.
+5. **Import-only create:** staff guidance identifies virtual platform 8 for
+   ISBN imports. Live no-`book_id` requests reused Outland's ebook edition
+   for ISBN `9781507000885` and audiobook edition for regional Audible ASIN
+   `B07NHP9F58:uk`. A no-`book_id` request for ISBN `9781680681420`
+   instead reused a physical edition on another Outland book and created no
+   ebook. Step 8 uses `upsert_book` for both formats, without edition metadata
+   fields. An unresolved identifier is imported with the
+   confirmed book ID; every returned book and format is checked. A physical
+   ISBN result or missing ISBN remains reviewable.
 
 Sources: [Audnex API schema](https://github.com/laxamentumtech/audnexus/blob/develop/docs/index.html),
 [Hardcover capability map](https://github.com/hardcoverapp/hardcover-docs/blob/main/capability-scopes.json),
