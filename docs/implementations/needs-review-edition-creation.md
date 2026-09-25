@@ -379,6 +379,14 @@ operation and reports a permission failure clearly. A known denial prevents
 the action. Never infer editability from a successful `update_edition` response
 without a read-back.
 
+Before adding create paths, define one deployment-aware policy for configured
+ABS base URLs at the shared client boundary. This is a security follow-up to
+the Step 3 draft endpoint's existing server-side fetch of a profile's ABS URL.
+Specify how profile and CLI settings are validated, which local-network
+destinations a trusted self-hosted deployment may use, and how redirects are
+checked. Do not assume a blanket private-address ban is compatible with
+self-hosted ABS instances. Step 7 implements and tests the policy.
+
 ### Step 7: create API and standalone CLI
 
 This is the only path that writes to the Hardcover catalogue, and it runs only
@@ -386,6 +394,22 @@ on an explicit user request. The current create branch assumes
 `insert_edition` plus a duplicate search in `edition.asin` can handle an
 Audible ASIN. That behavior cannot merge unchanged; rebuild the create-time
 name resolution, request validation, in-flight guard, and tests from it.
+
+Implement the Step 6 ABS URL policy once, where ABS clients are constructed,
+and use it for profile configuration and CLI settings so sync, draft, and
+create fetches share validation. Check redirect targets under the same policy
+and keep ABS credentials scoped to the configured server. Before the create
+POST ships, cover malformed or disallowed URLs, allowed local deployments,
+and redirects at the HTTP/client boundary.
+
+Add a `Retry-After` response header to the draft endpoint's 429 response,
+using a short wait expressed in seconds. Describe it in OpenAPI and test the
+HTTP response; Step 9 uses it when retrying previews.
+
+Add an upgrade note to `MIGRATION.md` alongside the create-flow documentation:
+the legacy `AUDIOBOOKSHELF_AUDNEXUS_REGION` setting does not populate a
+profile's `sync_config.audnexus_region`, so users who want a preferred region
+for a profile set it there explicitly.
 
 The application create endpoint uses a bounded regional `upsert_book` resolver
 (platform 32) for audiobooks and `insert_edition` for ebooks. There is no
@@ -536,6 +560,10 @@ only edits that Step 7 can honor, escape ABS-provided strings, and display
 unknown or temporarily unavailable region and unresolved candidate results as
 review states. Confirmation uses the create POST; the resync checkbox is
 opt-in. Dry run is clearly identified and does not offer a real resync.
+
+When a draft preview receives 429, use its `Retry-After` header to defer the
+next attempt and show when the user can retry. Keep a sensible fallback for
+older servers that omit the header.
 
 Also expose the Step 5 forget-match action for already matched items, not only
 `needs_review` items. Show the current Hardcover book/edition target and ask
@@ -848,6 +876,9 @@ require the owner's instruction.
 - [ ] Distinguish ebook `insert_edition` capability from Audible
   `upsert_book` capability; never infer editability from a successful
   `update_edition` response without a read-back.
+- [ ] Define the shared, deployment-aware ABS base-URL and redirect policy
+  for profile and CLI configuration, including trusted local-network servers
+  and ABS credential scoping; Step 7 implements it before create ships.
 - [ ] Test no-mutation probes, scope denial, token change, transient errors,
   profile access, and dry run at the HTTP/client boundary.
 - [ ] Document the route and its truthful limits in README/OpenAPI, add one
@@ -857,6 +888,14 @@ require the owner's instruction.
 
 - [x] Verify the published `upsert_book` scope (`write:catalog:append` or
   broader catalogue-write scope) and a successful ordinary-token live import.
+- [ ] Enforce the Step 6 ABS URL policy at the shared client boundary for
+  profile and CLI configuration, including redirect targets, so sync, draft,
+  and create fetches use the same validation. Test rejected URLs and redirects
+  as well as allowed self-hosted servers.
+- [ ] Send `Retry-After` in seconds on draft 429 responses; document the
+  header in OpenAPI and test it at the HTTP boundary.
+- [ ] Add the legacy Audnex region setting clarification to `MIGRATION.md`
+  so upgraders know to set `sync_config.audnexus_region` per profile.
 - [ ] Add the bounded regional `upsert_book` resolver: require the run
   record's book ID and an established or user-supplied region, bound polling,
   handle `failed`/`loaded`/`created`, and verify returned book, edition, and
@@ -968,6 +1007,8 @@ require the owner's instruction.
   format-aware insertion fields for ebooks); escape ABS-provided strings.
 - [ ] Confirm through the create POST, display reused/created and error
   outcomes, and make resync an explicit option except in dry run.
+- [ ] Respect draft 429 `Retry-After` before retrying a preview, show the
+  wait to the user, and handle older servers without the header.
 - [ ] Disable create and forget-match while the profile is syncing, explain
   why, and handle a 409 from a sync that started after the page loaded.
 - [ ] Test capability denial, unverified capability with successful creation
