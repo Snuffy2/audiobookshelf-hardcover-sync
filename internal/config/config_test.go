@@ -194,6 +194,56 @@ func TestDatabaseSyncRunReportRetentionUsesYAMLAndEnvironment(t *testing.T) {
 	assert.Equal(t, 3, cfg.Database.SyncRunReportRetention)
 }
 
+func TestAudiobookshelfNetworkTrustDefaultYAMLAndEnvironment(t *testing.T) {
+	t.Setenv("AUDIOBOOKSHELF_URL", "")
+	t.Setenv("AUDIOBOOKSHELF_TOKEN", "abs-token")
+	t.Setenv("AUDIOBOOKSHELF_NETWORK_TRUST", "")
+	t.Setenv("HARDCOVER_TOKEN", "hc-token")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("audiobookshelf:\n  url: https://abs.example\n  network_trust: public_only\n"), 0644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "public_only", cfg.Audiobookshelf.NetworkTrust)
+
+	t.Setenv("AUDIOBOOKSHELF_NETWORK_TRUST", "allow_private")
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "allow_private", cfg.Audiobookshelf.NetworkTrust)
+
+	t.Setenv("AUDIOBOOKSHELF_NETWORK_TRUST", "")
+	defaultCfg := DefaultConfig()
+	assert.Equal(t, "allow_private", defaultCfg.Audiobookshelf.NetworkTrust)
+}
+
+func TestAudiobookshelfNetworkTrustRejectsUnsupportedValues(t *testing.T) {
+	t.Setenv("AUDIOBOOKSHELF_URL", "https://abs.example")
+	t.Setenv("AUDIOBOOKSHELF_TOKEN", "abs-token")
+	t.Setenv("AUDIOBOOKSHELF_NETWORK_TRUST", "trust_everything")
+	t.Setenv("HARDCOVER_TOKEN", "hc-token")
+	_, err := Load("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "audiobookshelf.network_trust")
+	assert.Contains(t, err.Error(), "trust_everything")
+}
+
+func TestAudiobookshelfConfigValidatesAndNormalizesURL(t *testing.T) {
+	t.Setenv("AUDIOBOOKSHELF_URL", "")
+	t.Setenv("AUDIOBOOKSHELF_TOKEN", "abs-token")
+	t.Setenv("AUDIOBOOKSHELF_NETWORK_TRUST", "")
+	t.Setenv("HARDCOVER_TOKEN", "hc-token")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("audiobookshelf:\n  url: http://abs.example/\n"), 0644))
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "http://abs.example", cfg.Audiobookshelf.URL)
+
+	t.Setenv("AUDIOBOOKSHELF_NETWORK_TRUST", "public_only")
+	_, err = Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must use https")
+}
+
 func TestLoadConfig_WithAudnexusRegion(t *testing.T) {
 	// Set required environment variables including Audnexus region
 	t.Setenv("AUDIOBOOKSHELF_URL", "https://example.com/audiobookshelf")

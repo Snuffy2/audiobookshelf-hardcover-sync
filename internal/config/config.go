@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/audnexregion"
 	"gopkg.in/yaml.v3"
 )
@@ -83,6 +84,8 @@ type Config struct {
 	Audiobookshelf struct {
 		// URL is the base URL of the Audiobookshelf server
 		URL string `yaml:"url" env:"AUDIOBOOKSHELF_URL"`
+		// NetworkTrust controls which destination addresses ABS requests may reach.
+		NetworkTrust string `yaml:"network_trust" env:"AUDIOBOOKSHELF_NETWORK_TRUST"`
 		// Token is the API token for Audiobookshelf
 		Token string `yaml:"token" env:"AUDIOBOOKSHELF_TOKEN"`
 		// AudnexusRegion is the normalized preference for the ten Audnex regions.
@@ -214,6 +217,7 @@ func DefaultConfig() *Config {
 	cfg.Server.Port = "8080"
 	cfg.Server.ShutdownTimeout = 30 * time.Second
 	cfg.Server.EnableWebUI = false // Web UI is disabled by default for backward compatibility
+	cfg.Audiobookshelf.NetworkTrust = audiobookshelf.NetworkTrustAllowPrivate
 
 	// Default sync configuration
 	cfg.Sync.Incremental = true
@@ -341,8 +345,8 @@ func Load(configPath string) (*Config, error) {
 	fmt.Println("Final configuration after validation and migration:")
 	fmt.Printf("Server:\n  port: %s\n  shutdown_timeout: %s\n  enable_web_ui: %v\n",
 		cfg.Server.Port, cfg.Server.ShutdownTimeout, cfg.Server.EnableWebUI)
-	fmt.Printf("Audiobookshelf:\n  url: %s\n  has_token: %v\n  audnexus_region: %s\n",
-		cfg.Audiobookshelf.URL, cfg.Audiobookshelf.Token != "", cfg.Audiobookshelf.AudnexusRegion)
+	fmt.Printf("Audiobookshelf:\n  url: %s\n  network_trust: %s\n  has_token: %v\n  audnexus_region: %s\n",
+		cfg.Audiobookshelf.URL, cfg.Audiobookshelf.NetworkTrust, cfg.Audiobookshelf.Token != "", cfg.Audiobookshelf.AudnexusRegion)
 	fmt.Printf("Hardcover:\n  has_token: %v\n  base_url: %s\n", cfg.Hardcover.Token != "", cfg.Hardcover.BaseURL)
 	fmt.Printf("Sync:\n  incremental: %v\n  state_file: %s\n  min_change_threshold: %d\n  sync_interval: %s\n  minimum_progress: %f\n  sync_want_to_read: %v\n  process_unread_books: %v\n  sync_owned: %v\n  dry_run: %v\n  single_user_mode: %v\n  single_user_username: %s\n  test_book_filter: %s\n  test_book_limit: %d\n  include_ebooks: %v\n",
 		cfg.Sync.Incremental, cfg.Sync.StateFile, cfg.Sync.MinChangeThreshold,
@@ -378,6 +382,25 @@ func Load(configPath string) (*Config, error) {
 
 // Validate checks that all required configuration is present and valid
 func (c *Config) Validate() error {
+	if c.Audiobookshelf.NetworkTrust == "" {
+		c.Audiobookshelf.NetworkTrust = audiobookshelf.NetworkTrustAllowPrivate
+	}
+	if c.Audiobookshelf.NetworkTrust != audiobookshelf.NetworkTrustAllowPrivate &&
+		c.Audiobookshelf.NetworkTrust != audiobookshelf.NetworkTrustPublicOnly {
+		return &ConfigError{
+			Field: "audiobookshelf.network_trust",
+			Msg: fmt.Sprintf("has unsupported value %q; must be %q or %q", c.Audiobookshelf.NetworkTrust,
+				audiobookshelf.NetworkTrustAllowPrivate, audiobookshelf.NetworkTrustPublicOnly),
+		}
+	}
+	if c.Audiobookshelf.URL != "" {
+		normalizedURL, err := audiobookshelf.ValidateBaseURL(c.Audiobookshelf.URL, c.Audiobookshelf.NetworkTrust)
+		if err != nil {
+			return &ConfigError{Field: "audiobookshelf.url", Msg: err.Error()}
+		}
+		c.Audiobookshelf.URL = normalizedURL
+	}
+
 	var missing []string
 
 	// When web UI is disabled (single-user mode), require tokens
@@ -604,6 +627,9 @@ func loadFromEnv(cfg *Config) {
 	// Audiobookshelf configuration
 	if url := os.Getenv("AUDIOBOOKSHELF_URL"); url != "" {
 		cfg.Audiobookshelf.URL = strings.TrimSuffix(url, "/")
+	}
+	if networkTrust := os.Getenv("AUDIOBOOKSHELF_NETWORK_TRUST"); networkTrust != "" {
+		cfg.Audiobookshelf.NetworkTrust = networkTrust
 	}
 	if token := os.Getenv("AUDIOBOOKSHELF_TOKEN"); token != "" {
 		cfg.Audiobookshelf.Token = token
