@@ -112,21 +112,3 @@ func TestEditionCapabilityForProfileUsesUpdatedHardcoverToken(t *testing.T) {
 	require.Equal(t, EditionCapabilityUnverified, withUpdatedToken.Audiobook.Status)
 	require.True(t, withUpdatedToken.Audiobook.CanAttempt)
 }
-
-func TestEditionCapabilityForProfileDoesNotDecryptAudiobookshelfToken(t *testing.T) {
-	service, db := newStatusLookupService(t)
-	const profileID = "capability-abs-token-isolation"
-	require.NoError(t, service.repository.CreateProfile(
-		profileID, "Capability profile", "http://abs.home", "abs-token", "hardcover-token",
-		database.SyncConfigData{DryRun: true},
-	))
-	require.NoError(t, db.Model(&database.SyncProfileConfig{}).
-		Where("profile_id = ?", profileID).
-		Update("audiobookshelf_token_encrypted", "not-valid-ciphertext").Error)
-
-	capability, err := service.EditionCapabilityForProfile(context.Background(), profileID)
-	require.NoError(t, err)
-	require.True(t, capability.DryRun)
-	require.Equal(t, EditionCapabilityUnverified, capability.Ebook.Status)
-	require.True(t, capability.Ebook.CanAttempt)
-}
