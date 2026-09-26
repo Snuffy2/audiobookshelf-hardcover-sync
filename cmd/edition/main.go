@@ -5,8 +5,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
@@ -24,6 +27,9 @@ var (
 	date    = "unknown"
 )
 
+// defaultConfigPath is optional; a file named with --config must exist.
+const defaultConfigPath = "config.yaml"
+
 // EditionCreatorInput is an alias for edition.EditionInput
 type EditionCreatorInput = edition.EditionInput
 
@@ -32,17 +38,22 @@ type EditionCreatorResult = edition.EditionResult
 
 func main() {
 	// Parse command line args manually to get config path
-	configPath := "config.yaml"
+	configPath := defaultConfigPath
+	explicitConfig := false
 	args := os.Args[1:]
 	for i, arg := range args {
 		if (arg == "-c" || arg == "--config") && i+1 < len(args) {
-			configPath = args[i+1]
+			configPath, explicitConfig = args[i+1], true
+			break
+		}
+		if value, ok := strings.CutPrefix(arg, "--config="); ok {
+			configPath, explicitConfig = value, true
 			break
 		}
 	}
 
 	// Load configuration first
-	cfg, err := config.Load(configPath)
+	cfg, err := loadEditionConfig(configPath, explicitConfig)
 	if err != nil {
 		// If we can't load config, use default logger settings
 		logger.Setup(logger.Config{
@@ -73,7 +84,7 @@ func main() {
 				Name:    "config",
 				Aliases: []string{"c"},
 				Usage:   "Load configuration from `FILE`",
-				Value:   "config.yaml",
+				Value:   defaultConfigPath,
 			},
 			&cli.BoolFlag{
 				Name:  "dry-run",
@@ -126,7 +137,7 @@ func main() {
 
 func createEdition(c *cli.Context) error {
 	// Initialize configuration
-	cfg, err := config.LoadFromFile(c.String("config"))
+	cfg, err := loadEditionConfig(c.String("config"), c.IsSet("config"))
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -178,7 +189,7 @@ func createEdition(c *cli.Context) error {
 
 func prepopulateEdition(c *cli.Context) error {
 	// Initialize configuration
-	cfg, err := config.LoadFromFile(c.String("config"))
+	cfg, err := loadEditionConfig(c.String("config"), c.IsSet("config"))
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -218,4 +229,17 @@ func prepopulateEdition(c *cli.Context) error {
 
 	fmt.Printf("Prepopulated data written to %s\n", outputFile)
 	return nil
+}
+
+// loadEditionConfig applies defaults, the YAML file, and environment overrides
+// without the sync service's required fields or configuration dump. A missing
+// default config.yaml leaves environment-only configuration; a file named with
+// --config must exist.
+func loadEditionConfig(path string, explicit bool) (*config.Config, error) {
+	if !explicit {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			path = ""
+		}
+	}
+	return config.LoadForTool(path)
 }
