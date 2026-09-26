@@ -58,6 +58,10 @@ saved.
 
 HTTPS certificate verification stays enabled in both modes.
 
+Audiobookshelf requests connect directly and ignore `HTTP_PROXY`,
+`HTTPS_PROXY`, and `NO_PROXY`. A proxy would resolve destinations outside the
+checked dialer, so an operator must provide a direct route to Audiobookshelf.
+
 ## Connections and redirects
 
 - Resolve the destination hostname for every connection. Reject the

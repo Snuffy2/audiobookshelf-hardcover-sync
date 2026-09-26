@@ -132,7 +132,7 @@ func (h *Handler) GetEditionSourceDraft(w http.ResponseWriter, r *http.Request) 
 	)
 	if err != nil {
 		h.log.Error("Invalid Audiobookshelf client configuration for edition source draft: " + err.Error())
-		h.writeErrorResponse(w, http.StatusInternalServerError, "Invalid Audiobookshelf client configuration")
+		h.writeErrorResponse(w, http.StatusConflict, "Saved Audiobookshelf URL is not permitted by the current network trust policy; update the profile URL")
 		return
 	}
 	book, err := absClient.GetLibraryItemByID(r.Context(), itemID)

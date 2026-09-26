@@ -33,6 +33,26 @@ type networkPolicy struct {
 	resolver ipResolver
 }
 
+// Transports hold only connection state. Request credentials and base paths
+// remain in each client's scopedRoundTripper.
+var networkTransports = map[string]*http.Transport{
+	NetworkTrustAllowPrivate: newNetworkTransport(NetworkTrustAllowPrivate),
+	NetworkTrustPublicOnly:   newNetworkTransport(NetworkTrustPublicOnly),
+}
+
+func newNetworkTransport(trust string) *http.Transport {
+	policy := networkPolicy{trust: trust, resolver: net.DefaultResolver}
+	return &http.Transport{
+		DialContext:           policy.dialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   2,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+}
+
 type errorRoundTripper struct{ err error }
 
 func (rt errorRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
@@ -131,17 +151,10 @@ func newHTTPClient(baseURL, token, networkTrust string) (*http.Client, error) {
 	}
 	policy := networkPolicy{trust: networkTrust, resolver: net.DefaultResolver}
 	// Proxies resolve the destination on our behalf and would bypass the
-	// address checks in the dialer. Preserve the default transport's timeout and
-	// connection-pool settings, with normal certificate verification enabled.
-	transport := &http.Transport{
-		DialContext:           policy.dialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   2,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: time.Second,
-	}
+	// address checks in the dialer. Share the connection pool across clients
+	// with the same trust mode so short-lived draft clients do not leave a pool
+	// of idle connections behind after each request.
+	transport := networkTransports[networkTrust]
 	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: scopedRoundTripper{base: base, token: token, policy: policy, next: transport},

@@ -959,6 +959,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The saved Audiobookshelf URL is invalid under the current network trust policy; update the profile URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '429':
           description: Two edition drafts are already being prepared on this server instance; retry after the indicated delay.
           headers:
@@ -972,7 +978,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: The profile could not be retrieved.
+          description: The profile could not be retrieved because of a server error.
           content:
             application/json:
               schema:

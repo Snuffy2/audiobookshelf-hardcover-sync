@@ -2,6 +2,7 @@ package audiobookshelf
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,30 @@ func TestValidateBaseURL(t *testing.T) {
 			assert.Equal(t, tt.wantURL, got)
 		})
 	}
+}
+
+func TestClientsReuseConnectionsWithoutSharingCredentials(t *testing.T) {
+	requests := make(chan struct{ peer, token string }, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{ peer, token string }{r.RemoteAddr, r.Header.Get("Authorization")}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	for _, token := range []string{"first", "second"} {
+		client, err := NewHTTPClientWithNetworkTrust(server.URL, token, NetworkTrustAllowPrivate)
+		require.NoError(t, err)
+		response, err := client.Get(server.URL)
+		require.NoError(t, err)
+		_, err = io.Copy(io.Discard, response.Body)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+	}
+
+	first, second := <-requests, <-requests
+	assert.Equal(t, first.peer, second.peer, "short-lived clients should reuse the connection pool")
+	assert.Equal(t, "Bearer first", first.token)
+	assert.Equal(t, "Bearer second", second.token)
 }
 
 func TestAddressAllowed(t *testing.T) {
