@@ -346,7 +346,8 @@ func (h *Handler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if errors.Is(err, multiuser.ErrProfileStateFileNameTooLong) ||
-			errors.Is(err, multiuser.ErrProfileStateFilePathNotAllowed) {
+			errors.Is(err, multiuser.ErrProfileStateFilePathNotAllowed) ||
+			errors.Is(err, multiuser.ErrInvalidAudiobookshelfURL) {
 			h.writeErrorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -471,7 +472,8 @@ func (h *Handler) UpdateProfileConfig(w http.ResponseWriter, r *http.Request) {
 		req.SyncConfig,
 	); err != nil {
 		if errors.Is(err, multiuser.ErrProfileStateFileNameTooLong) ||
-			errors.Is(err, multiuser.ErrProfileStateFilePathNotAllowed) {
+			errors.Is(err, multiuser.ErrProfileStateFilePathNotAllowed) ||
+			errors.Is(err, multiuser.ErrInvalidAudiobookshelfURL) {
 			h.writeErrorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
