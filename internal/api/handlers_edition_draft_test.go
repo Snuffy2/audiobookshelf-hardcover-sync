@@ -30,6 +30,9 @@ type editionDraftTestFixture struct {
 	handler           *Handler
 	authService       *auth.AuthService
 	db                *database.Database
+	repository        *database.Repository
+	multiUserService  *multiuser.MultiUserService
+	dataDir           string
 	owner             *auth.AuthUser
 	absRequests       *atomic.Int32
 	hardcoverRequests *atomic.Int32
@@ -111,7 +114,8 @@ func newEditionDraftTestFixtureWithABSDelay(t *testing.T, itemJSON, preferredReg
 	})
 	return &editionDraftTestFixture{
 		routes: routes, handler: handler, authService: authService, owner: owner,
-		db: db, absRequests: absRequests, hardcoverRequests: hardcoverRequests,
+		db: db, repository: repo, multiUserService: multiUserService, dataDir: dataDir,
+		absRequests: absRequests, hardcoverRequests: hardcoverRequests,
 	}
 }
 
@@ -176,6 +180,17 @@ func TestGetEditionSourceDraftRejectsPodcastBeforeDiscovery(t *testing.T) {
 	require.EqualValues(t, 1, fixture.absRequests.Load())
 	require.Zero(t, discoveryCalls.Load())
 	require.Zero(t, fixture.hardcoverRequests.Load())
+}
+
+func TestGetEditionSourceDraftBusyIncludesRetryAfter(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{"id":"abs-item-1","mediaType":"book","media":{"metadata":{"asin":"B0SOURCE12"},"duration":100}}`, "us")
+	fixture.handler.editionDraftSlots <- struct{}{}
+	fixture.handler.editionDraftSlots <- struct{}{}
+
+	response := fixture.request(editionDraftItemPath, fixture.sessionCookie(t, fixture.owner))
+	require.Equal(t, http.StatusTooManyRequests, response.Code, response.Body.String())
+	require.Equal(t, "1", response.Header().Get("Retry-After"))
+	require.Zero(t, fixture.absRequests.Load())
 }
 
 func TestGetEditionSourceDraftKeepsBareASINAndUsesDiscoveredRegionDate(t *testing.T) {

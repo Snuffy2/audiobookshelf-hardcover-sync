@@ -69,6 +69,7 @@ Existing single-profile setups are **automatically migrated** on first startup:
 | `GET` | `/api/profiles/{id}/edition-capability` | Report separate ebook and audiobook edition-write capability evidence |
 | `GET` | `/api/profiles/{id}/runs/{runId}/details` | Get book-level details for a retained sync run |
 | `GET` | `/api/profiles/{id}/edition-drafts/source/{itemID}` | Prepare a read-only edition draft from an Audiobookshelf item |
+| `POST` | `/api/profiles/{id}/edition-drafts/create` | Create an edition from a verified needs-review sync record |
 | `DELETE` | `/api/profiles/{id}/edition-associations/{itemID}` | Forget the saved Hardcover match for one Audiobookshelf item |
 | `POST` | `/api/profiles/{id}/sync` | Start sync |
 | `DELETE` | `/api/profiles/{id}/sync` | Cancel sync |
@@ -124,8 +125,35 @@ See [OpenAPI](docs/openapi.yaml) for response fields and warnings.
 Use a trusted Audiobookshelf URL: this route fetches it with the saved token.
 Enable authentication when exposing the API beyond localhost. A draft may
 check up to ten Audnex regions, with retries, within its 25-second deadline.
-Each server instance prepares at most two drafts concurrently; extra requests
-receive HTTP 429 and can be retried shortly.
+Each server instance handles at most two draft or edition-create requests at
+once; additional requests receive HTTP 429 with `Retry-After: 1`.
+
+### Create an edition
+
+`POST /api/profiles/{id}/edition-drafts/create` is the explicit path that may
+write an edition to Hardcover. Send the exact `run_id` and `abs_item_id` from
+a completed, non-dry-run sync record whose outcome is `needs_review`. The API
+refetches the Audiobookshelf item and rejects stale source data; it takes the
+Hardcover book ID from that run record, not from the request.
+
+For audiobooks, omit corrections to discover the source ASIN's Audnex region,
+or send `audible_identifier` as `ASIN:region` to correct it. Audiobook metadata
+is preview-only. Ebook requests may correct `title`, `subtitle`, `asin`,
+`isbn_10`, `isbn_13`, `release_date`, and `edition_format`. The response
+reports the verified Hardcover book and edition IDs; audiobook statuses are
+`loaded` or `created`, and ebook statuses are `existing` or `created`. A
+successful create saves a local association for the next sync.
+
+An active or deleting profile, stale source, profile dry run, or Hardcover
+identity conflict returns `409`; finish the sync, run a fresh sync after stale
+input, or turn off dry run as applicable. Busy create capacity or a locked
+state file returns `429` with `Retry-After: 1`. Temporary Audnex lookup
+failures, dependency timeouts, and service shutdown return `503`.
+If Hardcover succeeded but saving the local association failed, the endpoint
+returns `502`; retry the same request to reuse the Hardcover edition and save
+the association. Other non-timeout Audiobookshelf client setup/item lookup or
+Hardcover operation/verification failures also return `502`; the retry-and-reuse
+guarantee applies to the local-save error.
 
 ### Edition capability
 
@@ -613,6 +641,7 @@ logging:
 audiobookshelf:
   url: "https://your-audiobookshelf-instance.com"
   token: "your-audiobookshelf-token"
+  network_trust: "allow_private"
 
 # Hardcover configuration
 hardcover:
@@ -701,6 +730,16 @@ paths:
   mismatch_output_dir: "./mismatches"  # Directory for mismatch reports
 ```
 
+`audiobookshelf.network_trust` is a deployment-wide setting; profile owners
+cannot change it. `allow_private` is the default and permits self-hosted
+Audiobookshelf addresses, including LAN, loopback, shared overlay, and IPv6
+unique-local addresses, over HTTP or HTTPS.
+`public_only` permits public addresses over HTTPS and is intended for
+deployments where profile owners are less trusted. Set it with
+`AUDIOBOOKSHELF_NETWORK_TRUST` or the YAML value above. Unsupported values are
+configuration errors. The base URL must be absolute HTTP or HTTPS; connection
+and redirect destinations are checked against the selected mode.
+
 #### Environment Variables
 
 **Multi-User Mode (v3.0.0+)** - Recommended:
@@ -712,6 +751,7 @@ paths:
 | `LOG_LEVEL` | Logging level | `info` | `debug`, `warn`, `error` |
 | `LOG_FORMAT` | Log output format | `json` | `json`, `text` |
 | `HARDCOVER_BASE_URL` | Hardcover GraphQL API base URL | `https://api.hardcover.app/v1/graphql` | `https://api.hardcover.app/v1/graphql` |
+| `AUDIOBOOKSHELF_NETWORK_TRUST` | Audiobookshelf destination policy (`allow_private` or `public_only`) | `allow_private` | `public_only` |
 | `RATE_LIMIT_RATE` | Minimum time between Hardcover API requests | unset | `2s` (30 rpm) |
 | `RATE_LIMIT_MAX_CONCURRENT` | Max concurrent requests | unset | `1` |
 
@@ -742,6 +782,8 @@ The application supports two distinct operating modes controlled by the `enable_
 - `ENABLE_WEB_UI`: Enable/disable web UI (`true`/`false`, default: `false`)
 - `AUDIOBOOKSHELF_URL`: Audiobookshelf server URL (required)
 - `AUDIOBOOKSHELF_TOKEN`: Audiobookshelf API token (required for single-user mode)
+- `AUDIOBOOKSHELF_NETWORK_TRUST`: Deployment-wide ABS destination policy
+  (`allow_private` by default or `public_only`)
 - `AUDIOBOOKSHELF_AUDNEXUS_REGION`: Legacy setting; profile sync and drafts use `sync_config.audnexus_region` instead.
 - `HARDCOVER_TOKEN`: Hardcover API token (required for single-user mode)
 

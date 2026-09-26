@@ -153,7 +153,8 @@ func TestCreateEdition_ReusesOnlyAnEditionOfTheSameBook(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := &edition.EditionInput{
-				BookID: bookID, Title: "A Title", ASIN: tt.asin, ISBN13: tt.isbn13, AuthorIDs: []int{1},
+				ReadingFormat: "ebook",
+				BookID:        bookID, Title: "A Title", ASIN: tt.asin, ISBN13: tt.isbn13, AuthorIDs: []int{1},
 				ImageURL: "https://audiobookshelf.example.test/api/items/x/cover",
 			}
 			creator := edition.NewCreatorWithHTTPClient(tt.client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
@@ -207,7 +208,8 @@ func TestCreateEdition_DetectsAnExistingEditionByEveryIdentifierBeforeInserting(
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := &edition.EditionInput{
-				BookID: bookID, Title: "A Title", ISBN10: tt.isbn10, ISBN13: tt.isbn13, AuthorIDs: []int{1},
+				ReadingFormat: "ebook",
+				BookID:        bookID, Title: "A Title", ISBN10: tt.isbn10, ISBN13: tt.isbn13, AuthorIDs: []int{1},
 				ImageURL: "https://audiobookshelf.example.test/api/items/x/cover",
 			}
 			creator := edition.NewCreatorWithHTTPClient(tt.client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
@@ -245,7 +247,8 @@ func TestCreateEdition_LookupFailureDoesNotInsert(t *testing.T) {
 	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
 
 	_, err := creator.CreateEdition(context.Background(), &edition.EditionInput{
-		BookID: 123, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0LOOKUPFAIL",
+		ReadingFormat: "ebook",
+		BookID:        123, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0LOOKUPFAIL",
 	})
 
 	if err == nil || !strings.Contains(err.Error(), "temporary lookup failure") {
@@ -265,7 +268,8 @@ func TestCreateEdition_DuplicateLookupFailureIsSurfaced(t *testing.T) {
 	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
 
 	_, err := creator.CreateEdition(context.Background(), &edition.EditionInput{
-		BookID: 123, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0DUPLOOKUPFAIL",
+		ReadingFormat: "ebook",
+		BookID:        123, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0DUPLOOKUPFAIL",
 	})
 
 	if err == nil || !strings.Contains(err.Error(), "duplicate relookup failed") {
@@ -281,7 +285,8 @@ func TestCreateEditionRejectsNegativeBookIDWithoutMutation(t *testing.T) {
 	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
 
 	_, err := creator.CreateEdition(context.Background(), &edition.EditionInput{
-		BookID: -1, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0INVALID01",
+		ReadingFormat: "ebook",
+		BookID:        -1, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0INVALID01",
 	})
 
 	if err == nil || !strings.Contains(err.Error(), "book_id is required") {
@@ -296,7 +301,8 @@ func TestCreateEdition_LooksUpEachIdentifierOnceInOrder(t *testing.T) {
 	client := &reuseClient{insertID: 777}
 	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
 	input := &edition.EditionInput{
-		BookID: 123, Title: "A Title", AuthorIDs: []int{1},
+		ReadingFormat: "ebook",
+		BookID:        123, Title: "A Title", AuthorIDs: []int{1},
 		ASIN: "B0EXISTING1", ISBN13: "978-0-306-40615-7", ISBN10: "0306406152",
 	}
 
@@ -316,7 +322,8 @@ func TestCreateEdition_DryRunLooksNothingUp(t *testing.T) {
 	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), true, "token", &http.Client{Transport: failingTransport{}})
 
 	result, err := creator.CreateEdition(context.Background(), &edition.EditionInput{
-		BookID: 123, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0EXISTING1", ISBN13: "9780306406157",
+		ReadingFormat: "ebook",
+		BookID:        123, Title: "A Title", AuthorIDs: []int{1}, ASIN: "B0EXISTING1", ISBN13: "9780306406157",
 	})
 
 	if err != nil || result.EditionID != 0 || result.Existing {
@@ -344,8 +351,6 @@ func TestCreateEdition_EbookInputCreatesAnEbookEdition(t *testing.T) {
 	}{
 		{"ebook", "ebook", "Ebook", 4, false, "ebook"},
 		{"ebook is case-insensitive", " Ebook ", "Ebook", 4, false, "ebook"},
-		{"audiobook", "audiobook", "Audiobook", 2, true, "audiobook"},
-		{"unset stays an audiobook", "", "Audiobook", 2, true, "audiobook"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -395,6 +400,30 @@ func TestCreateEdition_EbookInputCreatesAnEbookEdition(t *testing.T) {
 	}
 }
 
+func TestCreateEditionRejectsAudiobooksWithoutRegionalImport(t *testing.T) {
+	client := &reuseClient{}
+	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
+
+	for _, input := range []*edition.EditionInput{
+		{BookID: 123, Title: "A Title", ASIN: "B0AUDIO001", AuthorIDs: []int{1}},
+		{BookID: 123, Title: "A Title", ASIN: "B0AUDIO001", AuthorIDs: []int{1}, ReadingFormat: models.ReadingFormatAudiobook},
+	} {
+		_, err := creator.CreateEdition(context.Background(), input)
+		if !errors.Is(err, edition.ErrAudiobookRequiresRegionalImport) {
+			t.Fatalf("CreateEdition() error = %v, want ErrAudiobookRequiresRegionalImport", err)
+		}
+	}
+	_, err := creator.CreateEdition(context.Background(), &edition.EditionInput{
+		BookID: 123, Title: "A Title", AuthorIDs: []int{1}, ReadingFormat: "paperback",
+	})
+	if err == nil || errors.Is(err, edition.ErrAudiobookRequiresRegionalImport) {
+		t.Fatalf("CreateEdition() invalid reading format error = %v, want input validation error", err)
+	}
+	if len(client.lookups) != 0 || len(client.mutations) != 0 {
+		t.Fatalf("audiobook insertion made lookups %v and mutations %v, want no Hardcover calls", len(client.lookups), len(client.mutations))
+	}
+}
+
 func TestEditionInputValidate_RejectsAnUnknownReadingFormat(t *testing.T) {
 	input := edition.EditionInput{BookID: 1, Title: "T", AuthorIDs: []int{1}, ReadingFormat: "paperback"}
 	if err := input.Validate(); err == nil {
@@ -417,7 +446,8 @@ func TestCreateEdition_DuplicateErrorFallbackFindsAnEditionByISBN10(t *testing.T
 		byISBN10:     &models.Edition{ID: "555", BookID: "123"},
 		afterInsert:  true,
 	}
-	input := &edition.EditionInput{BookID: 123, Title: "A Title", ISBN10: "0306406152", AuthorIDs: []int{1}}
+	input := &edition.EditionInput{
+		ReadingFormat: "ebook", BookID: 123, Title: "A Title", ISBN10: "0306406152", AuthorIDs: []int{1}}
 	creator := edition.NewCreatorWithHTTPClient(client, logger.Get(), false, "token", &http.Client{Transport: failingTransport{}})
 
 	result, err := creator.CreateEdition(context.Background(), input)

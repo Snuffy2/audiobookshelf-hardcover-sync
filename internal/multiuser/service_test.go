@@ -689,10 +689,10 @@ func TestForgetEditionAssociationSerializesWithLegacyStateMigration(t *testing.T
 	releaseMigration := make(chan struct{})
 	migrationDone := make(chan error, 1)
 	go func() {
-		migrationDone <- service.withProfileStateFileLock(profileID, "", func() error {
+		migrationDone <- service.withProfileStateFileLock(profileID, "", func(lockedStatePath string) error {
 			close(entered)
 			<-releaseMigration
-			return service.migrateLegacyProfileStatePath(profileID, "")
+			return service.migrateLegacyProfileStatePath(profileID, "", lockedStatePath)
 		})
 	}()
 	<-entered // Migration owns the same canonical sidecar lock used by forget.
@@ -784,9 +784,14 @@ func TestUpdateProfileConfigSerializesWithForgetEditionAssociation(t *testing.T)
 
 	updateDone := make(chan error, 1)
 	go func() {
-		updateDone <- service.UpdateProfileConfig(profileID, "", "", "", database.SyncConfigData{StateFile: newFile})
+		updateDone <- service.UpdateProfileConfig(profileID, "http://audiobookshelf", "", "", database.SyncConfigData{StateFile: newFile})
 	}()
-	<-updateReadEntered // The update owns its profile gate while paused in the repository read.
+	select {
+	case <-updateReadEntered: // The update owns its profile gate while paused in the repository read.
+	case <-time.After(5 * time.Second):
+		releaseUpdate()
+		t.Fatal("profile configuration update did not reach its repository read")
+	}
 
 	forgetDone := make(chan struct {
 		result *ForgetAssociationResult
