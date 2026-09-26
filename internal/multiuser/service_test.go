@@ -784,9 +784,14 @@ func TestUpdateProfileConfigSerializesWithForgetEditionAssociation(t *testing.T)
 
 	updateDone := make(chan error, 1)
 	go func() {
-		updateDone <- service.UpdateProfileConfig(profileID, "", "", "", database.SyncConfigData{StateFile: newFile})
+		updateDone <- service.UpdateProfileConfig(profileID, "http://audiobookshelf", "", "", database.SyncConfigData{StateFile: newFile})
 	}()
-	<-updateReadEntered // The update owns its profile gate while paused in the repository read.
+	select {
+	case <-updateReadEntered: // The update owns its profile gate while paused in the repository read.
+	case <-time.After(5 * time.Second):
+		releaseUpdate()
+		t.Fatal("profile configuration update did not reach its repository read")
+	}
 
 	forgetDone := make(chan struct {
 		result *ForgetAssociationResult
