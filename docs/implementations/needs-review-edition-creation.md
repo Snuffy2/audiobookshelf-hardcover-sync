@@ -1,8 +1,8 @@
 # Plan: Resolve Audiobookshelf Identifiers and Add Hardcover Editions
 
 **Status:** Revised after the Audible mapping investigation; implementation and
-PR boundaries remain subject to review. Steps 1 and 2 are merged into `develop`.
-Step 3 and later are not merged.
+PR boundaries remain subject to review. Steps 1–6 are merged into `develop`.
+Step 7a is open for review; Step 7b and later are not merged.
 
 This is the current plan. The [legacy seven-step version](needs-review-edition-creation-legacy.md)
 is retained for its completed-work record and earlier decisions; its unmerged
@@ -186,11 +186,11 @@ branches and is not opened as a PR itself.
 |---|---|---|---|
 | 1 | ISBN and export foundations | `develop` | Merged |
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
-| 3 | Read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Add the shared Audnex region discovery with typed client errors and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown and temporarily unavailable. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint makes no Hardcover request and works by itself. | 2 | Implemented on `feature/needs-review-edition-source-draft`; open items are in the Step 3 checklist |
-| 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
-| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | New work |
-| 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Extract from the old Step 4 branch and revise |
-| 7a | Enforce the Step 6 ABS URL policy at the shared client boundary for profile settings, sync, the draft endpoint, and CLI configuration, including redirect targets, and add the server-wide `audiobookshelf.network_trust` setting. Send `Retry-After` on draft 429 responses. No create path and no catalogue writes. | 6 | Split from the combined Step 7 branch |
+| 3 | Read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Add the shared Audnex region discovery with typed client errors and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown and temporarily unavailable. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint makes no Hardcover request and works by itself. | 2 | Merged upstream PR #199 |
+| 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Merged upstream PR #200 |
+| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | Merged upstream PR #201 |
+| 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Merged upstream PR #202 |
+| 7a | Enforce the Step 6 ABS URL policy at the shared client boundary for profile settings, sync, the draft endpoint, and CLI configuration, including redirect targets, and add the server-wide `audiobookshelf.network_trust` setting. Send `Retry-After` on draft 429 responses. No create path and no catalogue writes. | 6 | Open upstream PR #205 |
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Split from the combined Step 7 branch |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Split from the combined Step 7 branch |
 | 8 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7b | Not started |
@@ -680,17 +680,14 @@ before ISBN.
 
 ## PR and branch handling
 
-- Steps 1 and 2 are merged; do not reopen their PRs for this change.
-- The existing Step 3 [fork PR #28](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/28)
+- Steps 1–6 are merged; do not reopen their PRs for this change.
+- The earlier Step 3 [fork PR #28](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/28)
   and [upstream PR #198](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/198)
-  implement the old plan. Step 3 is rewritten from current `develop`; the
-  rewrite can replace that branch's contents or supersede those PRs only on
-  the owner's explicit command.
-- The old Step 5 branch is source material for new Step 4. Rebase and audit its
-  diff against current `develop` rather than merging the old stacked branch.
-- Do not merge the old Step 4 create branch as-is. Restack and split its useful
-  code into Steps 6 and 7, preserving the create endpoint's authorization,
-  dry-run, timeout, shutdown, and error-handling safeguards.
+  implemented the old plan. The rewritten Step 3 merged as upstream PR #199.
+- The old Step 5 branch supplied source material for Step 4, which merged as
+  upstream PR #200 rather than merging the old stacked branch.
+- The old Step 4 create branch was source material for Steps 6 and 7; its
+  combined create path was not merged as-is. Step 6 merged as upstream PR #202.
 - Each PR targets `develop`, has one release-facing CHANGELOG bullet, updates
   its affected README/OpenAPI/crosswalk contract, and passes the affected Go
   tests, `make test`, `make lint`, relevant builds, and web tests if touched.
@@ -702,10 +699,12 @@ before ISBN.
 Every fork and upstream PR uses the repository's
 [pull request template](../../.github/pull_request_template.md). Put the
 following `Multi-Step Project` block after **Summary of Changes** and before
-**Testing Instructions**. Copy it into the PR for that step, move `(this PR)`
-to the delivered line, and keep merged steps struck through without changing
-their historical wording. Keep each line to one or two sentences. Answer every
-template checklist item exactly as written; put qualifications in Testing
+**Testing Instructions**. Before drafting each PR, verify which steps have
+merged from the live upstream PRs; do not rely on this example's status. Copy
+the block into the PR for that step, move `(this PR)` to the delivered line,
+and strike every merged step without changing its historical wording. Keep
+each line to one or two sentences. Answer every template checklist item
+exactly as written; put qualifications in Testing
 Instructions. Do not add issue links to fork PRs or upstream PRs targeting
 non-default `develop`.
 
@@ -716,16 +715,16 @@ non-default `develop`.
 
 2. ~~Edition creator hardening: Make the edition creator reuse an existing edition of the same book by ASIN or ISBN and refuse another book's, honor the requested edition format, send the Audiobookshelf token only to its own server, keep the cover upload code but switched off, and create ebook editions.~~
 
-3. Edition draft endpoint (this PR): Preview ABS audiobook and ebook metadata without a Hardcover call. Treat an audiobook ASIN as a source Audible identifier, discover its region with bounded Audnex lookup, and use the matched region's release date.
+3. ~~Edition draft endpoint: Preview ABS audiobook and ebook metadata without a Hardcover call. Treat an audiobook ASIN as a source Audible identifier, discover its region with bounded Audnex lookup, and use the matched region's release date.~~
 
-4. ISBN counterpart matching: Find ISBN-10 and ISBN-13 counterparts during sync while preserving reading-format checks.
+4. ~~ISBN counterpart matching: Find ISBN-10 and ISBN-13 counterparts during sync while preserving reading-format checks.~~
 
-5. Durable Audible matching: Store confirmed ABS-to-Hardcover associations, offer a forget-match API, recover from confirmed edition deletion, and match exact regional Audible mappings without catalogue writes. Protect sync and forget-match with a cross-process state-file lock while preserving incremental skip behavior.
+5. ~~Durable Audible matching: Store confirmed ABS-to-Hardcover associations, offer a forget-match API, recover from confirmed edition deletion, and match exact regional Audible mappings without catalogue writes. Protect sync and forget-match with a cross-process state-file lock while preserving incremental skip behavior.~~
 
-6. Create capability: Report whether the profile can insert ebook editions or import regional Audible identifiers. Allow an otherwise eligible create attempt when permission is unverified, with a warning.
+6. ~~Create capability: Report whether the profile can insert ebook editions or import regional Audible identifiers. Allow an otherwise eligible create attempt when permission is unverified, with a warning.~~
 
 7. Edition create, delivered in three PRs:
-   - 7a. Audiobookshelf network trust: Enforce the server-wide ABS URL and redirect policy for sync, drafts, profiles, and CLI settings, and send `Retry-After` on busy draft responses.
+   - 7a. Audiobookshelf network trust (this PR): Enforce the server-wide ABS URL and redirect policy for sync, drafts, profiles, and CLI settings, and send `Retry-After` on busy draft responses.
    - 7b. Edition create endpoint: Require an ASIN or ISBN, reject stale run records, and insert format-aware ebooks or import regional Audible identifiers on request. Validate book and format, then save the association under Step 5's lock.
    - 7c. Standalone edition CLI: Move `edition create` audiobooks to the regional importer, stop audiobook `insert_edition`, and save the association under Step 5's lock when given an ABS item ID.
 
@@ -739,9 +738,11 @@ non-default `develop`.
 ```
 
 Update this block here first when a step's actual contract changes, then
-update any open PR descriptions. When an upstream PR merges, strike its line
-through and update the delivery table and checklist in the same plan change.
-The example marks Step 3 as the current PR; no Step 4–10 PR is implied to
+update any open PR descriptions. When an upstream PR merges, verify its live
+merged state, strike its line through, and update the delivery table and
+checklist heading in the same plan change. Before publishing the next PR,
+compare its `Multi-Step Project` block against those live states again.
+The example marks Step 7a as the current PR; no Step 7b–10 PR is implied to
 exist.
 
 ## Changelog by step
@@ -812,6 +813,8 @@ old R4 destination as an implementation contract.
 
 These are the follow-up lists for the revised sequence. A checked item means
 the work or verified pre-existing part is complete, not merely planned.
+The delivery table and checklist headings record merged status; an unchecked
+historical item does not mean its PR is still open or prove that work is absent.
 Before marking any implementation step done, run its focused behavioral tests,
 `gofmt`, relevant builds and `go vet`, `make test`, and `make lint`; run
 `node --test web/app.test.js` when web code changes. Update README, OpenAPI,
@@ -838,7 +841,7 @@ require the owner's instruction.
 - [x] Merge upstream PR #197 into `develop`; retain its existing CHANGELOG
   bullet and completed review record in the legacy plan.
 
-### Step 3 — source draft (rewrite)
+### Step 3 — source draft (merged upstream PR #199)
 
 - [x] Establish ordinary-token Audible import/update behavior: import
   succeeded, but attempted title and subtitle edits did not persist. Limit
@@ -874,7 +877,7 @@ require the owner's instruction.
 - [ ] Update README, OpenAPI, the single CHANGELOG bullet, and the PR
   description; run the shared validation and PR gates.
 
-### Step 4 — ISBN counterpart matching
+### Step 4 — ISBN counterpart matching (merged upstream PR #200)
 
 - [x] A prior Step 5 branch contains an ISBN matching implementation to audit
   and restack; that branch is not merged.
@@ -886,7 +889,7 @@ require the owner's instruction.
 - [ ] Update the matching documentation and one CHANGELOG bullet, complete
   the shared validation, and publish only on instruction.
 
-### Step 5 — durable association and exact Audible mapping
+### Step 5 — durable association and exact Audible mapping (merged upstream PR #201)
 
 - [x] Choose the existing versioned sync state file for CLI and per-profile
   web persistence.
@@ -943,7 +946,7 @@ require the owner's instruction.
 - [ ] Document the persistence and read-only matching behavior, add one
   CHANGELOG bullet, and complete the shared validation and PR gates.
 
-### Step 6 — create capability
+### Step 6 — create capability (merged upstream PR #202)
 
 - [ ] Split the existing create branch so capability reporting is a standalone
   route, with authorization matching the eventual create operation.
