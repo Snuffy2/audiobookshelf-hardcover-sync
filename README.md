@@ -69,6 +69,7 @@ Existing single-profile setups are **automatically migrated** on first startup:
 | `GET` | `/api/profiles/{id}/edition-capability` | Report separate ebook and audiobook edition-write capability evidence |
 | `GET` | `/api/profiles/{id}/runs/{runId}/details` | Get book-level details for a retained sync run |
 | `GET` | `/api/profiles/{id}/edition-drafts/source/{itemID}` | Prepare a read-only edition draft from an Audiobookshelf item |
+| `POST` | `/api/profiles/{id}/edition-drafts/create` | Create an edition from a verified needs-review sync record |
 | `DELETE` | `/api/profiles/{id}/edition-associations/{itemID}` | Forget the saved Hardcover match for one Audiobookshelf item |
 | `POST` | `/api/profiles/{id}/sync` | Start sync |
 | `DELETE` | `/api/profiles/{id}/sync` | Cancel sync |
@@ -124,8 +125,32 @@ See [OpenAPI](docs/openapi.yaml) for response fields and warnings.
 Use a trusted Audiobookshelf URL: this route fetches it with the saved token.
 Enable authentication when exposing the API beyond localhost. A draft may
 check up to ten Audnex regions, with retries, within its 25-second deadline.
-Each server instance prepares at most two drafts concurrently; extra requests
-receive HTTP 429 with `Retry-After: 1`.
+Each server instance handles at most two draft or edition-create requests at
+once; additional requests receive HTTP 429 with `Retry-After: 1`.
+
+### Create an edition
+
+`POST /api/profiles/{id}/edition-drafts/create` is the only API route that
+writes an edition to Hardcover, and only when you call it; sync never does.
+Send the `run_id` and
+`abs_item_id` of a `needs_review` item from a completed, non-dry-run sync. The
+Hardcover book always comes from that sync record, never from the request.
+
+- **Audiobooks** are imported through Hardcover's regional Audible importer.
+  Omit `audible_identifier` to discover the ASIN's region with Audnex, or send
+  `ASIN:region` to choose it. Audiobook metadata cannot be edited.
+- **Ebooks** are inserted as ebook editions. You may correct `title`,
+  `subtitle`, `asin`, `isbn_10`, `isbn_13`, `release_date`, and
+  `edition_format`. An ebook needs an ASIN or ISBN.
+
+The item must still match the sync record: if its ASIN, ISBN, title, author,
+or format changed, run a new sync first. A profile that is syncing, in dry
+run, or already has a saved match is refused. On success the verified
+Hardcover book and edition are saved as the item's match for the next sync.
+
+If an error says Hardcover may already have processed the request, check the
+book in Hardcover before retrying; a retry may create another edition. See
+[OpenAPI](docs/openapi.yaml) for request fields, statuses, and retry guidance.
 
 ### Edition capability
 
