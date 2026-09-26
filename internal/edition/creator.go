@@ -43,6 +43,10 @@ var (
 	errCoverFormat = errors.New("cover image is not a PNG or JPEG")
 	// errCoverTooLarge means the downloaded cover exceeds maxCoverBytes.
 	errCoverTooLarge = errors.New("cover image is too large")
+	// ErrAudiobookRequiresRegionalImport means the legacy edition insertion
+	// method was used for an audiobook. Audiobooks must use Hardcover's regional
+	// Audible import path instead of insert_edition.
+	ErrAudiobookRequiresRegionalImport = errors.New("audiobooks require a confirmed regional Audible import")
 	// ErrCreateEditionPreMutation marks a failure during the duplicate lookup or
 	// existing-edition adoption checks that run before insert_edition is sent.
 	// Callers can use it to distinguish a safe retry from an uncertain mutation.
@@ -145,7 +149,8 @@ type HardcoverClient interface {
 	GetAuthHeader() string
 }
 
-// Creator handles the creation of audiobook editions in Hardcover
+// Creator handles format-aware ebook edition creation in Hardcover. Audiobooks
+// must use the regional Audible import operation in the Hardcover client.
 type Creator struct {
 	client              HardcoverClient
 	log                 *logger.Logger
@@ -430,9 +435,17 @@ func NewCreatorWithHTTPClient(client HardcoverClient, log *logger.Logger, dryRun
 	}
 }
 
-// CreateEdition creates a new edition in Hardcover, an audiobook unless the input
-// says ebook.
+// CreateEdition inserts a new ebook edition in Hardcover. Audiobooks must use
+// the regional Audible import operation in the Hardcover client.
 func (c *Creator) CreateEdition(ctx context.Context, input *EditionInput) (*EditionResult, error) {
+	if input == nil {
+		return nil, fmt.Errorf("invalid input: edition input is required")
+	}
+	readingFormat := strings.TrimSpace(input.ReadingFormat)
+	if readingFormat == "" || strings.EqualFold(readingFormat, models.ReadingFormatAudiobook) {
+		return nil, ErrAudiobookRequiresRegionalImport
+	}
+
 	// Validate input
 	if err := input.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
