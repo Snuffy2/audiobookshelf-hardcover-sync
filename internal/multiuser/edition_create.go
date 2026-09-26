@@ -14,8 +14,8 @@ import (
 
 // ErrEditionAssociationSaveAfterRemoteSuccess distinguishes a verified
 // Hardcover result from a failure to persist the local association. Callers
-// can safely retry because the Hardcover create path checks for/reuses an
-// existing edition before inserting another one.
+// should verify the Hardcover result before retrying because a retry may
+// create another edition.
 var ErrEditionAssociationSaveAfterRemoteSuccess = errors.New("Hardcover edition created but local association could not be saved")
 
 // ErrEditionCreateDryRun indicates that edition creation is disabled for a

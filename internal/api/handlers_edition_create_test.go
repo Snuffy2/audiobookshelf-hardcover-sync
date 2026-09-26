@@ -508,7 +508,7 @@ func TestCreateEditionFromDraftStateLockReturnsRetryAfterBeforeABSFetch(t *testi
 	require.Zero(t, fixture.absRequests.Load())
 }
 
-func TestCreateEditionFromDraftSaveFailureExplainsSafeRetry(t *testing.T) {
+func TestCreateEditionFromDraftSaveFailureExplainsRecovery(t *testing.T) {
 	fixture := newEditionDraftTestFixture(t, `{
 		"id":"abs-item-1","mediaType":"book","media":{
 			"metadata":{"title":"Reviewed title","authorName":"Author","asin":"B0SOURCE12","isbn":"9780306406157"},
@@ -517,30 +517,19 @@ func TestCreateEditionFromDraftSaveFailureExplainsSafeRetry(t *testing.T) {
 	configureEditionCreateRoute(t, fixture)
 	addCompletedNeedsReviewRun(t, fixture, "run-create-save-fail", editionCreateRecord())
 	var importCalls atomic.Int32
-	var insertedEditions atomic.Int32
-	imported := make(map[string]hardcover.RegionalAudiobookResult)
 	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
 		return editionCreateHardcoverStub{importFn: func(_ context.Context, input hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
 			statePath := editionCreateProfileStatePath(fixture)
-			key := input.ASIN + ":" + strings.ToLower(input.Region)
-			result, exists := imported[key]
-			if !exists {
-				insertedEditions.Add(1)
-				result = hardcover.RegionalAudiobookResult{
-					Status: hardcover.RegionalAudiobookCreated, BookID: input.BookID, EditionID: 84,
-					ReadingFormatID:    models.ReadingFormatID(models.ReadingFormatAudiobook),
-					RegionalExternalID: key,
-				}
-				imported[key] = result
-			} else {
-				result.Status = hardcover.RegionalAudiobookLoaded
-			}
 			importCalls.Add(1)
 			if importCalls.Load() == 1 {
 				// The association file is a directory by the time the transaction saves.
 				require.NoError(t, os.Mkdir(statePath, 0700))
 			}
-			return &result, nil
+			return &hardcover.RegionalAudiobookResult{
+				Status: hardcover.RegionalAudiobookCreated, BookID: input.BookID, EditionID: 84,
+				ReadingFormatID:    models.ReadingFormatID(models.ReadingFormatAudiobook),
+				RegionalExternalID: input.ASIN + ":" + strings.ToLower(input.Region),
+			}, nil
 		}}
 	}
 	body := `{"run_id":"run-create-save-fail","abs_item_id":"abs-item-1","audible_identifier":"B0SOURCE12:uk"}`
@@ -549,9 +538,8 @@ func TestCreateEditionFromDraftSaveFailureExplainsSafeRetry(t *testing.T) {
 	response := httptest.NewRecorder()
 	fixture.routes.ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadGateway, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "Retrying will reuse the Hardcover edition")
+	require.Contains(t, response.Body.String(), "Verify the Hardcover result before retrying; retrying may create another edition")
 	require.EqualValues(t, 1, importCalls.Load())
-	require.EqualValues(t, 1, insertedEditions.Load())
 	require.NoError(t, os.Remove(editionCreateProfileStatePath(fixture)))
 
 	retry := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(body))
@@ -559,8 +547,6 @@ func TestCreateEditionFromDraftSaveFailureExplainsSafeRetry(t *testing.T) {
 	retryResponse := httptest.NewRecorder()
 	fixture.routes.ServeHTTP(retryResponse, retry)
 	require.Equal(t, http.StatusOK, retryResponse.Code, retryResponse.Body.String())
-	require.EqualValues(t, 2, importCalls.Load())
-	require.EqualValues(t, 1, insertedEditions.Load())
 	saved, err := statepkg.LoadState(editionCreateProfileStatePath(fixture))
 	require.NoError(t, err)
 	association, exists := saved.GetAssociation("abs-item-1")

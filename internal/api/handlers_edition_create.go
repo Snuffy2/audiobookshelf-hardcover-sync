@@ -650,7 +650,7 @@ func (h *Handler) writeEditionCreateError(w http.ResponseWriter, profileID strin
 		h.writeErrorResponse(w, http.StatusConflict, "Edition creation is disabled while this profile is in dry run")
 	case errors.Is(err, multiuser.ErrEditionAssociationSaveAfterRemoteSuccess):
 		h.log.Error(fmt.Sprintf("Hardcover returned a verified edition but association save failed for profile %s: %v", profileID, err))
-		h.writeErrorResponse(w, http.StatusBadGateway, "Hardcover returned a verified edition, but the local match could not be saved. Retrying will reuse the Hardcover edition and save the match.")
+		h.writeErrorResponse(w, http.StatusBadGateway, "Hardcover returned a verified edition, but the local match could not be saved. Verify the Hardcover result before retrying; retrying may create another edition.")
 	case errors.Is(err, errEditionCreateInvalidInput):
 		h.writeErrorResponse(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, errAudibleRegionUnknown):

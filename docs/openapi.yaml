@@ -1166,9 +1166,9 @@ paths:
             Non-timeout Audiobookshelf client setup or item lookup failed, a
             generic Hardcover operation or result verification failed, or
             the remote operation succeeded but the local match could not be
-            saved. When the error
-            says the local save failed, retry the same request; the operation
-            reuses the Hardcover edition and attempts to save the match again.
+            saved. When the error says the local save failed, verify the
+            Hardcover result before retrying; a retry may create another
+            edition.
           content:
             application/json:
               schema:

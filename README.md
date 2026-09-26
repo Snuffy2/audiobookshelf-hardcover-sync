@@ -151,10 +151,9 @@ or turn off dry run as applicable. Busy create capacity or a locked state file
 returns `429` with `Retry-After: 1`. Temporary Audnex lookup
 failures, dependency timeouts, and service shutdown return `503`.
 If Hardcover succeeded but saving the local association failed, the endpoint
-returns `502`; retry the same request to reuse the Hardcover edition and save
-the association. Other non-timeout Audiobookshelf client setup/item lookup or
-Hardcover operation/verification failures also return `502`; the retry-and-reuse
-guarantee applies to the local-save error.
+returns `502`; verify the Hardcover result before retrying, because a retry may
+create another edition. Other non-timeout Audiobookshelf client setup/item
+lookup or Hardcover operation/verification failures also return `502`.
 
 ### Edition capability
 

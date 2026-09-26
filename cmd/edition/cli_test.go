@@ -137,6 +137,54 @@ func TestRunCreateStoresVerifiedAudiobookAssociationUnderLock(t *testing.T) {
 	}
 }
 
+func TestRunCreateRejectsExistingAssociationBeforeRemoteCalls(t *testing.T) {
+	tmp := t.TempDir()
+	statePath := filepath.Join(tmp, "sync-state.json")
+	initial := state.NewState()
+	existing := state.Association{
+		ABSItemID: "item-1", SourceASIN: "B012345678", HardcoverBookID: "21",
+		HardcoverEditionID: "34", ReadingFormat: models.ReadingFormatAudiobook, Provenance: "cli_audiobook_created",
+	}
+	if err := initial.SetAssociation(existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := initial.Save(statePath); err != nil {
+		t.Fatal(err)
+	}
+	inputPath := writeCreateInput(t, `{"book_id":21,"asin":"B012345678","abs_item_id":"item-1","region":"uk"}`)
+	remoteCalled := false
+	services := createServices{
+		fetchABSItem: func(context.Context, string) (*models.AudiobookshelfBook, error) {
+			remoteCalled = true
+			return nil, nil
+		},
+		discoverAudible: func(context.Context, string, string) (string, error) {
+			remoteCalled = true
+			return "uk", nil
+		},
+		importAudiobook: func(context.Context, hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
+			remoteCalled = true
+			return nil, nil
+		},
+	}
+	_, err := runCreate(context.Background(), createOptions{
+		InputPath: inputPath, ABSItemID: "item-1", StateFile: statePath, StateFileExplicit: true,
+	}, services)
+	if err == nil || !strings.Contains(err.Error(), "already has a confirmed Hardcover association") {
+		t.Fatalf("expected existing association error, got %v", err)
+	}
+	if remoteCalled {
+		t.Fatal("existing association reached a remote service")
+	}
+	loaded, err := state.LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := loaded.GetAssociation("item-1"); !ok || got != existing {
+		t.Fatalf("existing association changed: got %#v, exists=%t", got, ok)
+	}
+}
+
 func TestRunCreateKeepsAssociationOnLockedTargetAfterStateAliasRetarget(t *testing.T) {
 	tmp := t.TempDir()
 	targetA := filepath.Join(tmp, "state-a.json")

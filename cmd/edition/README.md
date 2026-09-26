@@ -111,8 +111,8 @@ Hardcover change and requires its format to match the input. After verifying
 the Hardcover result, it saves a local match in the configured state file
 while holding the state-file lock. If another sync holds the lock, the command
 returns an error before contacting Hardcover. A local save failure after a
-successful Hardcover operation is reported separately; retry with the same
-input to reuse the result and save the match.
+successful Hardcover operation is reported separately; verify the Hardcover
+result before retrying, because a retry may create another edition.
 
 Without an ABS item ID, no match is saved. A `loaded` audiobook import without
 a saved mapping remains unresolved by later syncs. Dry run performs no

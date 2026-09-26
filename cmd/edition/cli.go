@@ -169,11 +169,12 @@ func runCreate(ctx context.Context, options createOptions, services createServic
 		if associationStatePath == "" {
 			return nil, errors.New("state file lock did not resolve a state path")
 		}
-		if !options.DryRun {
-			loadedState, err = state.LoadState(associationStatePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to load sync state: %w", err)
-			}
+		loadedState, err = state.LoadState(associationStatePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load sync state: %w", err)
+		}
+		if _, exists := loadedState.GetAssociation(input.ABSItemID); exists {
+			return nil, fmt.Errorf("Audiobookshelf item %q already has a confirmed Hardcover association", input.ABSItemID)
 		}
 	}
 
@@ -245,7 +246,7 @@ func runCreate(ctx context.Context, options createOptions, services createServic
 		if absItem != nil {
 			association := audiobookAssociation(absItem, input.ASIN, resolved)
 			if err := saveAssociation(loadedState, associationStatePath, association); err != nil {
-				return nil, fmt.Errorf("Hardcover reported audiobook %s, but the local association could not be saved; retry edition create with the same input: %w", resolved.Status, err)
+				return nil, fmt.Errorf("Hardcover reported audiobook %s, but the local association could not be saved. Verify the Hardcover result before retrying; retrying may create another edition: %w", resolved.Status, err)
 			}
 			output.AssociationSaved = true
 		}
@@ -286,7 +287,7 @@ func runCreate(ctx context.Context, options createOptions, services createServic
 	if absItem != nil {
 		association := ebookAssociation(absItem, input.BookID, created.EditionID)
 		if err := saveAssociation(loadedState, associationStatePath, association); err != nil {
-			return nil, fmt.Errorf("Hardcover returned ebook edition %d, but the local association could not be saved; retry edition create with the same input: %w", created.EditionID, err)
+			return nil, fmt.Errorf("Hardcover returned ebook edition %d, but the local association could not be saved. Verify the Hardcover result before retrying; retrying may create another edition: %w", created.EditionID, err)
 		}
 		output.AssociationSaved = true
 	}
