@@ -319,9 +319,12 @@ components:
           type: string
           description: >-
             Optional audiobook correction in `ASIN:region` form, for example
-            `B00XXXYYZZ:uk`. The ASIN and supported region are validated. Omit
-            it to discover the source ASIN's region with Audnex. Audiobook
-            metadata fields are rejected as corrections.
+            `B00XXXYYZZ:uk`. The ASIN and supported region are validated, and the
+            supplied region is authoritative. Audnex lookup for this explicit
+            identifier is optional release-date enrichment; a rate-limit or transient
+            error does not block import, and the preview retains the Audiobookshelf
+            date. Omit this field to discover the source ASIN's region with Audnex.
+            Audiobook metadata fields are rejected as corrections.
         title:
           type: string
           description: Optional ebook title correction.
@@ -1066,11 +1069,14 @@ paths:
       description: >-
         Requires profile write access and an explicit user request. The body
         must identify a completed, non-dry-run sync run and its needs-review
-        Audiobookshelf item. The API refetches the item and rejects a stale or
-        changed source record before any Hardcover mutation. It uses the
-        Hardcover book ID recorded by that sync run; no book or author ID is
-        accepted from the caller. Audiobooks use a regional `upsert_book`
-        import with no `insert_edition` fallback. Ebooks use format-aware
+        Audiobookshelf item. The API refetches the item and compares its ID, title,
+        author, ASIN, ISBN, and reading format with the verified sync record before
+        any Hardcover mutation. For ebooks, subtitle and release date come from the
+        freshly fetched Audiobookshelf item unless corrected in the request;
+        publisher always comes from the fresh item. It uses the Hardcover book ID
+        recorded by that sync run; no book or author ID is accepted from the caller.
+        Audiobooks use a regional `upsert_book` import with no `insert_edition`
+        fallback. Ebooks use format-aware
         `insert_edition`. A successful result is verified and saved as a
         profile-local match before the response is returned.
       parameters:
@@ -1130,12 +1136,12 @@ paths:
         '409':
           description: >-
             The profile is syncing or being deleted, the run/item record is
-            stale or no longer usable, the Audiobookshelf source changed,
-            profile dry run is enabled, or Hardcover returned an identity
-            conflict. Run a fresh sync after stale-source conflicts. Turn off
-            dry run before creating an edition. For an identity conflict,
-            verify the Hardcover result before retrying because another
-            edition may have been created.
+            stale or no longer usable, a verified source field (item ID, title,
+            author, ASIN, ISBN, or reading format) changed, profile dry run is
+            enabled, or Hardcover returned an identity conflict. Run a fresh sync
+            after source changes. Turn off dry run before creating an edition. For
+            an identity conflict, verify the Hardcover result before retrying because
+            another edition may have been created.
           content:
             application/json:
               schema:
@@ -1178,13 +1184,16 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: >-
-            The create service is shutting down, a dependency request timed
-            out, Audnex region discovery was rate limited or transiently
-            unavailable, or the Hardcover regional import timed out. Timeouts
-            during Audiobookshelf or Audnex lookup happen before a Hardcover
-            write and can be retried. If the timeout occurred during a
-            Hardcover mutation, verify the Hardcover result before retrying
-            because another edition may be created.
+            The create service is shutting down, a dependency request timed out,
+            source-ASIN Audnex region discovery was rate limited or transiently
+            unavailable, or the Hardcover regional import timed out. A rate-limit
+            or transient error from Audnex `GetBookByASIN` for an explicit
+            `audible_identifier` is ignored while the request context remains
+            active; the supplied region is used and the preview falls back to the
+            Audiobookshelf date. If the request context expires during
+            Audiobookshelf or Audnex lookup, the request fails before a Hardcover
+            write. If a timeout occurs during a Hardcover mutation, verify the Hardcover
+            result before retrying because another edition may have been created.
           content:
             application/json:
               schema:

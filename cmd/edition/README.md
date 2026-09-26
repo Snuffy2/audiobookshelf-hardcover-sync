@@ -32,7 +32,7 @@ makes the explicit create operation fail.
 ./edition --config ./config.yaml prepopulate --book-id 12345 --output edition.json
 # Input has no abs_item_id, so this create saves no ABS association.
 ./edition --config ./config.yaml create --input edition.json
-# For profile-123 with the default sync.state_file, use its derived profile state file.
+# For a new profile-123 with blank sync.state_file and paths.data_dir ./data.
 ./edition --config ./config.yaml create --input edition.json --abs-item-id li_123 --state-file ./data/sync_state.profile-123
 # Dry run without an ABS association; input has no abs_item_id.
 ./edition --config ./config.yaml --dry-run create --input edition.json
@@ -41,13 +41,15 @@ makes the explicit create operation fail.
 The `--abs-item-id` and `--state-file` flags apply to `create`. An
 `--abs-item-id` flag overrides `abs_item_id` in the input JSON. When an ABS
 item ID is present in either place, pass `--state-file` with the state file
-for the profile being associated. The multi-user service derives each profile
-file from `sync.state_file` by removing a trailing `.json` and appending
-`.<encoded-profile-id>`; with the default `./data/sync_state.json`, profile
-`profile-123` uses `./data/sync_state.profile-123`. The command refuses to
-associate an item using an implicit default state path. For a custom
-`sync.state_file` or a different profile ID, pass the actual derived state
-file for that profile.
+for the profile being associated. The multi-user service starts from that
+profile's `SyncConfig.StateFile`, resolving relative paths against
+`paths.data_dir`; when it is blank, the base path is
+`<data_dir>/sync_state.json`. It then removes a trailing `.json` and appends
+`.<encoded-profile-id>`. Thus `./data/sync_state.profile-123` applies only
+when `sync.state_file` is blank, `paths.data_dir` is the default `./data`,
+and the profile ID is `profile-123`. The CLI uses the path you pass literally;
+it does not derive a profile-specific filename. For a custom state path or
+profile ID, pass the actual derived state file for that profile.
 
 ## Audiobook input
 

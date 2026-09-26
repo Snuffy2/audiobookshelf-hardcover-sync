@@ -348,6 +348,65 @@ func TestCreateEditionFromDraftFallsBackToABSDateWhenAudnexHasNoBook(t *testing.
 	require.Equal(t, "2020-02-03", envelope.Data.MetadataPreview.ReleaseDate)
 }
 
+func TestCreateEditionFromDraftIgnoresTransientAudnexEnrichmentFailure(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{
+		"id":"abs-item-1","mediaType":"book","media":{
+			"metadata":{"title":"Reviewed title","authorName":"Author","asin":"B0SOURCE12","isbn":"9780306406157","publishedDate":"2020-02-03"},
+			"duration":100,"numTracks":1
+		}}`, "us")
+	configureEditionCreateRoute(t, fixture)
+	var audnexLookupCalls atomic.Int32
+	fixture.handler.editionCreateAudnexClientFactory = func() editionCreateAudnexDiscoverer {
+		return editionCreateAudnexStub{
+			getFn: func(context.Context, string, string) (*audnex.Book, error) {
+				audnexLookupCalls.Add(1)
+				return nil, audnex.ErrTransient
+			},
+			discoverFn: func(context.Context, string, string) (*audnex.Book, string, error) {
+				return nil, "", audnex.ErrTransient
+			},
+		}
+	}
+	record := editionCreateRecord()
+	record.Title = "Reviewed title"
+	record.Author = "Author"
+	addCompletedNeedsReviewRun(t, fixture, "run-create-transient-enrichment", record)
+	var importCalls atomic.Int32
+	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
+		return editionCreateHardcoverStub{importFn: func(_ context.Context, input hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
+			importCalls.Add(1)
+			require.Equal(t, 42, input.BookID)
+			require.Equal(t, "B0SOURCE12", input.ASIN)
+			require.Equal(t, "uk", input.Region)
+			return &hardcover.RegionalAudiobookResult{
+				Status: hardcover.RegionalAudiobookLoaded, BookID: input.BookID, EditionID: 84,
+				ReadingFormatID:    models.ReadingFormatID(models.ReadingFormatAudiobook),
+				RegionalExternalID: input.ASIN + ":" + strings.ToLower(input.Region),
+			}, nil
+		}}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(
+		`{"run_id":"run-create-transient-enrichment","abs_item_id":"abs-item-1","audible_identifier":"B0SOURCE12:uk"}`,
+	))
+	request.AddCookie(fixture.sessionCookie(t, fixture.owner))
+	response := httptest.NewRecorder()
+	fixture.routes.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.EqualValues(t, 1, audnexLookupCalls.Load())
+	require.EqualValues(t, 1, importCalls.Load())
+	var envelope struct {
+		Data struct {
+			MetadataPreview struct {
+				ReleaseDate string `json:"release_date"`
+			} `json:"metadata_preview"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
+	require.Equal(t, "2020-02-03", envelope.Data.MetadataPreview.ReleaseDate)
+}
+
 func TestCreateEditionFromDraftCreatesEbookAtHTTPBoundary(t *testing.T) {
 	fixture := newEditionDraftTestFixture(t, `{
 		"id":"abs-item-1","mediaType":"ebook","media":{
