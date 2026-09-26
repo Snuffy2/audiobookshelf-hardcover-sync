@@ -124,9 +124,10 @@ The same ten regions are used for two different operations:
 
 ### Audnex region discovery
 
-Region discovery is a shared helper used by the Step 3 draft and the Step 7
-create API and CLI. Sync does not use it for matching. Sync's existing mismatch
-export enrichment (the configured region, then US) is unchanged by this plan.
+Region discovery is a shared helper used by the Step 3 draft, the Step 7b
+create API, and the Step 7c CLI. Sync does not use it for matching. Sync's
+existing mismatch export enrichment (the configured region, then US) is
+unchanged by this plan.
 
 - Try the configured preferred region first (US when none is set), then sweep
   the remaining Audnex regions once in this fixed order: US, CA, UK, AU, DE,
@@ -167,14 +168,19 @@ when requested. Step 3 keeps its existing branch name. Every future step uses
 | 4 | `step_4_needs_review_add_edition` |
 | 5 | `step_5_needs_review_add_edition` |
 | 6 | `step_6_needs_review_add_edition` |
-| 7 | `step_7_needs_review_add_edition` |
+| 7a | `step_7a_needs_review_add_edition` |
+| 7b | `step_7b_needs_review_add_edition` |
+| 7c | `step_7c_needs_review_add_edition` |
 | 8 | `step_8_needs_review_add_edition` |
 | 9 | `step_9_needs_review_add_edition` |
 | 10 | `step_10_needs_review_add_edition` |
 
 The existing Step 4 and Step 5 branch refs contain work from the old ordering.
 Rework those refs for their revised steps instead of creating alternate branch
-names; the old commits remain source material as described below.
+names; the old commits remain source material as described below. Step 7 was
+too broad for one PR and is delivered as Steps 7a, 7b, and 7c; the combined
+`step_7_needs_review_add_edition` branch is source material for those three
+branches and is not opened as a PR itself.
 
 | Step | Scope and standalone result | Depends on | Current state |
 |---|---|---|---|
@@ -184,8 +190,10 @@ names; the old commits remain source material as described below.
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Existing `step_5_needs_review_add_edition` work is reusable after restacking |
 | 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | New work |
 | 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Extract from the old Step 4 branch and revise |
-| 7 | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and a bounded regional `upsert_book` resolver for audiobooks. Migrate standalone `edition create` to the same resolver and remove its audiobook `insert_edition` route. Validate returned book and format; the API, and the CLI when given an ABS item ID, save a local association before reporting success. Reuse Step 5's state-file lock. | 3, 5, 6 | Rebuild from the old Step 4 branch |
-| 8 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7 | Not started |
+| 7a | Enforce the Step 6 ABS URL policy at the shared client boundary for profile settings, sync, the draft endpoint, and CLI configuration, including redirect targets, and add the server-wide `audiobookshelf.network_trust` setting. Send `Retry-After` on draft 429 responses. No create path and no catalogue writes. | 6 | Split from the combined Step 7 branch |
+| 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Split from the combined Step 7 branch |
+| 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Split from the combined Step 7 branch |
+| 8 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7b | Not started |
 | 9 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. | 8 | Not started |
 | 10 | Stop matching ABS books to Hardcover by `editions.asin`: remove the sync fallback and the audiobook `editions.asin` duplicate guard. Items that relied on it become `needs_review`, which the Step 7–9 create flow resolves. | 9 | Not started |
 
@@ -221,11 +229,11 @@ reuses the mismatch enrichment code, the region sweep must be injected only
 for the draft so sync makes no additional Audnex requests.
 
 For audiobooks, offer a correction to the submitted regional Audible
-identifier (ASIN and one of the supported regions), which Step 7 passes to
+identifier (ASIN and one of the supported regions), which Step 7b passes to
 `upsert_book`; show title, subtitle, date, edition information, ISBNs, and
 other imported metadata as read-only preview. Do not accept audiobook metadata
 edits that the import cannot save. For ebooks, retain candidate edition fields
-in the draft, including an optional corrected ISBN; Step 7 may accept only
+in the draft, including an optional corrected ISBN; Step 7b may accept only
 fields its format-aware insertion has verified to persist. An ISBN is optional
 only when a usable ASIN is present. A usable ASIN is exactly ten ASCII letters
 or digits; a malformed ASIN is kept visible with an `invalid_source_asin`
@@ -280,9 +288,9 @@ before this step cannot read the new file: document the downgrade limit in
 
 Each sync run currently loads the state once and rewrites the whole file from
 its in-memory copy after every book and at the end. An out-of-band write to
-the same file, such as forget-match or the Step 7 create API saving an
+the same file, such as forget-match or the Step 7b create API saving an
 association, would be overwritten by the running sync's next checkpoint.
-Forget-match and the Step 7 create API are therefore refused with HTTP 409
+Forget-match and the Step 7b create API are therefore refused with HTTP 409
 while that profile has an active sync run; the multi-user service already
 tracks active runs. The check happens before any state change or Hardcover
 mutation, so a refused create has written nothing. While a forget or create
@@ -299,8 +307,9 @@ its final save, and forget-match holds it across the entire load/change/save
 operation. Refuse forget-match with 409 when the file is busy, before changing
 state. Competing sync runs must not proceed with an unlocked state snapshot.
 The lock must work on every platform the state package supports and recover
-from a stale lock left by a crashed process. Step 7's create writers reuse
-this lock before any Hardcover mutation and through the local save.
+from a stale lock left by a crashed process. The Step 7b create API and
+the Step 7c `edition create` command reuse this lock before any Hardcover
+mutation and through the local save.
 
 Add an authenticated, profile-authorized API action to forget one ABS item's
 association, clear its incremental checkpoint, and make the next sync perform
@@ -385,7 +394,7 @@ the Step 3 draft endpoint's existing server-side fetch of a profile's ABS URL.
 Specify how profile and CLI settings are validated, which local-network
 destinations a trusted self-hosted deployment may use, and how redirects are
 checked. Do not assume a blanket private-address ban is compatible with
-self-hosted ABS instances. Step 7 implements and tests the policy.
+self-hosted ABS instances. Step 7a implements and tests the policy.
 
 The Step 6 branch records the policy in
 `docs/implementations/audiobookshelf-url-policy.md`. Network trust is a
@@ -407,6 +416,31 @@ on an explicit user request. The current create branch assumes
 Audible ASIN. That behavior cannot merge unchanged; rebuild the create-time
 name resolution, request validation, in-flight guard, and tests from it.
 
+Step 7 is delivered as three PRs, merged in order 7a, 7b, 7c. Each leaves
+the app working without the later ones:
+
+- **7a** adds no create path. It enforces the ABS URL policy on the existing
+  sync, draft, profile-save, image-tool, and CLI configuration paths, so it
+  merges before any create path ships.
+- **7b** adds the regional `upsert_book` resolver together with its first
+  caller, the create POST. `edition.Creator` still accepts audiobooks in 7b
+  because the unmigrated CLI uses it; the create API routes only ebooks to
+  the Creator, and its tests assert that an audiobook create makes no
+  `insert_edition` call.
+- **7c** migrates `edition create` to the 7b resolver and then makes
+  `edition.Creator.CreateEdition` refuse audiobooks, so from 7c on no
+  production caller can send an audiobook to `insert_edition`. The mismatch
+  export's `abs_item_id` field and the build change for a multi-file
+  `cmd/edition` ship with 7c.
+- Files shared by the combined branch (README, CHANGELOG, OpenAPI,
+  `cmd/edition/main.go`, and `internal/edition/creator.go`) are split by hunk.
+  In 7a the README's draft concurrency text still describes drafts only;
+  create's shared request slots and that wording land in 7b. 7a's only
+  `cmd/edition` change applies the network trust setting to the existing
+  command's Audiobookshelf configuration.
+
+#### Step 7a: Audiobookshelf network trust
+
 Implement the Step 6 ABS URL policy once, where ABS clients are constructed,
 and use it for profile configuration and CLI settings so sync, draft, and
 create fetches share validation. Check redirect targets under the same policy
@@ -426,10 +460,7 @@ Add a `Retry-After` response header to the draft endpoint's 429 response,
 using a short wait expressed in seconds. Describe it in OpenAPI and test the
 HTTP response; Step 9 uses it when retrying previews.
 
-Add an upgrade note to `MIGRATION.md` alongside the create-flow documentation:
-the legacy `AUDIOBOOKSHELF_AUDNEXUS_REGION` setting does not populate a
-profile's `sync_config.audnexus_region`, so users who want a preferred region
-for a profile set it there explicitly.
+#### Step 7b: create API
 
 The application create endpoint uses a bounded regional `upsert_book` resolver
 (platform 32) for audiobooks and `insert_edition` for ebooks. There is no
@@ -447,7 +478,45 @@ returned identity conflicts, report it and save nothing. Do not use
 The ebook insertion uses Step 2's format-aware `edition.Creator` path, which
 already sends `reading_format_id` from the requested reading format (`4` for
 ebook, `2` for audiobook). An ordinary-token ebook insertion and read-back
-remain a Step 7 verification gate before the ebook path is advertised.
+remain a Step 7b verification gate before the ebook path is advertised.
+
+The API create path refetches the ABS item and uses the run record's
+Hardcover book ID for both ebook insertion and audiobook import, never a
+client-supplied book ID. Before any catalogue mutation, compare the current
+ABS item's normalized source identifiers and reading format with the snapshot
+recorded by the sync that selected that Hardcover book. A changed, removed,
+or newly present source identifier, or a changed format, makes the run record
+stale: return 409 and require a fresh sync/review. Record the source snapshot
+in run outcomes; older records without enough data to establish agreement
+also require a fresh sync. Formatting-only identifier changes are accepted.
+This create-time check does not change incremental sync's skip behavior.
+
+Compare the refetched ABS source with the run snapshot before applying request
+edits. A deliberately submitted Audible identifier correction remains allowed
+when that source snapshot agrees; it is not an ABS source change. Retain both
+the original ABS source value and the regional identifier submitted for import
+in the local association. A
+create-time lookup of an unqualified submitted ASIN uses the shared
+[region discovery](#audnex-region-discovery); when release date is
+server-derived, its baseline comes from the response for the region that
+actually resolves that ASIN. Audiobook date is not an editable request field.
+A create response must distinguish an edition already created remotely from a
+failure to save the local association, so retry cannot quietly create an
+unrelated second edition. Dry run makes no Hardcover mutation and saves no
+association. The POST must be usable with curl, and its result must be
+findable by the next normal sync before Step 8 exists.
+
+Reuse Step 5's cross-process state-file lock for the create API. Acquire it
+before loading state or making any Hardcover mutation, refuse when busy, and
+hold it until the association is saved. Keep the API's profile run guard as
+well.
+
+Add an upgrade note to `MIGRATION.md` alongside the create-flow documentation:
+the legacy `AUDIOBOOKSHELF_AUDNEXUS_REGION` setting does not populate a
+profile's `sync_config.audnexus_region`, so users who want a preferred region
+for a profile set it there explicitly.
+
+#### Step 7c: standalone CLI
 
 The standalone `cmd/edition` CLI currently sends audiobooks to
 `insert_edition` through `edition.Creator`. Migrate its `create` command to the
@@ -486,10 +555,11 @@ given, the CLI:
 Without an item ID, the CLI reports the verified IDs and status and saves
 nothing.
 
-Reuse Step 5's cross-process state-file lock for the create API and for
-`edition create` when given an ABS item ID. Acquire it before loading state
-or making any Hardcover mutation, refuse when busy, and hold it until the
-association is saved. Keep the API's profile run guard as well.
+Reuse Step 5's cross-process state-file lock for `edition create` when given
+an ABS item ID. Acquire it before loading state or making any Hardcover
+mutation, refuse when busy, and hold it until the association is saved.
+
+#### Step 7 live evidence
 
 The live test with an ordinary full API token successfully called `upsert_book`
 for a known book and regional Audible ASIN; import status became `created`
@@ -497,12 +567,12 @@ and a subsequent read found the new edition and mapping. The same token's
 `update_edition` calls returned an ID and no errors for both a populated
 title and an empty subtitle, but fresh reads retained the original title and
 null subtitle. A success response is therefore not proof that submitted
-metadata persisted. Steps 3 and 7 must not promise audiobook metadata
-edits. The supported correction is the regional Audible identifier submitted
-to `upsert_book`; returned audiobook metadata is preview-only. Ebook insertion
-may accept only fields the format-aware create path verifies it can persist.
-Runtime authorization and read-back remain the source of truth for a given
-token.
+metadata persisted. Steps 3, 7b, and 7c must not promise audiobook
+metadata edits. The supported correction is the regional Audible identifier
+submitted to `upsert_book`; returned audiobook metadata is preview-only.
+Ebook insertion may accept only fields the format-aware create path verifies
+it can persist. Runtime authorization and read-back remain the source of
+truth for a given token.
 
 Hardcover staff also describe an ISBN import variant of `upsert_book` with
 `platform_id: 8` and the ISBN as `external_id`. Platform 8 is not returned
@@ -527,36 +597,10 @@ A later edition read showed no persisted ISBN despite the `loaded` import
 status. A test of `update_edition` on the authorized Outland audiobook returned
 no error when asked to change format 2 to 4, but read-back stayed at 2; a
 restore request and final read also showed 2. These results rule out ISBN
-`upsert_book` plus a format update as a reliable ebook creation path. Step 7
-uses `insert_edition` for ebooks, with same-book and format-aware duplicate
-checks. Do not treat an ISBN upsert ID or `not_found` import status alone as
-proof of a suitable ebook edition.
-
-The API create path refetches the ABS item and uses the run record's
-Hardcover book ID for both ebook insertion and audiobook import, never a
-client-supplied book ID. Before any catalogue mutation, compare the current
-ABS item's normalized source identifiers and reading format with the snapshot
-recorded by the sync that selected that Hardcover book. A changed, removed,
-or newly present source identifier, or a changed format, makes the run record
-stale: return 409 and require a fresh sync/review. Record the source snapshot
-in run outcomes; older records without enough data to establish agreement
-also require a fresh sync. Formatting-only identifier changes are accepted.
-This create-time check does not change incremental sync's skip behavior.
-
-Compare the refetched ABS source with the run snapshot before applying request
-edits. A deliberately submitted Audible identifier correction remains allowed
-when that source snapshot agrees; it is not an ABS source change. Retain both
-the original ABS source value and the regional identifier submitted for import
-in the local association. A
-create-time lookup of an unqualified submitted ASIN uses the shared
-[region discovery](#audnex-region-discovery); when release date is
-server-derived, its baseline comes from the response for the region that
-actually resolves that ASIN. Audiobook date is not an editable request field.
-A create response must distinguish an edition already created remotely from a
-failure to save the local association, so retry cannot quietly create an
-unrelated second edition. Dry run makes no Hardcover mutation and saves no
-association. The POST must be usable with curl, and its result must be
-findable by the next normal sync before Step 8 exists.
+`upsert_book` plus a format update as a reliable ebook creation path. Steps
+7b and 7c use `insert_edition` for ebooks, with same-book and format-aware
+duplicate checks. Do not treat an ISBN upsert ID or `not_found` import status
+alone as proof of a suitable ebook edition.
 
 ### Step 8: optional immediate resync
 
@@ -576,7 +620,7 @@ permits the action; show the unverified-permission warning and report any
 permission failure from the POST clearly. A known denial prevents creation.
 Preview the ABS source identifier and any established region without implying
 that `edition.asin` is the Audible destination. Show
-only edits that Step 7 can honor, escape ABS-provided strings, and display
+only edits that Step 7b can honor, escape ABS-provided strings, and display
 unknown or temporarily unavailable region and unresolved candidate results as
 review states. Confirmation uses the create POST; the resync checkbox is
 opt-in. Dry run is clearly identified and does not offer a real resync.
@@ -680,7 +724,10 @@ non-default `develop`.
 
 6. Create capability: Report whether the profile can insert ebook editions or import regional Audible identifiers. Allow an otherwise eligible create attempt when permission is unverified, with a warning.
 
-7. Edition create endpoint and CLI: Require an ASIN or ISBN, reject stale API run records, and insert format-aware ebooks or import regional Audible identifiers on request. Validate book and format, then save the association under Step 5's lock from the API or CLI with an ABS item ID.
+7. Edition create, delivered in three PRs:
+   - 7a. Audiobookshelf network trust: Enforce the server-wide ABS URL and redirect policy for sync, drafts, profiles, and CLI settings, and send `Retry-After` on busy draft responses.
+   - 7b. Edition create endpoint: Require an ASIN or ISBN, reject stale run records, and insert format-aware ebooks or import regional Audible identifiers on request. Validate book and format, then save the association under Step 5's lock.
+   - 7c. Standalone edition CLI: Move `edition create` audiobooks to the regional importer, stop audiobook `insert_edition`, and save the association under Step 5's lock when given an ABS item ID.
 
 8. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.
 
@@ -725,11 +772,18 @@ evidence:
 - **Step 6 — Added:** `**Edition creation capability**: Report the profile's
   applicable ebook insertion and Audible import capabilities without
   promising permission from an unrelated scope check. By @Snuffy2`.
-- **Step 7 — Added:** `**Create editions from needs-review items (API and CLI)**:
-  On request, create or reuse an edition through format-aware ebook insertion
-  or regional Audible import, migrate the standalone audiobook CLI to the
-  regional importer, let the CLI save the match for an ABS item, and validate
-  book and format; dry runs make no external change. By @Snuffy2`.
+- **Step 7a — Added:** `**Audiobookshelf network trust**: Validate
+  Audiobookshelf URLs, connections, and redirects against a deployment-wide
+  `allow_private` (default) or `public_only` policy, and tell clients when to
+  retry a busy edition draft. By @Snuffy2`.
+- **Step 7b — Added:** `**Create editions from needs-review items (API)**: On
+  request, create or reuse an edition through format-aware ebook insertion or
+  regional Audible import, validate book and format, and save the match for
+  the next sync; dry runs make no external change. By @Snuffy2`.
+- **Step 7c — Changed:** `**Edition CLI uses regional Audible import**:
+  `edition create` imports audiobooks through the regional importer instead
+  of inserting editions, and can save the match for an ABS item; existing
+  export files keep working. By @Snuffy2`.
 - **Step 8 — Added:** `**Immediate one-book resync**: Optionally sync read
   status after edition creation while excluding an overlapping full sync. By
   @Snuffy2`.
@@ -745,9 +799,10 @@ evidence:
 Step 3 owns the draft README/OpenAPI description and the Audnex region
 setting; Steps 4 and 5 document matching and the new persistence; Step 6
 documents its capability route and records the ABS URL policy outside README;
-Step 7 documents the create route, standalone CLI contract, the fields an
-audiobook import reads, exact identifier corrections, and the enforced
-Audiobookshelf network trust setting in README; Step 8 documents the `resync`
+Step 7a documents the enforced Audiobookshelf network trust setting in
+README; Step 7b documents the create route and exact identifier corrections;
+Step 7c documents the standalone CLI contract and the fields an audiobook
+import reads; Step 8 documents the `resync`
 request/response; Step 9 documents the user flow; Step 10 documents the
 matching change and its migration note.
 Update the field crosswalk as the relevant step lands, rather than leaving its
@@ -900,7 +955,7 @@ require the owner's instruction.
   `update_edition` response without a read-back.
 - [ ] Define the shared, deployment-aware ABS base-URL and redirect policy
   for profile and CLI configuration, including trusted local-network servers
-  and ABS credential scoping; Step 7 implements it before create ships.
+  and ABS credential scoping; Step 7a implements it before create ships.
   Record it in `docs/implementations/audiobookshelf-url-policy.md` with the
   server-wide `allow_private` (default) and `public_only` trust modes; do not
   add the unenforced setting to README.
@@ -909,28 +964,35 @@ require the owner's instruction.
 - [ ] Document the route and its truthful limits in README/OpenAPI, add one
   CHANGELOG bullet, and complete the shared validation and PR gates.
 
-### Step 7 — create endpoint and standalone CLI
+### Step 7a — Audiobookshelf network trust
 
-- [x] Verify the published `upsert_book` scope (`write:catalog:append` or
-  broader catalogue-write scope) and a successful ordinary-token live import.
 - [ ] Enforce the Step 6 ABS URL policy at the shared client boundary for
   profile and CLI configuration, including redirect targets, so sync, draft,
-  and create fetches use the same validation. Test rejected URLs and redirects
-  as well as allowed self-hosted servers.
+  and later create fetches use the same validation. Test rejected URLs and
+  redirects as well as allowed self-hosted servers.
 - [ ] Add the server-wide `audiobookshelf.network_trust` /
   `AUDIOBOOKSHELF_NETWORK_TRUST` setting (`allow_private` default,
   `public_only`), reject unsupported values, and keep it out of profile
   settings. Document it concisely in the README configuration reference once
   it is enforced.
+- [ ] Apply the setting to the existing `edition` and `image-tool` commands'
+  Audiobookshelf configuration without changing `edition create` behavior.
 - [ ] Send `Retry-After` in seconds on draft 429 responses; document the
   header in OpenAPI and test it at the HTTP boundary.
+- [ ] Keep create routes, the regional resolver, and create-flow README text
+  out of this PR. Add one CHANGELOG bullet and complete the shared validation
+  and PR gates.
+
+### Step 7b — create endpoint
+
+- [x] Verify the published `upsert_book` scope (`write:catalog:append` or
+  broader catalogue-write scope) and a successful ordinary-token live import.
 - [ ] Add the legacy Audnex region setting clarification to `MIGRATION.md`
   so upgraders know to set `sync_config.audnexus_region` per profile.
 - [ ] Add the bounded regional `upsert_book` resolver: require the run
   record's book ID and an established or user-supplied region, bound polling,
   handle `failed`/`loaded`/`created`, and verify returned book, edition, and
-  reading format. Callable by the API and CLI; each saves an association
-  only when it has an ABS item.
+  reading format. The API is its first caller; Step 7c reuses it.
 - [ ] Accept only a corrected regional Audible identifier for audiobook
   imports through the API; reject audiobook metadata edits rather than
   accepting and dropping them. Keep ebook edits tied to fields the
@@ -954,11 +1016,42 @@ require the owner's instruction.
   for the region that resolves the submitted ASIN, with the Step 3 ABS date
   fallback. Verify the returned book and format and guard against same-book
   and cross-book ebook duplicates.
+- [ ] Route only ebooks to `edition.Creator`. Leave its audiobook insertion in
+  place for the unmigrated CLI until Step 7c.
+- [ ] Reuse Step 5's state-file lock in the create API. Acquire before loading
+  state or any Hardcover mutation, refuse when busy, and hold through the
+  association save.
+- [ ] Refuse the create POST with 409 while the profile is syncing, before any
+  Hardcover mutation, and hold the profile's run guard until the association
+  is saved.
+- [ ] Make successful API create immediately findable by normal sync.
+  Distinguish a remote success followed by local-store failure so a retry is
+  safe.
+- [ ] Require an ASIN or ISBN for add-edition eligibility and final API create
+  input. Reject missing or whitespace-only identifiers before any catalogue
+  mutation; an audiobook import specifically requires a regional Audible
+  ASIN. Test no identifiers, ASIN-only ebook, ISBN-only ebook, and
+  corrections that remove the last identifier.
+- [ ] Test stale run records (changed, added, or removed ABS identifiers or
+  changed format), missing source snapshots, formatting-only changes, and
+  deliberate submitted corrections; rejected stale requests make no catalogue
+  mutation.
+- [ ] Test unauthorized/foreign profiles, wrong book, wrong reading format,
+  invalid fields, missing author, optional misses, missing scope, timeouts,
+  double submit, shutdown, existing edition, ISBN conflicts, and dry run at
+  the HTTP boundary; assert that an audiobook create makes no
+  `insert_edition` call.
+- [ ] Update README/OpenAPI/crosswalk for the create route, add one CHANGELOG
+  bullet, and complete the shared validation and PR gates before offering the
+  create POST for use.
+
+### Step 7c — standalone CLI
+
 - [ ] Migrate standalone `edition create` from audiobook `insert_edition` to
-  the regional resolver. Require a confirmed regional Audible ID, either
-  supplied explicitly or found by the shared Audnex discovery; never infer
-  US. Read the book ID, ASIN, optional region, and reading format from the
-  input and ignore the informational fields a mismatch export includes. An
+  the Step 7b regional resolver. Require a confirmed regional Audible ID,
+  either supplied explicitly or found by the shared Audnex discovery; never
+  infer US. Read the book ID, ASIN, optional region, and reading format from
+  the input and ignore the informational fields a mismatch export includes. An
   unknown region, missing permission, failed import, timeout, or identity
   conflict exits without `insert_edition` or a claimed success. Preserve
   dry-run's no-mutation behavior. Remove or restrict the old `edition.Creator`
@@ -970,43 +1063,27 @@ require the owner's instruction.
   result without a stored mapping stays unresolved for sync.
 - [x] Decide how a CLI-only user saves a `loaded` result: `edition create`
   takes an ABS item ID and saves the association to the state file.
-- [ ] Accept an ABS item ID by flag or the export's new `abs_item_id` field.
-  Fetch and verify the item before any mutation, then save the verified
-  association to `sync.state_file` or `--state-file` for `loaded` and
-  `created` audiobooks and inserted ebooks; distinguish a failed local save
-  after remote success; save nothing in dry run or without an item ID.
-- [ ] Reuse Step 5's state-file lock in the create API and `edition create`
-  with an ABS item ID. Acquire before loading state or any Hardcover mutation,
-  refuse when busy, and hold through the association save.
-- [ ] Refuse the create POST with 409 while the profile is syncing, before any
-  Hardcover mutation, and hold the profile's run guard until the association
-  is saved.
-- [ ] Make successful API create immediately findable by normal sync.
-  Distinguish a remote success followed by local-store failure so a retry is
-  safe.
-- [ ] Require an ASIN or ISBN for add-edition eligibility and final create
-  input, including standalone CLI input without an ABS item ID. Reject
-  missing or whitespace-only identifiers before any catalogue mutation; an
-  audiobook import specifically requires a regional Audible ASIN. Test no
-  identifiers, ASIN-only ebook, ISBN-only ebook, and corrections that remove
-  the last identifier.
-- [ ] Test stale run records (changed, added, or removed ABS identifiers or
-  changed format), missing source snapshots, formatting-only changes, and
-  deliberate submitted corrections; rejected stale requests make no catalogue
-  mutation.
-- [ ] Test unauthorized/foreign profiles, wrong book, wrong reading format,
-  invalid fields, missing author, optional misses, missing scope, timeouts,
-  double submit, shutdown, existing edition, ISBN conflicts, and dry run at
-  the HTTP boundary. Test CLI `loaded`/`created`, unknown region, an existing
+- [ ] Add the mismatch export's `abs_item_id` field. Accept an ABS item ID by
+  flag or that field. Fetch and verify the item before any mutation, then
+  save the verified association to `sync.state_file` or `--state-file` for
+  `loaded` and `created` audiobooks and inserted ebooks; distinguish a failed
+  local save after remote success; save nothing in dry run or without an item
+  ID.
+- [ ] Reuse Step 5's state-file lock in `edition create` with an ABS item ID.
+  Acquire before loading state or any Hardcover mutation, refuse when busy,
+  and hold through the association save.
+- [ ] Require an ASIN or ISBN in standalone CLI input, including input without
+  an ABS item ID, before any catalogue mutation.
+- [ ] Test CLI `loaded`/`created`, unknown region, an existing
   mismatch-export file with and without `abs_item_id`, a missing or
   mismatched ABS item, a state file locked by a running sync, a failed local
   save, a saved association found by the next sync, wrong book/format,
   missing scope, import failure, timeout, prepopulate, and dry run at its
-  command boundary; assert no
-  audiobook `insert_edition` call and audit remaining production callers.
-- [ ] Update README/OpenAPI/crosswalk and the CLI documentation, add one
-  CHANGELOG bullet, and complete the shared validation and PR gates before
-  offering either create path for use.
+  command boundary; assert no audiobook `insert_edition` call and audit
+  remaining production callers.
+- [ ] Update the CLI documentation and README, add one CHANGELOG bullet, and
+  complete the shared validation and PR gates before offering the migrated
+  CLI for use.
 
 ### Step 8 — immediate one-book resync
 
@@ -1093,7 +1170,7 @@ require the owner's instruction.
    Forget-match and create-API writes are refused with HTTP 409 while the
    profile is syncing, and hold the profile's run guard while they run.
    Step 5 adds the cross-process state-file lock for sync and forget-match;
-   Step 7 reuses it for the create API and `edition create`.
+   Step 7b reuses it for the create API and Step 7c for `edition create`.
 6. **CLI association:** `edition create` accepts an ABS item ID and saves the
    verified match to the state file, so a CLI-only user's `loaded` import is
    found by later syncs.
@@ -1111,10 +1188,10 @@ require the owner's instruction.
    existing **Flybot** audiobook after asynchronous import and created no
    ebook; later reads showed no persisted ISBN on that edition. An ordinary
    token's `update_edition` format change also returned success without a
-   persisted change. Step 7 uses Step 2's format-aware `insert_edition` for
-   ebooks and regional `upsert_book` for audiobooks, migrates the standalone
-   `edition create` command to regional `upsert_book`, and validates the
-   returned book and reading format on both paths.
+   persisted change. Step 7b uses Step 2's format-aware `insert_edition` for
+   ebooks and regional `upsert_book` for audiobooks, Step 7c migrates the
+   standalone `edition create` command to regional `upsert_book`, and both
+   validate the returned book and reading format.
 9. **Incremental matching:** unchanged progress/status may skip an item before
    matching even when its source identifiers changed. Revalidate the association
    when the item next needs processing or the user explicitly forgets it.
