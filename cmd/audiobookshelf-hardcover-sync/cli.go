@@ -165,14 +165,6 @@ func setEnvFromFlag(value, envVar string) {
 	}
 }
 
-func newAudiobookshelfClient(cfg *config.Config) (*audiobookshelf.Client, error) {
-	return audiobookshelf.NewClientWithNetworkTrust(
-		cfg.Audiobookshelf.URL,
-		cfg.Audiobookshelf.Token,
-		cfg.Audiobookshelf.NetworkTrust,
-	)
-}
-
 // runOneTimeSync performs a single sync operation and exits
 // RunOneTimeSync performs a one-time sync operation with the given flags
 func RunOneTimeSync(flags *configFlags) {
@@ -259,7 +251,11 @@ func RunOneTimeSync(flags *configFlags) {
 		"has_hardcover_token":      cfg.Hardcover.Token != "",
 	})
 
-	audiobookshelfClient, err := newAudiobookshelfClient(cfg)
+	audiobookshelfClient, err := audiobookshelf.NewClientWithNetworkTrust(
+		cfg.Audiobookshelf.URL,
+		cfg.Audiobookshelf.Token,
+		cfg.Audiobookshelf.NetworkTrust,
+	)
 	if err != nil {
 		log.Error("Failed to initialize Audiobookshelf client", map[string]interface{}{
 			"error": err.Error(),
