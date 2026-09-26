@@ -501,7 +501,7 @@ func (h *Handler) createEbook(ctx context.Context, item *models.AudiobookshelfBo
 		return statepkg.Association{}, errHardcoverEditionIdentityConflict
 	}
 	formatID, formatErr := strconv.Atoi(createdEdition.ReadingFormatID)
-	if createdEdition.BookID != record.HardcoverBookID || formatErr != nil || formatID != models.ReadingFormatID(models.ReadingFormatEbook) {
+	if createdEdition.ID != strconv.Itoa(result.EditionID) || createdEdition.BookID != record.HardcoverBookID || formatErr != nil || formatID != models.ReadingFormatID(models.ReadingFormatEbook) {
 		return statepkg.Association{}, errHardcoverEditionIdentityConflict
 	}
 	status := "created"

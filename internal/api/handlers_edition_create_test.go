@@ -407,6 +407,46 @@ func TestCreateEditionFromDraftCreatesEbookAtHTTPBoundary(t *testing.T) {
 	require.Equal(t, models.ReadingFormatEbook, association.ReadingFormat)
 }
 
+func TestCreateEditionFromDraftRejectsMismatchedReadBackEbookEditionID(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{
+		"id":"abs-item-1","mediaType":"ebook","media":{
+			"metadata":{"title":"Reviewed ebook","authorName":"Author","isbn":"9780306406157","publishedDate":"2020-02-03"},
+			"ebookFile":{},"ebookFormat":"epub"
+		}}`, "us")
+	configureEditionCreateRoute(t, fixture)
+	addCompletedNeedsReviewRun(t, fixture, "run-create-ebook-mismatched-readback", sync.BookOutcomeRecord{
+		BookID: "abs-item-1", Outcome: sync.OutcomeNeedsReview, ISBN: "9780306406157",
+		Format: "Ebook", HardcoverBookID: "42",
+	})
+	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
+		return editionCreateHardcoverStub{
+			bookFn: func(_ context.Context, id string) (*models.HardcoverBook, error) {
+				require.Equal(t, "42", id)
+				return &models.HardcoverBook{ID: "42", Authors: []models.Author{{ID: "7", Name: "Author"}}}, nil
+			},
+			createEbookFn: func(_ context.Context, input *edition.EditionInput) (*edition.EditionResult, error) {
+				require.Equal(t, 42, input.BookID)
+				return &edition.EditionResult{Success: true, EditionID: 84}, nil
+			},
+			editionFn: func(_ context.Context, id string) (*models.Edition, error) {
+				require.Equal(t, "84", id)
+				return &models.Edition{ID: "85", BookID: "42", ReadingFormatID: "4"}, nil
+			},
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(
+		`{"run_id":"run-create-ebook-mismatched-readback","abs_item_id":"abs-item-1"}`,
+	))
+	request.AddCookie(fixture.sessionCookie(t, fixture.owner))
+	response := httptest.NewRecorder()
+	fixture.routes.ServeHTTP(response, request)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	stored, err := statepkg.LoadState(editionCreateProfileStatePath(fixture))
+	require.NoError(t, err)
+	_, exists := stored.GetAssociation("abs-item-1")
+	require.False(t, exists)
+}
+
 func TestCreateEditionFromDraftRejectsStaleSourceBeforeHardcoverMutation(t *testing.T) {
 	fixture := newEditionDraftTestFixture(t, `{
 		"id":"abs-item-1","mediaType":"book","media":{
