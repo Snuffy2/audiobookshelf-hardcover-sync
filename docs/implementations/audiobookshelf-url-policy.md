@@ -1,11 +1,12 @@
 # Audiobookshelf URL Policy
 
 **Status:** Enforced for the production Audiobookshelf clients used by sync,
-edition drafts, edition creation, the standalone `edition create` command,
-and the edition creator's ABS requests. The deployment-wide mode is validated
-when configuration loads; profile URLs are validated when profiles are
-created or updated. The shared client checks destinations when requests and
-redirects are made.
+edition drafts, and the edition creator's ABS cover requests in the
+standalone `edition` and `image-tool` commands. A later create API must use
+the same shared client. The deployment-wide mode is validated when
+configuration loads; profile URLs are validated when profiles are created or
+updated, and an invalid profile URL is rejected with HTTP 400. The shared
+client checks destinations when requests and redirects are made.
 
 The service fetches a configured ABS base URL on the server with that
 configuration's ABS token. In a multi-user web deployment a profile owner
@@ -73,9 +74,9 @@ HTTPS certificate verification stays enabled in both modes.
 
 ## Scope
 
-The shared client policy is wired into sync, edition drafts, edition creation,
-the standalone `edition create` command, and the edition creator's ABS
-requests, replacing its separate redirect check. Tests cover malformed URLs,
+The shared client policy is wired into sync, edition drafts, and the edition
+creator's ABS requests from the standalone `edition` and `image-tool`
+commands, replacing the creator's separate redirect check for those requests. Tests cover malformed URLs,
 address classification in each mode, mixed allowed and disallowed DNS
 answers, redirects to disallowed destinations, and token stripping outside
 the configured origin or base path. The edition capability route does not

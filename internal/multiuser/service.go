@@ -32,6 +32,10 @@ var ErrProfileStateFileNameTooLong = errors.New("profile-specific state path com
 // path is absolute or escapes the effective data directory.
 var ErrProfileStateFilePathNotAllowed = errors.New("profile-specific state file path must remain under the data directory")
 
+// ErrInvalidAudiobookshelfURL indicates that a profile's Audiobookshelf URL
+// is malformed or not permitted by the deployment's network trust mode.
+var ErrInvalidAudiobookshelfURL = errors.New("invalid Audiobookshelf profile URL")
+
 // ErrProfileNotFound indicates that a requested active sync profile is absent.
 var ErrProfileNotFound = errors.New("sync profile not found")
 
@@ -336,7 +340,7 @@ func (s *MultiUserService) AudiobookshelfNetworkTrust() string {
 func (s *MultiUserService) CreateProfileForUser(profileID, name, audiobookshelfURL, audiobookshelfToken, hardcoverToken string, syncConfig database.SyncConfigData, ownerUserID string) error {
 	normalizedURL, err := audiobookshelf.ValidateBaseURL(audiobookshelfURL, s.AudiobookshelfNetworkTrust())
 	if err != nil {
-		return fmt.Errorf("invalid Audiobookshelf profile URL: %w", err)
+		return fmt.Errorf("%w: %w", ErrInvalidAudiobookshelfURL, err)
 	}
 	audiobookshelfURL = normalizedURL
 	syncConfig.AudnexusRegion = s.normalizeProfileAudnexusRegion(profileID, syncConfig.AudnexusRegion)
@@ -361,7 +365,7 @@ func (s *MultiUserService) UpdateProfile(profileID, name string) error {
 func (s *MultiUserService) UpdateProfileConfig(profileID, audiobookshelfURL, audiobookshelfToken, hardcoverToken string, syncConfig database.SyncConfigData) error {
 	normalizedURL, err := audiobookshelf.ValidateBaseURL(audiobookshelfURL, s.AudiobookshelfNetworkTrust())
 	if err != nil {
-		return fmt.Errorf("invalid Audiobookshelf profile URL: %w", err)
+		return fmt.Errorf("%w: %w", ErrInvalidAudiobookshelfURL, err)
 	}
 	audiobookshelfURL = normalizedURL
 	s.admissionMutex.Lock()
