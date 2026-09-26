@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reject stale edition sources after title or author changes**: Edition creation now verifies the Audiobookshelf title and author from the selected sync run against the current item and any newer needs-review candidate before contacting Hardcover or saving an association.
 - **ISBN counterpart matching**: Match an Audiobookshelf ISBN-10 to its valid ISBN-13 counterpart, and the reverse, without changing audiobook and ebook reading-format separation. By @Snuffy2. (#200)
 
 ## [v4.0.0] - 2026-09-21

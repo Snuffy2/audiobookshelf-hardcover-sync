@@ -212,12 +212,14 @@ func sameEditionCreateCandidate(requested, latest sync.BookOutcomeRecord) bool {
 	return latest.BookID == requested.BookID && latest.Outcome == sync.OutcomeNeedsReview &&
 		strings.TrimSpace(latest.HardcoverBookID) == strings.TrimSpace(requested.HardcoverBookID) &&
 		normalizedEditionCreateFormat(latest.Format) == normalizedEditionCreateFormat(requested.Format) &&
+		normalizeEditionCreateName(latest.Title) == normalizeEditionCreateName(requested.Title) &&
+		normalizeEditionCreateName(latest.Author) == normalizeEditionCreateName(requested.Author) &&
 		normalizeEditionCreateASIN(latest.ASIN) == normalizeEditionCreateASIN(requested.ASIN) &&
 		isbn.Normalize(latest.ISBN) == isbn.Normalize(requested.ISBN)
 }
 
 var errStaleEditionCreateRun = errors.New("sync run no longer contains a usable needs-review source record")
-var errEditionCreateSourceChanged = errors.New("Audiobookshelf source identifiers or reading format changed; run a new sync before adding an edition")
+var errEditionCreateSourceChanged = errors.New("Audiobookshelf source data or reading format changed; run a new sync before adding an edition")
 var errEditionCreateInvalidInput = errors.New("invalid edition create input")
 
 func (h *Handler) createVerifiedEdition(ctx context.Context, profile *database.ProfileWithTokens, snapshot *sync.SyncSnapshot, record sync.BookOutcomeRecord, request editionCreateRequest, outcome *editionCreateOutcome) (statepkg.Association, error) {
@@ -264,7 +266,9 @@ func editionCreateSourceMatches(record sync.BookOutcomeRecord, item *models.Audi
 	if item == nil || item.ID != record.BookID || normalizedEditionCreateFormat(record.Format) != item.ReadingFormat() {
 		return false
 	}
-	return normalizeEditionCreateASIN(record.ASIN) == normalizeEditionCreateASIN(item.Media.Metadata.ASIN) &&
+	return normalizeEditionCreateName(record.Title) == normalizeEditionCreateName(item.Media.Metadata.Title) &&
+		normalizeEditionCreateName(record.Author) == normalizeEditionCreateName(item.Media.Metadata.AuthorName) &&
+		normalizeEditionCreateASIN(record.ASIN) == normalizeEditionCreateASIN(item.Media.Metadata.ASIN) &&
 		isbn.Normalize(record.ISBN) == isbn.Normalize(item.Media.Metadata.ISBN)
 }
 
@@ -281,6 +285,10 @@ func normalizedEditionCreateFormat(raw string) string {
 
 func normalizeEditionCreateASIN(raw string) string {
 	return strings.ToUpper(strings.TrimSpace(raw))
+}
+
+func normalizeEditionCreateName(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 func (h *Handler) createRegionalAudiobook(ctx context.Context, profile *database.ProfileWithTokens, item *models.AudiobookshelfBook, record sync.BookOutcomeRecord, request editionCreateRequest, client editionCreateHardcoverClient, outcome *editionCreateOutcome) (statepkg.Association, error) {

@@ -32,8 +32,8 @@ makes the explicit create operation fail.
 ./edition --config ./config.yaml prepopulate --book-id 12345 --output edition.json
 # Input has no abs_item_id, so this create saves no ABS association.
 ./edition --config ./config.yaml create --input edition.json
-# Use the state file dedicated to the profile being associated.
-./edition --config ./config.yaml create --input edition.json --abs-item-id li_123 --state-file ./data/profiles/profile-123/sync_state.json
+# For profile-123 with the default sync.state_file, use its derived profile state file.
+./edition --config ./config.yaml create --input edition.json --abs-item-id li_123 --state-file ./data/sync_state.profile-123
 # Dry run without an ABS association; input has no abs_item_id.
 ./edition --config ./config.yaml --dry-run create --input edition.json
 ```
@@ -41,9 +41,13 @@ makes the explicit create operation fail.
 The `--abs-item-id` and `--state-file` flags apply to `create`. An
 `--abs-item-id` flag overrides `abs_item_id` in the input JSON. When an ABS
 item ID is present in either place, pass `--state-file` with the state file
-for the profile being associated. The command refuses to associate an item
-using an implicit default state path. Replace `profile-123` in the example
-with the profile-specific state file path used by the target profile.
+for the profile being associated. The multi-user service derives each profile
+file from `sync.state_file` by removing a trailing `.json` and appending
+`.<encoded-profile-id>`; with the default `./data/sync_state.json`, profile
+`profile-123` uses `./data/sync_state.profile-123`. The command refuses to
+associate an item using an implicit default state path. For a custom
+`sync.state_file` or a different profile ID, pass the actual derived state
+file for that profile.
 
 ## Audiobook input
 
