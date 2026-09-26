@@ -1,7 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"reflect"
 	"strconv"
@@ -299,42 +302,14 @@ func NormalizeAudnexusRegion(region string) (string, bool) {
 	return "us", false
 }
 
+// Load applies defaults, an optional YAML file, and environment overrides, then
+// validates the result for the sync service and prints the effective settings.
+// A missing file at configPath is ignored.
 func Load(configPath string) (*Config, error) {
-	// Start with default configuration
-	cfg := DefaultConfig()
-
-	// Note: Debug logging removed to prevent early logger initialization
-	// which would override the format specified in the config file
-
-	// Note: Debug logging removed to prevent early logger initialization
-
-	// Load from file if path is provided
-	if configPath != "" {
-		// Check if file exists
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
-			// Config file does not exist, using defaults
-		} else {
-			// Read the config file
-			data, err := os.ReadFile(configPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read config file: %w", err)
-			}
-
-			// Create a temporary config to load the file into
-			fileCfg := &Config{}
-
-			// Unmarshal the config file
-			if err := yaml.Unmarshal(data, fileCfg); err != nil {
-				return nil, fmt.Errorf("failed to parse config file: %w", err)
-			}
-
-			// Merge the config from file into our config
-			mergeConfigs(cfg, fileCfg)
-		}
+	cfg, err := loadLayers(configPath, false)
+	if err != nil {
+		return nil, err
 	}
-
-	// Load from environment variables
-	loadFromEnv(cfg)
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {
@@ -380,8 +355,56 @@ func Load(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks that all required configuration is present and valid
-func (c *Config) Validate() error {
+// LoadForTool loads configuration for a standalone command without printing
+// the effective settings or requiring the sync service's single-user and web UI
+// fields. It applies defaults, the YAML file at configPath, and environment
+// overrides with the same precedence as Load. An empty configPath uses defaults
+// and the environment only; a non-empty configPath must name a readable file.
+// The Audiobookshelf network trust, URL, and Audnex region are validated and
+// normalized as in Validate, with warnings written to standard error.
+func LoadForTool(configPath string) (*Config, error) {
+	cfg, err := loadLayers(configPath, configPath != "")
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.validateAudiobookshelf(os.Stderr); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	return cfg, nil
+}
+
+// loadLayers returns the defaults overlaid by the optional YAML file and then
+// the environment. A missing file is an error only when requireFile is true.
+func loadLayers(configPath string, requireFile bool) (*Config, error) {
+	cfg := DefaultConfig()
+
+	// Note: Debug logging is avoided here to prevent early logger
+	// initialization, which would override the format in the config file.
+	if configPath != "" {
+		data, err := os.ReadFile(configPath)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) && !requireFile:
+			// Config file does not exist, using defaults
+		case err != nil:
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		default:
+			fileCfg := &Config{}
+			if err := yaml.Unmarshal(data, fileCfg); err != nil {
+				return nil, fmt.Errorf("failed to parse config file: %w", err)
+			}
+			mergeConfigs(cfg, fileCfg)
+		}
+	}
+
+	loadFromEnv(cfg)
+	return cfg, nil
+}
+
+// validateAudiobookshelf defaults and checks the deployment-wide network trust
+// mode, normalizes a configured Audiobookshelf URL under that mode, and
+// normalizes the Audnex region preference, reporting an unsupported region to
+// warnings and using US.
+func (c *Config) validateAudiobookshelf(warnings io.Writer) error {
 	if c.Audiobookshelf.NetworkTrust == "" {
 		c.Audiobookshelf.NetworkTrust = audiobookshelf.NetworkTrustAllowPrivate
 	}
@@ -399,6 +422,23 @@ func (c *Config) Validate() error {
 			return &ConfigError{Field: "audiobookshelf.url", Msg: err.Error()}
 		}
 		c.Audiobookshelf.URL = normalizedURL
+	}
+
+	region, valid := NormalizeAudnexusRegion(c.Audiobookshelf.AudnexusRegion)
+	if !valid {
+		_, _ = fmt.Fprintf(warnings, "Warning: Unknown audnexus_region '%s'. Valid values: us, ca, uk, au, de, fr, es, in, it, jp. Using us.\n",
+			c.Audiobookshelf.AudnexusRegion)
+	}
+	c.Audiobookshelf.AudnexusRegion = region
+	return nil
+}
+
+// Validate checks that all required configuration is present and valid
+func (c *Config) Validate() error {
+	// Environment overrides have already been applied, so the region and
+	// Audiobookshelf settings are validated against their final values.
+	if err := c.validateAudiobookshelf(os.Stdout); err != nil {
+		return err
 	}
 
 	var missing []string
@@ -461,15 +501,6 @@ func (c *Config) Validate() error {
 		c.Sync.SyncInterval = 1 * time.Hour
 		fmt.Printf("Warning: Invalid sync interval, using default: %s\n", c.Sync.SyncInterval)
 	}
-
-	// Normalize and validate the region only after defaults, file values and
-	// environment overrides have all been applied.
-	region, valid := NormalizeAudnexusRegion(c.Audiobookshelf.AudnexusRegion)
-	if !valid {
-		fmt.Printf("Warning: Unknown audnexus_region '%s'. Valid values: us, ca, uk, au, de, fr, es, in, it, jp. Using us.\n",
-			c.Audiobookshelf.AudnexusRegion)
-	}
-	c.Audiobookshelf.AudnexusRegion = region
 
 	// Validate minimum progress is between 0 and 1
 	if c.Sync.MinimumProgress < 0 || c.Sync.MinimumProgress > 1 {
