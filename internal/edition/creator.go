@@ -47,6 +47,10 @@ var (
 	// method was used for an audiobook. Audiobooks must use Hardcover's regional
 	// Audible import path instead of insert_edition.
 	ErrAudiobookRequiresRegionalImport = errors.New("audiobooks require a confirmed regional Audible import")
+	// ErrCreateEditionPreMutation marks a failure during the duplicate lookup or
+	// existing-edition adoption checks that run before insert_edition is sent.
+	// Callers can use it to distinguish a safe retry from an uncertain mutation.
+	ErrCreateEditionPreMutation = errors.New("edition creation failed before mutation")
 )
 
 // EditionInput represents the input data for creating or updating an edition
@@ -1052,11 +1056,11 @@ func (c *Creator) findExistingEdition(ctx context.Context, input *EditionInput) 
 // and left untouched; one of another book is an error.
 func (c *Creator) createEdition(ctx context.Context, input *EditionInput, imageID int) (int, bool, error) {
 	if found, by, lookupErr := c.findExistingEdition(ctx, input); lookupErr != nil {
-		return 0, false, lookupErr
+		return 0, false, fmt.Errorf("%w: %w", ErrCreateEditionPreMutation, lookupErr)
 	} else if found != nil {
 		editionID, adoptErr := adoptExistingEdition(found, input)
 		if adoptErr != nil {
-			return 0, false, adoptErr
+			return 0, false, fmt.Errorf("%w: %w", ErrCreateEditionPreMutation, adoptErr)
 		}
 		c.log.Debug("Edition already exists", map[string]interface{}{
 			"edition_id": editionID,

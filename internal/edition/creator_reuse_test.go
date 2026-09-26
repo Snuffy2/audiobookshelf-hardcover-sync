@@ -122,17 +122,18 @@ func TestCreateEdition_ReusesOnlyAnEditionOfTheSameBook(t *testing.T) {
 	otherBook := &models.Edition{ID: "555", BookID: "999"}
 	duplicate := []string{"already exists"}
 	tests := []struct {
-		name         string
-		asin, isbn13 string
-		client       *reuseClient
-		wantExisting bool
-		wantConflict bool
-		wantInserts  int // insert_edition attempts; no other mutation may ever be sent
+		name            string
+		asin, isbn13    string
+		client          *reuseClient
+		wantExisting    bool
+		wantConflict    bool
+		wantPreMutation bool
+		wantInserts     int // insert_edition attempts; no other mutation may ever be sent
 	}{
 		{name: "ASIN match on the same book", asin: "B0EXISTING1", client: &reuseClient{byASIN: sameBook}, wantExisting: true},
-		{name: "ASIN match on another book", asin: "B0EXISTING1", client: &reuseClient{byASIN: otherBook}, wantConflict: true},
-		{name: "ASIN match without a book ID", asin: "B0EXISTING1", client: &reuseClient{byASIN: &models.Edition{ID: "555"}}, wantConflict: true},
-		{name: "ASIN match with an unknown book", asin: "B0EXISTING1", client: &reuseClient{byASIN: &models.Edition{ID: "555", BookID: "0"}}, wantConflict: true},
+		{name: "ASIN match on another book", asin: "B0EXISTING1", client: &reuseClient{byASIN: otherBook}, wantConflict: true, wantPreMutation: true},
+		{name: "ASIN match without a book ID", asin: "B0EXISTING1", client: &reuseClient{byASIN: &models.Edition{ID: "555"}}, wantConflict: true, wantPreMutation: true},
+		{name: "ASIN match with an unknown book", asin: "B0EXISTING1", client: &reuseClient{byASIN: &models.Edition{ID: "555", BookID: "0"}}, wantConflict: true, wantPreMutation: true},
 		{
 			name: "duplicate reported, ISBN-13 match on the same book", isbn13: "9781234567890",
 			client: &reuseClient{insertErrors: duplicate, byISBN13: sameBook, afterInsert: true}, wantExisting: true, wantInserts: 1,
@@ -173,6 +174,9 @@ func TestCreateEdition_ReusesOnlyAnEditionOfTheSameBook(t *testing.T) {
 				if result.EditionID != 555 || result.Existing != tt.wantExisting || result.ImageError != "" || result.ImageID != 0 {
 					t.Errorf("CreateEdition() = %+v, want the untouched existing edition 555", result)
 				}
+			}
+			if got := errors.Is(err, edition.ErrCreateEditionPreMutation); got != tt.wantPreMutation {
+				t.Errorf("errors.Is(CreateEdition() error, ErrCreateEditionPreMutation) = %t, want %t", got, tt.wantPreMutation)
 			}
 			if got := len(tt.client.mutations); got != tt.wantInserts {
 				t.Errorf("mutations sent = %d (%v), want only %d insert_edition", got, tt.client.mutations, tt.wantInserts)
@@ -254,6 +258,9 @@ func TestCreateEdition_LookupFailureDoesNotInsert(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "temporary lookup failure") {
 		t.Fatalf("CreateEdition() error = %v, want the lookup failure", err)
 	}
+	if !errors.Is(err, edition.ErrCreateEditionPreMutation) {
+		t.Fatalf("CreateEdition() error = %v, want ErrCreateEditionPreMutation", err)
+	}
 	if len(client.mutations) != 0 {
 		t.Fatalf("mutations sent = %d, want no insert after lookup failure", len(client.mutations))
 	}
@@ -274,6 +281,9 @@ func TestCreateEdition_DuplicateLookupFailureIsSurfaced(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "duplicate relookup failed") {
 		t.Fatalf("CreateEdition() error = %v, want duplicate relookup failure", err)
+	}
+	if errors.Is(err, edition.ErrCreateEditionPreMutation) {
+		t.Fatalf("CreateEdition() error = %v, duplicate recovery happens after an insert attempt", err)
 	}
 	if len(client.mutations) != 1 {
 		t.Fatalf("mutations sent = %d, want one insert attempt", len(client.mutations))

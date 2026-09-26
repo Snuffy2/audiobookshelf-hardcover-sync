@@ -496,6 +496,9 @@ func (h *Handler) createEbook(ctx context.Context, item *models.AudiobookshelfBo
 	}
 	result, err := client.CreateEbook(ctx, input)
 	if err != nil {
+		if errors.Is(err, edition.ErrCreateEditionPreMutation) {
+			return statepkg.Association{}, fmt.Errorf("Hardcover ebook pre-insertion checks failed: %w", err)
+		}
 		return statepkg.Association{}, fmt.Errorf("Hardcover ebook insertion failed: %w", markEditionCreateRemoteOutcomeAmbiguous(err))
 	}
 	if result == nil || !result.Success || result.EditionID <= 0 {
@@ -656,6 +659,13 @@ func (h *Handler) writeEditionCreateError(w http.ResponseWriter, profileID strin
 		h.writeErrorResponse(w, http.StatusTooManyRequests, "Profile sync state is busy; retry shortly")
 	case errors.Is(err, multiuser.ErrEditionCreateDryRun):
 		h.writeErrorResponse(w, http.StatusConflict, "Edition creation is disabled while this profile is in dry run")
+	case errors.Is(err, edition.ErrCreateEditionPreMutation):
+		if errors.Is(err, edition.ErrEditionBelongsToOtherBook) {
+			h.writeErrorResponse(w, http.StatusConflict, err.Error())
+			return
+		}
+		h.log.Error(fmt.Sprintf("Hardcover edition lookup failed before insertion for profile %s: %v", profileID, err))
+		h.writeErrorResponse(w, http.StatusServiceUnavailable, "Hardcover could not check for an existing edition before insertion; retry the edition create")
 	case errors.Is(err, multiuser.ErrEditionAssociationSaveAfterRemoteSuccess):
 		h.log.Error(fmt.Sprintf("Hardcover returned a verified edition but association save failed for profile %s: %v", profileID, err))
 		h.writeErrorResponse(w, http.StatusBadGateway, "Hardcover returned a verified edition, but the local match could not be saved. Verify the Hardcover result before retrying; retrying may create another edition.")
