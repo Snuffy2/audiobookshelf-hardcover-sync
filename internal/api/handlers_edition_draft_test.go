@@ -178,6 +178,17 @@ func TestGetEditionSourceDraftRejectsPodcastBeforeDiscovery(t *testing.T) {
 	require.Zero(t, fixture.hardcoverRequests.Load())
 }
 
+func TestGetEditionSourceDraftBusyIncludesRetryAfter(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{"id":"abs-item-1","mediaType":"book","media":{"metadata":{"asin":"B0SOURCE12"},"duration":100}}`, "us")
+	fixture.handler.editionDraftSlots <- struct{}{}
+	fixture.handler.editionDraftSlots <- struct{}{}
+
+	response := fixture.request(editionDraftItemPath, fixture.sessionCookie(t, fixture.owner))
+	require.Equal(t, http.StatusTooManyRequests, response.Code, response.Body.String())
+	require.Equal(t, "1", response.Header().Get("Retry-After"))
+	require.Zero(t, fixture.absRequests.Load())
+}
+
 func TestGetEditionSourceDraftKeepsBareASINAndUsesDiscoveredRegionDate(t *testing.T) {
 	fixture := newEditionDraftTestFixture(t, `{
 		"id":"abs-item-1","mediaType":"book","media":{

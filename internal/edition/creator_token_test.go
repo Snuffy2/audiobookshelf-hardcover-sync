@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/logger"
@@ -153,6 +154,24 @@ func TestSetAudiobookshelfBaseURLValidation(t *testing.T) {
 				t.Errorf("stored base URL = %q, want %q", creator.audiobookshelfBaseURL, tt.wantStored)
 			}
 		})
+	}
+}
+
+func TestCreatorCoverFetchUsesAudiobookshelfNetworkTrustPolicy(t *testing.T) {
+	creator := NewCreator(nil, logger.Get(), false, "abs-secret")
+	if err := creator.SetAudiobookshelfNetworkTrust("public_only"); err != nil {
+		t.Fatalf("SetAudiobookshelfNetworkTrust() error = %v", err)
+	}
+	if err := creator.SetAudiobookshelfBaseURL("http://127.0.0.1:13378"); err == nil {
+		t.Fatal("SetAudiobookshelfBaseURL() accepted HTTP with public_only trust")
+	}
+	if err := creator.SetAudiobookshelfBaseURL("https://127.0.0.1:13378"); err != nil {
+		t.Fatalf("SetAudiobookshelfBaseURL() error = %v", err)
+	}
+
+	_, err := creator.uploadImageToGCS(context.Background(), 1, "https://127.0.0.1:13378/api/items/item/cover")
+	if err == nil || !strings.Contains(err.Error(), "not allowed by public_only") {
+		t.Fatalf("uploadImageToGCS() error = %v, want policy rejection before network access", err)
 	}
 }
 

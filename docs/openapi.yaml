@@ -952,7 +952,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '429':
-          description: Two edition drafts are already being prepared on this server instance; retry shortly.
+          description: Two edition drafts are already being prepared on this server instance; retry after the indicated delay.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: string
+                example: "1"
           content:
             application/json:
               schema:
