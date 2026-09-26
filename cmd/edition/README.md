@@ -18,8 +18,7 @@ The command reads `config.yaml` by default or the file passed with `--config`.
 Set `hardcover.token`. When associating an Audiobookshelf item, also set
 `audiobookshelf.url` and `audiobookshelf.token`. Supported environment values
 override the file; relevant names include `HARDCOVER_TOKEN`,
-`AUDIOBOOKSHELF_NETWORK_TRUST`, `AUDIOBOOKSHELF_AUDNEXUS_REGION`, and
-`SYNC_STATE_FILE`.
+`AUDIOBOOKSHELF_NETWORK_TRUST`, and `AUDIOBOOKSHELF_AUDNEXUS_REGION`.
 
 The Hardcover token needs `read:catalog` for book/edition reads and duplicate
 checks, plus `write:catalog:append` or a broader catalogue-write scope for
@@ -31,15 +30,20 @@ makes the explicit create operation fail.
 
 ```bash
 ./edition --config ./config.yaml prepopulate --book-id 12345 --output edition.json
+# Input has no abs_item_id, so this create saves no ABS association.
 ./edition --config ./config.yaml create --input edition.json
-./edition --config ./config.yaml create --input edition.json --abs-item-id li_123
-./edition --config ./config.yaml create --input edition.json --abs-item-id li_123 --state-file ./data/sync_state.json
+# Use the state file dedicated to the profile being associated.
+./edition --config ./config.yaml create --input edition.json --abs-item-id li_123 --state-file ./data/profiles/profile-123/sync_state.json
+# Dry run without an ABS association; input has no abs_item_id.
 ./edition --config ./config.yaml --dry-run create --input edition.json
 ```
 
 The `--abs-item-id` and `--state-file` flags apply to `create`. An
-`--abs-item-id` flag overrides `abs_item_id` in the input JSON. The state-file
-flag overrides `sync.state_file`; its fallback is `./data/sync_state.json`.
+`--abs-item-id` flag overrides `abs_item_id` in the input JSON. When an ABS
+item ID is present in either place, pass `--state-file` with the state file
+for the profile being associated. The command refuses to associate an item
+using an implicit default state path. Replace `profile-123` in the example
+with the profile-specific state file path used by the target profile.
 
 ## Audiobook input
 

@@ -8,6 +8,7 @@ import (
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/audiobookshelf"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/api/hardcover"
 	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/database"
+	"github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync"
 	statepkg "github.com/drallgood/audiobookshelf-hardcover-sync/internal/sync/state"
 )
 
@@ -20,6 +21,52 @@ var ErrEditionAssociationSaveAfterRemoteSuccess = errors.New("Hardcover edition 
 // ErrEditionCreateDryRun indicates that edition creation is disabled for a
 // profile currently configured for dry run.
 var ErrEditionCreateDryRun = errors.New("edition creation is disabled while the profile is in dry run")
+
+// ErrEditionAssociationAlreadyExists prevents an old create request from
+// replacing a confirmed mapping saved by a later sync or create operation.
+var ErrEditionAssociationAlreadyExists = errors.New("Audiobookshelf item already has a confirmed Hardcover association")
+
+// GetLaterCompletedSyncRunOutcome returns the newest retained completed,
+// non-dry-run outcome for an item from a run newer than afterRunID.
+func (s *MultiUserService) GetLaterCompletedSyncRunOutcome(profileID, afterRunID, absItemID string) (sync.BookOutcomeRecord, bool, error) {
+	if s.repository == nil {
+		return sync.BookOutcomeRecord{}, false, nil
+	}
+	reports, err := s.repository.ListTerminalSyncRunReports(profileID, 0)
+	if err != nil {
+		return sync.BookOutcomeRecord{}, false, err
+	}
+	var latestOutcome *sync.BookOutcomeRecord
+	for i := range reports {
+		report := &reports[i]
+		if report.RunID == afterRunID {
+			if latestOutcome != nil {
+				return *latestOutcome, true, nil
+			}
+			return sync.BookOutcomeRecord{}, false, nil
+		}
+		if report.Phase != database.SyncRunPhaseCompleted || report.DryRun {
+			continue
+		}
+		snapshot, err := snapshotFromRetainedReport(profileID, report)
+		if err != nil {
+			return sync.BookOutcomeRecord{}, false, err
+		}
+		if snapshot == nil {
+			continue
+		}
+		for _, outcome := range snapshot.BookOutcomes {
+			if outcome.BookID == absItemID && latestOutcome == nil {
+				copyOf := outcome
+				latestOutcome = &copyOf
+				break
+			}
+		}
+	}
+	// A cached current run may not have a terminal report yet. In that case,
+	// retained reports are older and cannot supersede the requested snapshot.
+	return sync.BookOutcomeRecord{}, false, nil
+}
 
 // EditionCreateOperation performs a user-confirmed remote edition operation
 // while the profile run gate and state-file lock are held. It must return a
@@ -105,6 +152,9 @@ func (s *MultiUserService) CreateEditionWithAssociation(profileID, absItemID str
 	state, err := statepkg.LoadState(loadPath)
 	if err != nil {
 		return fmt.Errorf("failed to load state file for profile %s: %w", profileID, err)
+	}
+	if _, exists := state.GetAssociation(absItemID); exists {
+		return fmt.Errorf("%w: %s", ErrEditionAssociationAlreadyExists, absItemID)
 	}
 
 	association, err := operation(profile)

@@ -207,6 +207,96 @@ func TestCreateEditionFromDraftUsesExactRunAndPersistsVerifiedAssociation(t *tes
 	require.Equal(t, "audiobook", association.ReadingFormat)
 }
 
+func TestCreateEditionFromDraftRejectsSupersededNeedsReviewCandidate(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{"id":"abs-item-1","mediaType":"book","media":{"metadata":{"asin":"B0SOURCE12","isbn":"9780306406157"},"duration":100}}`, "us")
+	configureEditionCreateRoute(t, fixture)
+	addCompletedNeedsReviewRun(t, fixture, "run-create-old", editionCreateRecord())
+	newerRecord := editionCreateRecord()
+	newerRecord.HardcoverBookID = "43"
+	addCompletedNeedsReviewRun(t, fixture, "run-create-new", newerRecord)
+	var mutationCalls atomic.Int32
+	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
+		return editionCreateHardcoverStub{importFn: func(context.Context, hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
+			mutationCalls.Add(1)
+			return nil, nil
+		}}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(
+		`{"run_id":"run-create-old","abs_item_id":"abs-item-1","audible_identifier":"B0SOURCE12:uk"}`,
+	))
+	request.AddCookie(fixture.sessionCookie(t, fixture.owner))
+	response := httptest.NewRecorder()
+	fixture.routes.ServeHTTP(response, request)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Zero(t, fixture.absRequests.Load())
+	require.Zero(t, mutationCalls.Load())
+}
+
+func TestCreateEditionFromDraftAllowsCandidateAfterUnrelatedLaterRun(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{"id":"abs-item-1","mediaType":"book","media":{"metadata":{"asin":"B0SOURCE12","isbn":"9780306406157"},"duration":100}}`, "us")
+	configureEditionCreateRoute(t, fixture)
+	addCompletedNeedsReviewRun(t, fixture, "run-create-candidate", editionCreateRecord())
+	unrelatedRecord := editionCreateRecord()
+	unrelatedRecord.BookID = "unrelated-item"
+	unrelatedRecord.HardcoverBookID = "43"
+	addCompletedNeedsReviewRun(t, fixture, "run-create-unrelated", unrelatedRecord)
+	var mutationCalls atomic.Int32
+	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
+		return editionCreateHardcoverStub{importFn: func(_ context.Context, input hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
+			mutationCalls.Add(1)
+			return &hardcover.RegionalAudiobookResult{
+				Status: hardcover.RegionalAudiobookLoaded, BookID: input.BookID, EditionID: 84,
+				ReadingFormatID:    models.ReadingFormatID(models.ReadingFormatAudiobook),
+				RegionalExternalID: input.ASIN + ":" + strings.ToLower(input.Region),
+			}, nil
+		}}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(
+		`{"run_id":"run-create-candidate","abs_item_id":"abs-item-1","audible_identifier":"B0SOURCE12:uk"}`,
+	))
+	request.AddCookie(fixture.sessionCookie(t, fixture.owner))
+	response := httptest.NewRecorder()
+	fixture.routes.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.EqualValues(t, 1, mutationCalls.Load())
+}
+
+func TestCreateEditionFromDraftDoesNotReplaceSavedAssociation(t *testing.T) {
+	fixture := newEditionDraftTestFixture(t, `{"id":"abs-item-1","mediaType":"book","media":{"metadata":{"asin":"B0SOURCE12","isbn":"9780306406157"},"duration":100}}`, "us")
+	configureEditionCreateRoute(t, fixture)
+	addCompletedNeedsReviewRun(t, fixture, "run-create-associated", editionCreateRecord())
+	stored := statepkg.NewState()
+	require.NoError(t, stored.SetAssociation(statepkg.Association{
+		ABSItemID: "abs-item-1", HardcoverBookID: "43", HardcoverEditionID: "84",
+		ReadingFormat: models.ReadingFormatAudiobook, Provenance: "sync",
+	}))
+	require.NoError(t, stored.Save(editionCreateProfileStatePath(fixture)))
+	var mutationCalls atomic.Int32
+	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
+		return editionCreateHardcoverStub{importFn: func(context.Context, hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
+			mutationCalls.Add(1)
+			return nil, nil
+		}}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(
+		`{"run_id":"run-create-associated","abs_item_id":"abs-item-1","audible_identifier":"B0SOURCE12:uk"}`,
+	))
+	request.AddCookie(fixture.sessionCookie(t, fixture.owner))
+	response := httptest.NewRecorder()
+	fixture.routes.ServeHTTP(response, request)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Zero(t, fixture.absRequests.Load())
+	require.Zero(t, mutationCalls.Load())
+	verified, err := statepkg.LoadState(editionCreateProfileStatePath(fixture))
+	require.NoError(t, err)
+	association, exists := verified.GetAssociation("abs-item-1")
+	require.True(t, exists)
+	require.Equal(t, "43", association.HardcoverBookID)
+}
+
 func TestCreateEditionFromDraftFallsBackToABSDateWhenAudnexHasNoBook(t *testing.T) {
 	fixture := newEditionDraftTestFixture(t, `{
 		"id":"abs-item-1","mediaType":"book","media":{
@@ -426,19 +516,31 @@ func TestCreateEditionFromDraftSaveFailureExplainsSafeRetry(t *testing.T) {
 		}}`, "us")
 	configureEditionCreateRoute(t, fixture)
 	addCompletedNeedsReviewRun(t, fixture, "run-create-save-fail", editionCreateRecord())
-	var mutationCalls atomic.Int32
+	var importCalls atomic.Int32
+	var insertedEditions atomic.Int32
+	imported := make(map[string]hardcover.RegionalAudiobookResult)
 	fixture.handler.editionCreateHardcoverFactory = func(string) editionCreateHardcoverClient {
 		return editionCreateHardcoverStub{importFn: func(_ context.Context, input hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error) {
-			mutationCalls.Add(1)
 			statePath := editionCreateProfileStatePath(fixture)
-			returnResult := &hardcover.RegionalAudiobookResult{
-				Status: hardcover.RegionalAudiobookLoaded, BookID: input.BookID, EditionID: 84,
-				ReadingFormatID:    models.ReadingFormatID(models.ReadingFormatAudiobook),
-				RegionalExternalID: input.ASIN + ":" + strings.ToLower(input.Region),
+			key := input.ASIN + ":" + strings.ToLower(input.Region)
+			result, exists := imported[key]
+			if !exists {
+				insertedEditions.Add(1)
+				result = hardcover.RegionalAudiobookResult{
+					Status: hardcover.RegionalAudiobookCreated, BookID: input.BookID, EditionID: 84,
+					ReadingFormatID:    models.ReadingFormatID(models.ReadingFormatAudiobook),
+					RegionalExternalID: key,
+				}
+				imported[key] = result
+			} else {
+				result.Status = hardcover.RegionalAudiobookLoaded
 			}
-			// The association file is a directory by the time the transaction saves.
-			require.NoError(t, os.Mkdir(statePath, 0700))
-			return returnResult, nil
+			importCalls.Add(1)
+			if importCalls.Load() == 1 {
+				// The association file is a directory by the time the transaction saves.
+				require.NoError(t, os.Mkdir(statePath, 0700))
+			}
+			return &result, nil
 		}}
 	}
 	body := `{"run_id":"run-create-save-fail","abs_item_id":"abs-item-1","audible_identifier":"B0SOURCE12:uk"}`
@@ -448,7 +550,23 @@ func TestCreateEditionFromDraftSaveFailureExplainsSafeRetry(t *testing.T) {
 	fixture.routes.ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadGateway, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), "Retrying will reuse the Hardcover edition")
-	require.EqualValues(t, 1, mutationCalls.Load())
+	require.EqualValues(t, 1, importCalls.Load())
+	require.EqualValues(t, 1, insertedEditions.Load())
+	require.NoError(t, os.Remove(editionCreateProfileStatePath(fixture)))
+
+	retry := httptest.NewRequest(http.MethodPost, "/api/profiles/draft-profile/edition-drafts/create", strings.NewReader(body))
+	retry.AddCookie(fixture.sessionCookie(t, fixture.owner))
+	retryResponse := httptest.NewRecorder()
+	fixture.routes.ServeHTTP(retryResponse, retry)
+	require.Equal(t, http.StatusOK, retryResponse.Code, retryResponse.Body.String())
+	require.EqualValues(t, 2, importCalls.Load())
+	require.EqualValues(t, 1, insertedEditions.Load())
+	saved, err := statepkg.LoadState(editionCreateProfileStatePath(fixture))
+	require.NoError(t, err)
+	association, exists := saved.GetAssociation("abs-item-1")
+	require.True(t, exists)
+	require.Equal(t, "42", association.HardcoverBookID)
+	require.Equal(t, "84", association.HardcoverEditionID)
 }
 
 func TestCreateEditionFromDraftConstructorUsesGlobalNetworkTrust(t *testing.T) {

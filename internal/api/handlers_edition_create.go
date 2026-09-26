@@ -196,9 +196,24 @@ func (h *Handler) verifiedEditionCreateRecord(profileID, runID, itemID string) (
 		if _, err := strconv.Atoi(record.HardcoverBookID); err != nil {
 			return nil, sync.BookOutcomeRecord{}, errStaleEditionCreateRun
 		}
+		laterRecord, found, laterErr := h.multiUserService.GetLaterCompletedSyncRunOutcome(profileID, runID, itemID)
+		if laterErr != nil {
+			return nil, sync.BookOutcomeRecord{}, fmt.Errorf("failed to inspect newer sync outcomes: %w", laterErr)
+		}
+		if found && !sameEditionCreateCandidate(record, laterRecord) {
+			return nil, sync.BookOutcomeRecord{}, errStaleEditionCreateRun
+		}
 		return snapshot, record, nil
 	}
 	return nil, sync.BookOutcomeRecord{}, errStaleEditionCreateRun
+}
+
+func sameEditionCreateCandidate(requested, latest sync.BookOutcomeRecord) bool {
+	return latest.BookID == requested.BookID && latest.Outcome == sync.OutcomeNeedsReview &&
+		strings.TrimSpace(latest.HardcoverBookID) == strings.TrimSpace(requested.HardcoverBookID) &&
+		normalizedEditionCreateFormat(latest.Format) == normalizedEditionCreateFormat(requested.Format) &&
+		normalizeEditionCreateASIN(latest.ASIN) == normalizeEditionCreateASIN(requested.ASIN) &&
+		isbn.Normalize(latest.ISBN) == isbn.Normalize(requested.ISBN)
 }
 
 var errStaleEditionCreateRun = errors.New("sync run no longer contains a usable needs-review source record")
@@ -624,7 +639,7 @@ func (h *Handler) writeEditionCreateError(w http.ResponseWriter, profileID strin
 	switch {
 	case errors.Is(err, multiuser.ErrProfileNotFound):
 		h.writeErrorResponse(w, http.StatusNotFound, "Sync profile not found")
-	case errors.Is(err, multiuser.ErrSyncAlreadyActive), errors.Is(err, multiuser.ErrProfileDeleting), errors.Is(err, errStaleEditionCreateRun), errors.Is(err, errEditionCreateSourceChanged):
+	case errors.Is(err, multiuser.ErrSyncAlreadyActive), errors.Is(err, multiuser.ErrProfileDeleting), errors.Is(err, multiuser.ErrEditionAssociationAlreadyExists), errors.Is(err, errStaleEditionCreateRun), errors.Is(err, errEditionCreateSourceChanged):
 		h.writeErrorResponse(w, http.StatusConflict, err.Error())
 	case errors.Is(err, multiuser.ErrServiceShuttingDown):
 		h.writeErrorResponse(w, http.StatusServiceUnavailable, "Edition creation service is shutting down; retry shortly")

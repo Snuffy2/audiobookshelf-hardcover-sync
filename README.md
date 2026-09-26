@@ -144,10 +144,11 @@ reports the verified Hardcover book and edition IDs; audiobook statuses are
 `loaded` or `created`, and ebook statuses are `existing` or `created`. A
 successful create saves a local association for the next sync.
 
-An active or deleting profile, stale source, profile dry run, or Hardcover
-identity conflict returns `409`; finish the sync, run a fresh sync after stale
-input, or turn off dry run as applicable. Busy create capacity or a locked
-state file returns `429` with `Retry-After: 1`. Temporary Audnex lookup
+An active or deleting profile, stale source, superseded needs-review
+candidate, already-saved association, profile dry run, or Hardcover identity
+conflict returns `409`; finish the sync, run a fresh sync after stale input,
+or turn off dry run as applicable. Busy create capacity or a locked state file
+returns `429` with `Retry-After: 1`. Temporary Audnex lookup
 failures, dependency timeouts, and service shutdown return `503`.
 If Hardcover succeeded but saving the local association failed, the endpoint
 returns `502`; retry the same request to reuse the Hardcover edition and save

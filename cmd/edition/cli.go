@@ -32,11 +32,12 @@ type editionCreateInput struct {
 }
 
 type createOptions struct {
-	InputPath       string
-	ABSItemID       string
-	StateFile       string
-	PreferredRegion string
-	DryRun          bool
+	InputPath         string
+	ABSItemID         string
+	StateFile         string
+	StateFileExplicit bool
+	PreferredRegion   string
+	DryRun            bool
 }
 
 type createOutput struct {
@@ -124,6 +125,9 @@ func runCreate(ctx context.Context, options createOptions, services createServic
 		input.ABSItemID = itemID
 	}
 	input.ABSItemID = strings.TrimSpace(input.ABSItemID)
+	if input.ABSItemID != "" && (!options.StateFileExplicit || strings.TrimSpace(options.StateFile) == "") {
+		return nil, errors.New("--state-file is required when associating an Audiobookshelf item; pass the sync state file for this profile")
+	}
 	input.ASIN = strings.TrimSpace(input.ASIN)
 	input.ISBN10 = strings.TrimSpace(input.ISBN10)
 	input.ISBN13 = strings.TrimSpace(input.ISBN13)
