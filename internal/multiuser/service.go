@@ -1802,23 +1802,19 @@ func (s *MultiUserService) withProfileStateFileLock(profileID, configuredPath st
 // file whose lexical and resolved parent paths remain under the canonical state
 // file directory. The canonical copy is written atomically by State.Save before
 // the old file is renamed to a recoverable .migrated backup.
-func (s *MultiUserService) migrateLegacyProfileStatePath(profileID, configuredPath string, lockedStatePaths ...string) error {
-	canonicalPath, sourcePath, isLegacy, err := s.profileStateSourcePath(profileID, configuredPath)
+func (s *MultiUserService) migrateLegacyProfileStatePath(profileID, configuredPath, lockedStatePath string) error {
+	_, sourcePath, isLegacy, err := s.profileStateSourcePath(profileID, configuredPath)
 	if err != nil {
 		return err
 	}
 	if !isLegacy {
 		return nil
 	}
-	if len(lockedStatePaths) > 0 && strings.TrimSpace(lockedStatePaths[0]) != "" {
-		canonicalPath = lockedStatePaths[0]
-	}
-
 	legacyState, err := statepkg.LoadState(sourcePath)
 	if err != nil {
 		return fmt.Errorf("load legacy state file: %w", err)
 	}
-	if err := legacyState.Save(canonicalPath); err != nil {
+	if err := legacyState.Save(lockedStatePath); err != nil {
 		return fmt.Errorf("save migrated state file: %w", err)
 	}
 

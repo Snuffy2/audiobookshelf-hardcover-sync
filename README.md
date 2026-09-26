@@ -167,6 +167,18 @@ later add-edition attempt proceed with the warning; it does not guarantee
 permission. A profile without a Hardcover token is reported as `denied`. See
 [OpenAPI](docs/openapi.yaml) for the response fields.
 
+### Edition capability
+
+`GET /api/profiles/{id}/edition-capability` reports, separately for ebook
+insertion (`insert_edition`) and audiobook import (`upsert_book`), whether the
+profile's Hardcover token may attempt to add an edition. It requires profile
+write access and makes no Hardcover or Audiobookshelf request. Hardcover offers
+no read-only way to check a token's scopes, so a configured token is reported
+as `unverified` with a `permission_unverified` warning. That status lets a
+later add-edition attempt proceed with the warning; it does not guarantee
+permission. A profile without a Hardcover token is reported as `denied`. See
+[OpenAPI](docs/openapi.yaml) for the response fields.
+
 ### Remembered edition matches
 
 Sync checks a saved local match before searching Hardcover. It stores an
@@ -195,7 +207,9 @@ normal matching order and may find the same edition again if the catalogue has
 not changed. The action never deletes Hardcover data. During dry run it leaves
 the saved match and checkpoint in place. It returns `409` while that profile
 is syncing or its state file is busy. See [OpenAPI](docs/openapi.yaml) for the
-response and authorization details.
+response and authorization details. Removing a match from a legacy profile
+state file migrates it to the current schema; see [MIGRATION.md](MIGRATION.md)
+before downgrading.
 
 ### Environment Variables (Multi-Profile)
 

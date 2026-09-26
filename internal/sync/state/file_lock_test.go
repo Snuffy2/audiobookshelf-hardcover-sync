@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,8 +83,99 @@ func TestAcquireFileLockRejectsEmptyPath(t *testing.T) {
 	}
 }
 
+func TestAcquireFileLockSharesLockAcrossStateSymlink(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	aliasPath := filepath.Join(dir, "alias.json")
+	createTestSymlink(t, statePath, aliasPath)
+
+	for _, paths := range [][2]string{{aliasPath, statePath}, {statePath, aliasPath}} {
+		lock, err := AcquireFileLock(paths[0])
+		require.NoError(t, err)
+
+		competingLock, err := AcquireFileLock(paths[1])
+		assert.ErrorIs(t, err, ErrStateFileLocked)
+		if competingLock != nil {
+			assert.NoError(t, competingLock.Close())
+		}
+		require.NoError(t, lock.Close())
+	}
+}
+
+func TestAcquireFileLockUsesDistinctSidecarsForLongStateFilenames(t *testing.T) {
+	dir := t.TempDir()
+	firstPath := filepath.Join(dir, strings.Repeat("a", maxStateFileNameComponentBytes))
+	secondPath := filepath.Join(dir, strings.Repeat("b", maxStateFileNameComponentBytes))
+	aliasPath := filepath.Join(dir, "first-alias")
+	createTestSymlink(t, firstPath, aliasPath)
+
+	firstLock, err := AcquireFileLock(firstPath)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, firstLock.Close()) }()
+
+	competingLock, err := AcquireFileLock(aliasPath)
+	require.ErrorIs(t, err, ErrStateFileLocked)
+	require.Nil(t, competingLock)
+
+	secondLock, err := AcquireFileLock(secondPath)
+	require.NoError(t, err)
+	require.NoError(t, secondLock.Close())
+}
+
+func TestFileLockKeepsResolvedStatePathAfterSymlinkRetarget(t *testing.T) {
+	dir := t.TempDir()
+	firstPath := filepath.Join(dir, "first.json")
+	secondPath := filepath.Join(dir, "second.json")
+	aliasPath := filepath.Join(dir, "alias.json")
+	first := NewState()
+	first.UpdateBook("first", 0.25, "IN_PROGRESS")
+	require.NoError(t, first.Save(firstPath))
+	second := NewState()
+	second.UpdateBook("second", 0.75, "IN_PROGRESS")
+	require.NoError(t, second.Save(secondPath))
+	createTestSymlink(t, firstPath, aliasPath)
+
+	lock, err := AcquireFileLock(aliasPath)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, lock.Close()) }()
+	resolvedFirstPath, err := resolveStatePath(firstPath)
+	require.NoError(t, err)
+	require.Equal(t, resolvedFirstPath, lock.StatePath())
+	require.NoError(t, os.Remove(aliasPath))
+	createTestSymlink(t, secondPath, aliasPath)
+
+	loaded, err := LoadState(lock.StatePath())
+	require.NoError(t, err)
+	loaded.UpdateBook("new", 0.5, "IN_PROGRESS")
+	require.NoError(t, loaded.Save(lock.StatePath()))
+
+	firstAfter, err := LoadState(firstPath)
+	require.NoError(t, err)
+	_, exists := firstAfter.GetBookState("new")
+	require.True(t, exists)
+	secondAfter, err := LoadState(secondPath)
+	require.NoError(t, err)
+	_, exists = secondAfter.GetBookState("new")
+	require.False(t, exists)
+}
+
+func TestAcquireFileLockRejectsSymlinkedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	targetPath := filepath.Join(dir, "other.lock")
+	require.NoError(t, os.WriteFile(targetPath, []byte("untouched"), 0600))
+	createTestSymlink(t, targetPath, statePath+".lock")
+
+	lock, err := AcquireFileLock(statePath)
+	require.Error(t, err)
+	require.Nil(t, lock)
+	contents, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	require.Equal(t, "untouched", string(contents))
+}
+
 func TestAcquireFileLockExcludesOtherProcessesAndRecoversAfterCrash(t *testing.T) {
-	statePath := filepath.Join(t.TempDir(), "state.json")
+	statePath := filepath.Join(t.TempDir(), strings.Repeat("s", maxStateFileNameComponentBytes))
 	initial := NewState()
 	initial.UpdateBook("initial", 0.1, "IN_PROGRESS")
 	require.NoError(t, initial.Save(statePath))

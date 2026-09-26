@@ -347,6 +347,9 @@ components:
 
     EditionCreateResult:
       type: object
+      description: >-
+        `metadata_preview` is returned for audiobook results and omitted for
+        ebooks.
       required: [abs_item_id, reading_format, status, hardcover_book_id, hardcover_edition_id]
       properties:
         abs_item_id:
@@ -366,7 +369,9 @@ components:
           description: Verified Hardcover edition ID.
         regional_external_id:
           type: string
-          description: Confirmed regional Audible identifier, present for audiobook imports.
+          description: Regional Audible identifier used by the import, present for audiobook results.
+        metadata_preview:
+          $ref: '#/components/schemas/AudiobookMetadataPreview'
 
     EditionDraftSourceIdentifiers:
       type: object
@@ -427,7 +432,7 @@ components:
             release_date:
               type: string
               format: date
-              description: Audnex release date for the confirmed source ASIN region when available; otherwise the normalized Audiobookshelf `publishedDate`, then `publishedYear`. If the Audiobookshelf date is an ambiguous slash-formatted value, it is ignored in favor of `publishedYear` when available.
+              description: Audnex release date for the matching ASIN and region used by the draft or create request when available; otherwise the normalized Audiobookshelf `publishedDate`, then `publishedYear`. If the Audiobookshelf date is an ambiguous slash-formatted value, it is ignored in favor of `publishedYear` when available.
             edition_format: {type: string}
             edition_information:
               type: string
@@ -1190,7 +1195,9 @@ paths:
         run it reports the previous resolution but leaves the saved match and
         checkpoint in place.
         Requests are rejected while the profile is syncing or its state file is
-        busy. Requires profile mutation access when authentication is enabled.
+        busy. Removing a match from a legacy profile state file also saves its
+        state in the current schema; see MIGRATION.md before downgrading.
+        Requires profile mutation access when authentication is enabled.
       parameters:
         - name: id
           in: path
