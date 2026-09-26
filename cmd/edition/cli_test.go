@@ -454,15 +454,13 @@ func TestRunCreateRefusesBusyStateFileBeforeABSOrHardcover(t *testing.T) {
 }
 
 func TestRunCreateKeepsEbookDryRunPath(t *testing.T) {
-	inputPath := writeCreateInput(t, `{
-		"book_id": 21,
-		"title": "Ebook",
-		"isbn_13": "9781234567890",
-		"author_ids": [3],
-		"reading_format": "ebook"
-	}`)
-	called := false
+	statePath := filepath.Join(t.TempDir(), "sync-state.json")
+	inputPath := writeCreateInput(t, `{"book_id":21,"title":"Ebook","isbn_13":"9780306406157","author_ids":[3],"reading_format":"ebook","abs_item_id":"item-1"}`)
+	called, verified := false, false
 	services := createServices{
+		fetchABSItem: func(context.Context, string) (*models.AudiobookshelfBook, error) {
+			return testEbook("item-1", "", "9780306406157"), nil
+		},
 		createEbook: func(_ context.Context, input *edition.EditionInput) (*edition.EditionResult, error) {
 			called = true
 			if input.ReadingFormat != models.ReadingFormatEbook {
@@ -470,13 +468,116 @@ func TestRunCreateKeepsEbookDryRunPath(t *testing.T) {
 			}
 			return &edition.EditionResult{Success: true}, nil
 		},
+		getEditionUncached: func(context.Context, string) (*models.Edition, error) {
+			verified = true
+			return nil, nil
+		},
 	}
-	result, err := runCreate(context.Background(), createOptions{InputPath: inputPath, DryRun: true}, services)
+	result, err := runCreate(context.Background(), createOptions{
+		InputPath: inputPath, StateFile: statePath, StateFileExplicit: true, DryRun: true,
+	}, services)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !called || result.Status != "dry_run" || result.EditionID != 0 {
-		t.Fatalf("unexpected ebook dry-run result: called=%v result=%#v", called, result)
+	if !called || verified || result.Status != "dry_run" || result.EditionID != 0 || result.AssociationSaved {
+		t.Fatalf("unexpected ebook dry-run result: called=%v verified=%v result=%#v", called, verified, result)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("dry run unexpectedly wrote state: %v", err)
+	}
+}
+
+func TestRunCreateReadsBackEbookBeforeSavingAssociation(t *testing.T) {
+	tests := []struct {
+		name      string
+		verified  *models.Edition
+		readErr   error
+		wantError string
+	}{
+		{name: "verified", verified: &models.Edition{ID: "34", BookID: "21", ReadingFormatID: "4"}},
+		{name: "wrong edition", verified: &models.Edition{ID: "35", BookID: "21", ReadingFormatID: "4"}, wantError: "identity did not match"},
+		{name: "wrong book", verified: &models.Edition{ID: "34", BookID: "22", ReadingFormatID: "4"}, wantError: "identity did not match"},
+		{name: "wrong reading format", verified: &models.Edition{ID: "34", BookID: "21", ReadingFormatID: "2"}, wantError: "identity did not match"},
+		{name: "read failure", readErr: errors.New("Hardcover unavailable"), wantError: "failed to read back Hardcover ebook edition"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			statePath := filepath.Join(t.TempDir(), "sync-state.json")
+			inputPath := writeCreateInput(t, `{"book_id":21,"title":"Ebook","isbn_13":"9780306406157","author_ids":[3],"reading_format":"ebook","abs_item_id":"item-1"}`)
+			readBackCalled := false
+			services := createServices{
+				fetchABSItem: func(context.Context, string) (*models.AudiobookshelfBook, error) {
+					return testEbook("item-1", "", "9780306406157"), nil
+				},
+				createEbook: func(_ context.Context, input *edition.EditionInput) (*edition.EditionResult, error) {
+					if input.BookID != 21 || input.ReadingFormat != models.ReadingFormatEbook {
+						t.Fatalf("unexpected ebook creation input: %#v", input)
+					}
+					return &edition.EditionResult{Success: true, EditionID: 34}, nil
+				},
+				getEditionUncached: func(_ context.Context, editionID string) (*models.Edition, error) {
+					readBackCalled = true
+					if editionID != "34" {
+						t.Fatalf("read back edition %q, want 34", editionID)
+					}
+					return test.verified, test.readErr
+				},
+			}
+			result, err := runCreate(context.Background(), createOptions{
+				InputPath: inputPath, StateFile: statePath, StateFileExplicit: true,
+			}, services)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("expected %q error, got %v", test.wantError, err)
+				}
+				if result != nil {
+					t.Fatalf("failed verification returned a result: %#v", result)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !result.AssociationSaved {
+					t.Fatalf("verified ebook association was not saved: %#v", result)
+				}
+			}
+			if !readBackCalled {
+				t.Fatal("ebook edition was not read back")
+			}
+			loaded, loadErr := state.LoadState(statePath)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			association, exists := loaded.GetAssociation("item-1")
+			if test.wantError != "" {
+				if exists {
+					t.Fatalf("failed verification persisted an association: %#v", association)
+				}
+				return
+			}
+			if !exists || association.HardcoverBookID != "21" || association.HardcoverEditionID != "34" || association.ReadingFormat != models.ReadingFormatEbook {
+				t.Fatalf("unexpected saved association: %#v exists=%t", association, exists)
+			}
+		})
+	}
+}
+
+func TestRunCreateDoesNotReadBackEbookWithoutABSAssociation(t *testing.T) {
+	inputPath := writeCreateInput(t, `{"book_id":21,"title":"Ebook","isbn_13":"9780306406157","author_ids":[3],"reading_format":"ebook"}`)
+	result, err := runCreate(context.Background(), createOptions{InputPath: inputPath}, createServices{
+		createEbook: func(context.Context, *edition.EditionInput) (*edition.EditionResult, error) {
+			return &edition.EditionResult{Success: true, EditionID: 34}, nil
+		},
+		getEditionUncached: func(context.Context, string) (*models.Edition, error) {
+			t.Fatal("ebook without an ABS association was unexpectedly read back")
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssociationSaved || result.Status != "created" || result.EditionID != 34 {
+		t.Fatalf("unexpected ebook creation result: %#v", result)
 	}
 }
 

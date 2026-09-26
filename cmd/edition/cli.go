@@ -59,6 +59,7 @@ type createServices struct {
 	discoverAudible    func(context.Context, string, string) (string, error)
 	importAudiobook    func(context.Context, hardcover.RegionalAudiobookInput) (*hardcover.RegionalAudiobookResult, error)
 	createEbook        func(context.Context, *edition.EditionInput) (*edition.EditionResult, error)
+	getEditionUncached func(context.Context, string) (*models.Edition, error)
 }
 
 func newCreateServices(cfg *config.Config, log *logger.Logger, dryRun bool) (createServices, error) {
@@ -113,6 +114,7 @@ func newCreateServices(cfg *config.Config, log *logger.Logger, dryRun bool) (cre
 		createEbook: func(ctx context.Context, input *edition.EditionInput) (*edition.EditionResult, error) {
 			return creator.CreateEdition(ctx, input)
 		},
+		getEditionUncached: hc.GetEditionUncached,
 	}, nil
 }
 
@@ -285,6 +287,12 @@ func runCreate(ctx context.Context, options createOptions, services createServic
 		output.Status = "existing"
 	}
 	if absItem != nil {
+		if services.getEditionUncached == nil {
+			return nil, errors.New("Hardcover ebook edition verification is unavailable")
+		}
+		if err := verifyCreatedEbookEdition(ctx, created.EditionID, input.BookID, services.getEditionUncached); err != nil {
+			return nil, err
+		}
 		association := ebookAssociation(absItem, input.BookID, created.EditionID)
 		if err := saveAssociation(loadedState, associationStatePath, association); err != nil {
 			return nil, fmt.Errorf("Hardcover returned ebook edition %d, but the local association could not be saved. Verify the Hardcover result before retrying; retrying may create another edition: %w", created.EditionID, err)
@@ -395,6 +403,27 @@ func audiobookAssociation(item *models.AudiobookshelfBook, requestedASIN string,
 		ReadingFormat:      models.ReadingFormatAudiobook,
 		Provenance:         string(hardcover.ASINMatchAudibleMapping),
 	}
+}
+
+func verifyCreatedEbookEdition(ctx context.Context, expectedEditionID, expectedBookID int, getEdition func(context.Context, string) (*models.Edition, error)) error {
+	verified, err := getEdition(ctx, strconv.Itoa(expectedEditionID))
+	if err != nil {
+		return fmt.Errorf("failed to read back Hardcover ebook edition %d: %w", expectedEditionID, err)
+	}
+	if verified == nil {
+		return fmt.Errorf("Hardcover ebook edition %d could not be read back", expectedEditionID)
+	}
+
+	verifiedEditionID, editionErr := strconv.Atoi(strings.TrimSpace(verified.ID))
+	verifiedBookID, bookErr := strconv.Atoi(strings.TrimSpace(verified.BookID))
+	verifiedFormatID, formatErr := strconv.Atoi(strings.TrimSpace(verified.ReadingFormatID))
+	expectedFormatID := models.ReadingFormatID(models.ReadingFormatEbook)
+	if editionErr != nil || bookErr != nil || formatErr != nil ||
+		verifiedEditionID != expectedEditionID || verifiedBookID != expectedBookID || verifiedFormatID != expectedFormatID {
+		return fmt.Errorf("Hardcover ebook edition identity did not match: expected edition %d on book %d with reading format %d, got edition %q book %q format %q",
+			expectedEditionID, expectedBookID, expectedFormatID, verified.ID, verified.BookID, verified.ReadingFormatID)
+	}
+	return nil
 }
 
 func ebookAssociation(item *models.AudiobookshelfBook, bookID, editionID int) state.Association {
