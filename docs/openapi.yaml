@@ -1131,9 +1131,11 @@ paths:
           description: >-
             The profile is syncing or being deleted, the run/item record is
             stale or no longer usable, the Audiobookshelf source changed,
-            profile dry run is enabled, or Hardcover returned a different
-            book or reading format. Run a fresh sync after stale-source
-            conflicts. Turn off dry run before creating an edition.
+            profile dry run is enabled, or Hardcover returned an identity
+            conflict. Run a fresh sync after stale-source conflicts. Turn off
+            dry run before creating an edition. For an identity conflict,
+            verify the Hardcover result before retrying because another
+            edition may have been created.
           content:
             application/json:
               schema:
@@ -1164,11 +1166,12 @@ paths:
         '502':
           description: >-
             Non-timeout Audiobookshelf client setup or item lookup failed, a
-            generic Hardcover operation or result verification failed, or
-            the remote operation succeeded but the local match could not be
-            saved. When the error says the local save failed, verify the
-            Hardcover result before retrying; a retry may create another
-            edition.
+            Hardcover operation or result verification failed, or the remote
+            operation succeeded but the local match could not be saved. If a
+            Hardcover operation or verification may have completed remotely,
+            verify the Hardcover result before retrying because another
+            edition may be created. The same guidance applies when local save
+            fails after verified remote success.
           content:
             application/json:
               schema:
@@ -1177,8 +1180,11 @@ paths:
           description: >-
             The create service is shutting down, a dependency request timed
             out, Audnex region discovery was rate limited or transiently
-            unavailable, or the Hardcover regional import timed out; retry the
-            request.
+            unavailable, or the Hardcover regional import timed out. Timeouts
+            during Audiobookshelf or Audnex lookup happen before a Hardcover
+            write and can be retried. If the timeout occurred during a
+            Hardcover mutation, verify the Hardcover result before retrying
+            because another edition may be created.
           content:
             application/json:
               schema:

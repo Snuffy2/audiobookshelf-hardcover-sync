@@ -147,13 +147,18 @@ successful create saves a local association for the next sync.
 An active or deleting profile, stale source, superseded needs-review
 candidate, already-saved association, profile dry run, or Hardcover identity
 conflict returns `409`; finish the sync, run a fresh sync after stale input,
-or turn off dry run as applicable. Busy create capacity or a locked state file
-returns `429` with `Retry-After: 1`. Temporary Audnex lookup
-failures, dependency timeouts, and service shutdown return `503`.
+or turn off dry run as applicable. If Hardcover returned an identity conflict,
+verify the Hardcover result before retrying because another edition may have
+been created. Busy create capacity or a locked state file returns `429` with
+`Retry-After: 1`. Temporary Audnex lookup failures, dependency timeouts, and
+service shutdown return `503`. A timeout during Audiobookshelf or Audnex lookup
+happens before the Hardcover write and can be retried. If a timeout or other
+failure occurs during or after a Hardcover mutation, verify the Hardcover result
+before retrying because another edition may have been created.
 If Hardcover succeeded but saving the local association failed, the endpoint
 returns `502`; verify the Hardcover result before retrying, because a retry may
-create another edition. Other non-timeout Audiobookshelf client setup/item
-lookup or Hardcover operation/verification failures also return `502`.
+create another edition. Hardcover operation or result verification failures
+also return `502` with the same guidance when the remote outcome is ambiguous.
 
 ### Edition capability
 

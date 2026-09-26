@@ -441,6 +441,8 @@ func TestCreateEditionFromDraftRejectsMismatchedReadBackEbookEditionID(t *testin
 	response := httptest.NewRecorder()
 	fixture.routes.ServeHTTP(response, request)
 	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "Verify the Hardcover result before retrying")
+	require.Contains(t, response.Body.String(), "retrying may create another edition")
 	stored, err := statepkg.LoadState(editionCreateProfileStatePath(fixture))
 	require.NoError(t, err)
 	_, exists := stored.GetAssociation("abs-item-1")

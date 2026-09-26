@@ -333,16 +333,19 @@ func (h *Handler) createRegionalAudiobook(ctx context.Context, profile *database
 	}
 	result, err := client.ImportRegionalAudiobook(ctx, hardcover.RegionalAudiobookInput{BookID: bookID, ASIN: asin, Region: region})
 	if err != nil {
-		return statepkg.Association{}, fmt.Errorf("Hardcover regional audiobook import failed: %w", err)
+		if errors.Is(err, hardcover.ErrRegionalAudiobookInvalidInput) || errors.Is(err, hardcover.ErrRegionalAudiobookDryRun) {
+			return statepkg.Association{}, fmt.Errorf("Hardcover regional audiobook import failed: %w", err)
+		}
+		return statepkg.Association{}, fmt.Errorf("Hardcover regional audiobook import failed: %w", markEditionCreateRemoteOutcomeAmbiguous(err))
 	}
 	if result == nil || result.BookID != bookID || result.EditionID <= 0 || result.ReadingFormatID != models.ReadingFormatID(models.ReadingFormatAudiobook) ||
 		(result.Status != hardcover.RegionalAudiobookLoaded && result.Status != hardcover.RegionalAudiobookCreated) {
-		return statepkg.Association{}, errHardcoverEditionIdentityConflict
+		return statepkg.Association{}, markEditionCreateRemoteOutcomeAmbiguous(errHardcoverEditionIdentityConflict)
 	}
 	regionalID := asin + ":" + region
 	if result.RegionalExternalID != "" {
 		if !strings.EqualFold(result.RegionalExternalID, regionalID) {
-			return statepkg.Association{}, errHardcoverEditionIdentityConflict
+			return statepkg.Association{}, markEditionCreateRemoteOutcomeAmbiguous(errHardcoverEditionIdentityConflict)
 		}
 		regionalID = result.RegionalExternalID
 	}
@@ -387,6 +390,11 @@ func parseSubmittedAudibleIdentifier(raw string) (string, string, error) {
 
 var errAudibleRegionUnknown = errors.New("Audnex did not confirm an Audible region; supply an explicit regional Audible identifier")
 var errHardcoverEditionIdentityConflict = errors.New("Hardcover returned an edition that does not match the reviewed book and format")
+var errEditionCreateRemoteOutcomeAmbiguous = errors.New("Hardcover may have processed the edition request but its result could not be verified")
+
+func markEditionCreateRemoteOutcomeAmbiguous(err error) error {
+	return fmt.Errorf("%w: %w", errEditionCreateRemoteOutcomeAmbiguous, err)
+}
 
 func (h *Handler) createEbook(ctx context.Context, item *models.AudiobookshelfBook, record sync.BookOutcomeRecord, request editionCreateRequest, client editionCreateHardcoverClient, outcome *editionCreateOutcome) (statepkg.Association, error) {
 	if request.AudibleIdentifier != "" {
@@ -488,21 +496,21 @@ func (h *Handler) createEbook(ctx context.Context, item *models.AudiobookshelfBo
 	}
 	result, err := client.CreateEbook(ctx, input)
 	if err != nil {
-		return statepkg.Association{}, fmt.Errorf("Hardcover ebook insertion failed: %w", err)
+		return statepkg.Association{}, fmt.Errorf("Hardcover ebook insertion failed: %w", markEditionCreateRemoteOutcomeAmbiguous(err))
 	}
 	if result == nil || !result.Success || result.EditionID <= 0 {
-		return statepkg.Association{}, errHardcoverEditionIdentityConflict
+		return statepkg.Association{}, markEditionCreateRemoteOutcomeAmbiguous(errHardcoverEditionIdentityConflict)
 	}
 	createdEdition, err := client.GetEditionUncached(ctx, strconv.Itoa(result.EditionID))
 	if err != nil {
-		return statepkg.Association{}, fmt.Errorf("failed to verify Hardcover ebook edition: %w", err)
+		return statepkg.Association{}, fmt.Errorf("failed to verify Hardcover ebook edition: %w", markEditionCreateRemoteOutcomeAmbiguous(err))
 	}
 	if createdEdition == nil {
-		return statepkg.Association{}, errHardcoverEditionIdentityConflict
+		return statepkg.Association{}, markEditionCreateRemoteOutcomeAmbiguous(errHardcoverEditionIdentityConflict)
 	}
 	formatID, formatErr := strconv.Atoi(createdEdition.ReadingFormatID)
 	if createdEdition.ID != strconv.Itoa(result.EditionID) || createdEdition.BookID != record.HardcoverBookID || formatErr != nil || formatID != models.ReadingFormatID(models.ReadingFormatEbook) {
-		return statepkg.Association{}, errHardcoverEditionIdentityConflict
+		return statepkg.Association{}, markEditionCreateRemoteOutcomeAmbiguous(errHardcoverEditionIdentityConflict)
 	}
 	status := "created"
 	if result.Existing {
@@ -651,6 +659,17 @@ func (h *Handler) writeEditionCreateError(w http.ResponseWriter, profileID strin
 	case errors.Is(err, multiuser.ErrEditionAssociationSaveAfterRemoteSuccess):
 		h.log.Error(fmt.Sprintf("Hardcover returned a verified edition but association save failed for profile %s: %v", profileID, err))
 		h.writeErrorResponse(w, http.StatusBadGateway, "Hardcover returned a verified edition, but the local match could not be saved. Verify the Hardcover result before retrying; retrying may create another edition.")
+	case errors.Is(err, errEditionCreateRemoteOutcomeAmbiguous):
+		message := "Hardcover may have processed the edition request, but its result could not be confirmed. Verify the Hardcover result before retrying; retrying may create another edition."
+		switch {
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, hardcover.ErrRegionalAudiobookImportTimeout):
+			h.writeErrorResponse(w, http.StatusServiceUnavailable, message)
+		case errors.Is(err, errHardcoverEditionIdentityConflict), errors.Is(err, hardcover.ErrRegionalAudiobookIdentityConflict):
+			h.writeErrorResponse(w, http.StatusConflict, fmt.Sprintf("%s. Verify the Hardcover result before retrying; retrying may create another edition.", err.Error()))
+		default:
+			h.log.Error(fmt.Sprintf("Hardcover edition result could not be confirmed for profile %s: %v", profileID, err))
+			h.writeErrorResponse(w, http.StatusBadGateway, message)
+		}
 	case errors.Is(err, errEditionCreateInvalidInput):
 		h.writeErrorResponse(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, errAudibleRegionUnknown):
