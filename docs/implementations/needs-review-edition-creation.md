@@ -387,6 +387,18 @@ destinations a trusted self-hosted deployment may use, and how redirects are
 checked. Do not assume a blanket private-address ban is compatible with
 self-hosted ABS instances. Step 7 implements and tests the policy.
 
+The Step 6 branch records the policy in
+`docs/implementations/audiobookshelf-url-policy.md`. Network trust is a
+server-wide setting that profiles cannot select or loosen:
+`audiobookshelf.network_trust` in YAML and `AUDIOBOOKSHELF_NETWORK_TRUST` in
+the environment. `allow_private` (the default) permits internet, private LAN,
+Docker service, Tailscale (`100.64.0.0/10`), IPv6 unique-local, and loopback
+addresses over HTTP or HTTPS, so existing self-hosted deployments keep
+working. `public_only` permits only internet addresses over HTTPS. Both modes
+always reject link-local (including cloud metadata) and other reserved
+addresses. Because the setting does nothing until it is enforced, Step 6 does
+not document it in README.
+
 ### Step 7: create API and standalone CLI
 
 This is the only path that writes to the Hardcover catalogue, and it runs only
@@ -401,6 +413,14 @@ create fetches share validation. Check redirect targets under the same policy
 and keep ABS credentials scoped to the configured server. Before the create
 POST ships, cover malformed or disallowed URLs, allowed local deployments,
 and redirects at the HTTP/client boundary.
+
+Add the `audiobookshelf.network_trust` / `AUDIOBOOKSHELF_NETWORK_TRUST`
+setting to `internal/config` with the Step 6 values and default, and reject an
+unsupported value. When the policy is enforced, document the setting in the
+README configuration reference: what `allow_private` and `public_only` permit,
+that `allow_private` is the default for self-hosted use, that `public_only`
+suits deployments where less-trusted users can create profiles, and that
+profile owners cannot change it. Keep that README text short and clear.
 
 Add a `Retry-After` response header to the draft endpoint's 429 response,
 using a short wait expressed in seconds. Describe it in OpenAPI and test the
@@ -724,10 +744,12 @@ evidence:
 
 Step 3 owns the draft README/OpenAPI description and the Audnex region
 setting; Steps 4 and 5 document matching and the new persistence; Step 6
-documents its capability route; Step 7 documents the create route, standalone
-CLI contract, the fields an audiobook import reads, and exact identifier
-corrections; Step 8 documents the `resync` request/response; Step 9 documents
-the user flow; Step 10 documents the matching change and its migration note.
+documents its capability route and records the ABS URL policy outside README;
+Step 7 documents the create route, standalone CLI contract, the fields an
+audiobook import reads, exact identifier corrections, and the enforced
+Audiobookshelf network trust setting in README; Step 8 documents the `resync`
+request/response; Step 9 documents the user flow; Step 10 documents the
+matching change and its migration note.
 Update the field crosswalk as the relevant step lands, rather than leaving its
 old R4 destination as an implementation contract.
 
@@ -879,6 +901,9 @@ require the owner's instruction.
 - [ ] Define the shared, deployment-aware ABS base-URL and redirect policy
   for profile and CLI configuration, including trusted local-network servers
   and ABS credential scoping; Step 7 implements it before create ships.
+  Record it in `docs/implementations/audiobookshelf-url-policy.md` with the
+  server-wide `allow_private` (default) and `public_only` trust modes; do not
+  add the unenforced setting to README.
 - [ ] Test no-mutation probes, scope denial, token change, transient errors,
   profile access, and dry run at the HTTP/client boundary.
 - [ ] Document the route and its truthful limits in README/OpenAPI, add one
@@ -892,6 +917,11 @@ require the owner's instruction.
   profile and CLI configuration, including redirect targets, so sync, draft,
   and create fetches use the same validation. Test rejected URLs and redirects
   as well as allowed self-hosted servers.
+- [ ] Add the server-wide `audiobookshelf.network_trust` /
+  `AUDIOBOOKSHELF_NETWORK_TRUST` setting (`allow_private` default,
+  `public_only`), reject unsupported values, and keep it out of profile
+  settings. Document it concisely in the README configuration reference once
+  it is enforced.
 - [ ] Send `Retry-After` in seconds on draft 429 responses; document the
   header in OpenAPI and test it at the HTTP boundary.
 - [ ] Add the legacy Audnex region setting clarification to `MIGRATION.md`
