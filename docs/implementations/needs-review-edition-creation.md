@@ -195,7 +195,7 @@ branches and is not opened as a PR itself.
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Open upstream PR #208 |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Implementation on existing Step 7c branch; no upstream PR |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. No new Hardcover requests; only the write path for already-fetched lookup results changes. | 5 | Open PR #41; not yet opened upstream |
-| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add a pre-flight scope probe to the Step 6 capability route: use the validated `insert_edition` probe for ebooks and a validation-only `upsert_book` request omitting required `book` for audiobooks; classify only the exact observed responses and leave unknown outcomes `unverified`. | 7b | Open PR #42; not yet opened upstream |
+| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Open PR #42; not yet opened upstream |
 | 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
@@ -648,34 +648,45 @@ reports `unverified` for a configured token because no read-only signal
 reveals a token's catalogue scopes. Extend `EditionCapabilityForProfile` to
 attempt the probe for the operation being checked and inspect only the
 observed response shapes:
-- **Ebook (`insert_edition`):** call `insert_edition` for book ID `-1` with an
-  otherwise minimal input. This exact probe was validated against the hosted
-  Hardcover API with real tokens: a scope-capable token returned HTTP 200
-  with a "Couldn't find Book" error, a limited token returned
-  `403 insufficient_scope` with the missing scope, and neither call created
-  an edition. Treat only the exact observed not-found response as the
-  operation's scope signal; other response shapes are `unverified`.
+- **Ebook (`insert_edition`):** send exactly
+  `mutation ProbeInsertEditionCapability { insert_edition { id } }` with no
+  variables. Omitting the required `book_id` prevents mutation execution. The
+  sanitized live response on 2026-09-27 for the tested ordinary full token was
+  HTTP 200 with exactly one error: `message` was `missing required field
+  'book_id'`, `extensions.path` was
+  `$.selectionSet.insert_edition.args.book_id`, and `extensions.code` was
+  `validation-failed`; `data` was absent. Accept `allowed` only for that exact
+  message, path, code, and response shape with `data` absent or null; a
+  different message, path, or shape stays `unverified`. The tested limited
+  token received HTTP 403 with the exact
+  `write:catalog:append` insufficient-scope body recorded below.
+  Historically, the earlier `book_id: -1` probe was recorded in the plan on
+  2026-09-22 as returning HTTP 200 with a "Couldn't find Book" error for a
+  scope-capable token and HTTP 403 for a limited token, with no edition
+  created either way. Its 2026-09-27 recheck returned HTTP 200 with nonnull
+  `data`, but resolver result fields were not retained; that result is
+  inconclusive, and no further `book_id: -1` request was made. This historical
+  result is not the Step 9 classifier.
 - **Audiobook (`upsert_book`):** send a validation-only GraphQL request for
-  `upsert_book` while omitting its required `book` argument. This prevents
-  GraphQL mutation execution. The live evidence recorded for 2026-09-27 says
-  that the tested ordinary full token received HTTP 200 with a
-  `validation-failed` error for the missing argument, but does not preserve
-  the hosted response's verbatim message. The current implementation's
-  conservative expected-message matcher accepts HTTP 200 with exactly one
-  GraphQL error whose `extensions.code` is `validation-failed`, whose message
-  is exactly `field 'upsert_book' argument 'book' of type
-  'CreateBookFromPlatformInput!' is required, but it was not provided`, and
-  whose `data` is absent or null. A different message or response shape stays
-  `unverified`; do not describe the hard-coded message as a verbatim live
-  observation. The tested limited token instead received HTTP 403 with the exact
+  `upsert_book` while omitting its required `book` argument: exactly
+  `mutation ProbeUpsertBookCapability { upsert_book { id } }`, with no
+  variables. This prevents GraphQL mutation execution. The sanitized live
+  response on 2026-09-27 for
+  the tested ordinary full token was HTTP 200 with exactly one error:
+  `message` was `missing required field 'book'`, `extensions.path` was
+  `$.selectionSet.upsert_book.args.book`, and `extensions.code` was
+  `validation-failed`; `data` was absent. Accept `allowed` only for that exact
+  error message, path, code, and response shape with `data` absent or null; a
+  different message, path, or shape stays `unverified`. The tested limited
+  token instead received HTTP 403 with the exact
   `{"error":"insufficient_scope","error_description":"Missing scopes: write:catalog:append","scope":"write:catalog:append"}`
   body before GraphQL validation. Classify `allowed` only when the HTTP 200
   response matches the complete expected validation error shape above, and
-  classify `denied` only for the exact observed 403 body. This is evidence
-  about scope handling for those tested tokens at that time, not evidence
-  that an import with valid arguments will succeed; Step 7b's successful
-  import is separate evidence. Do not generalize these responses to other
-  credentials or future server behavior.
+  classify `denied` only for the exact observed 403 body. These responses are
+  evidence about scope handling for the tested credentials and requests at
+  that time, not evidence that an import with valid arguments will succeed;
+  Step 7b's successful import is separate evidence. Do not generalize these
+  responses to other credentials or future server behavior.
 - Map other outcomes (network error, timeout, 401, 429, 5xx, other HTTP 403,
   or any unexpected GraphQL response) to `unverified`, never `allowed`.
   Preserve `reason: "insufficient_scope"` for the exact known denial (the
@@ -708,9 +719,9 @@ with an ASIN or ISBN. With Step 9's capability probe, the route can report
 responses stay `unverified`. An `allowed` or still-`unverified` result permits
 the action (showing the unverified-permission warning only in the latter
 case), while a `denied` result hides or disables "Add edition" with the
-probe's reason. An `allowed` result from the audiobook validation-only probe
-is scope evidence, not an import-success guarantee; show the create POST's
-actual result, including any permission failure after a token change.
+probe's reason. An `allowed` result from either validation-only probe is scope
+evidence, not an import-success guarantee; show the create POST's actual
+result, including any permission failure after a token change.
 Preview the ABS source identifier and any established region without implying
 that `edition.asin` is the Audible destination. Show
 only edits that Step 7b can honor, escape ABS-provided strings, and display
@@ -965,11 +976,10 @@ evidence:
 - **Step 9 — Changed:** `**Immediate one-book resync and a real edition
   capability check**: Optionally sync read status after edition creation
   while excluding an overlapping full sync; the edition-capability check now
-  uses the validated ebook probe and a validation-only audiobook probe that
-  omits required `book`. It reports allowed or denied only for the exact
-  observed response shapes and leaves other outcomes unverified. The probe is
-  scope evidence; the create response determines import success. By
-  @Snuffy2`.
+  uses argument-free validation-only probes for both catalogue writes. It
+  reports allowed or denied only for the exact observed response shapes and
+  leaves other outcomes unverified. The probes are scope evidence; the create
+  response determines import success. By @Snuffy2`.
 - **Step 10 — Added:** `**Edition creation in Sync Status**: Preview and
   confirm an eligible needs-review edition in the UI, hide or disable the
   action on a known capability denial, show remaining region uncertainty,
@@ -1304,25 +1314,22 @@ require the owner's instruction.
 - [ ] Test synced, already-current, skipped, failed, cancellation, full-sync
   contention, and no-op paths, including the race detector.
 - [ ] Add the pre-flight scope probe the legacy plan specified for Step 6 but
-  that shipped without one (PR #202 always reports `unverified`): retain the
-  validated impossible-book-ID `insert_edition` probe for ebooks; for
-  audiobooks send `upsert_book` without its required `book` argument so
-  GraphQL validation prevents mutation execution. Accept `allowed` only for
-  HTTP 200 with exactly one `validation-failed` error whose message exactly
-  names the missing required `book` argument and whose data is absent or
-  null. Do not send an import with valid arguments as a probe.
-- [ ] Re-validate the `insert_edition` probe against the hosted Hardcover API
-  with real tokens (the legacy plan already confirmed: HTTP 200 with
-  "Couldn't find Book" for a capable token, `403 insufficient_scope` with the
-  missing scope for a limited one, no edition created either way). For
-  `upsert_book`, classify `allowed` only on an exact match to the observed
-  HTTP 200 GraphQL `validation-failed` response for the missing required
-  `book` argument. Classify `denied` only on the exact observed HTTP 403 body
-  for `write:catalog:append`. Treat all other outcomes, including other
-  validation errors or a changed response, as `unverified`. These responses
-  establish only the probe's observed scope signal, not successful import
-  capability; retain valid-import evidence separately. Record the live
-  response evidence and its date under "Resolved decisions and evidence".
+  that shipped without one (PR #202 always reports `unverified`): send the
+  argument-free `insert_edition` and `upsert_book` validation-only mutations
+  recorded above, with no variables. GraphQL must reject both before
+  mutation execution. Do not send either import with valid arguments as a
+  probe.
+- [ ] Classify `allowed` only for the exact observed HTTP 200 response shape
+  for each operation: one `validation-failed` error with message
+  `missing required field 'book_id'` and path
+  `$.selectionSet.insert_edition.args.book_id`, or message
+  `missing required field 'book'` and path
+  `$.selectionSet.upsert_book.args.book`, with `data` absent or null.
+  Classify `denied` only for the exact observed HTTP 403
+  `write:catalog:append` response body. Leave all other outcomes, including
+  other validation errors or changed response shapes, `unverified`. These
+  are scope signals only, not evidence that a valid import will succeed;
+  retain valid-import evidence separately.
 - [ ] Cache the probe result per profile and per operation in memory: a
   longer TTL for a definite `allowed`/`denied`, none or a short one for
   `unverified` so a transient failure is retried on the next load; invalidate
@@ -1485,23 +1492,29 @@ require the owner's instruction.
     identifiers or progress happen to change or the user forgets it. No
     Hardcover mutation happens for the `needs_review`/`not_found` result this
     produces, so the affected book stops syncing until it is resolved.
-13. **Capability pre-flight probe evidence (observed 2026-09-27):** the
-    retired legacy plan's `insert_edition` probe used book ID `-1`: a
-    scope-capable token returned HTTP 200 with a "Couldn't find Book" error,
-    while a limited token returned `403 insufficient_scope`; neither created
-    an edition. Section 15 of the [Audible mapping findings](../hardcover-audible-mapping-findings.md)
-    records the audiobook `upsert_book` validation-only probe: omitting its
-    required `book` argument produced HTTP 200 with a `validation-failed`
-    response for the tested ordinary full token. Section 15 does not record
-    that response's verbatim message; the current implementation's exact
-    expected-message matcher is conservative, and any different message stays
-    `unverified`. The tested limited token received HTTP 403 with the exact
-    `insufficient_scope` body for `write:catalog:append` before GraphQL
-    validation. The missing argument prevents import execution. These live
-    responses establish only the observed scope distinction for those tokens
-    on that date; they do not establish that a valid `upsert_book` import will
-    succeed or predict future server responses. Step 9 recognizes only the
-    exact observed response shapes; all other outcomes remain `unverified`.
+13. **Capability pre-flight probe evidence (observed 2026-09-27):** Section 15
+    of the [Audible mapping findings](../hardcover-audible-mapping-findings.md)
+    records argument-free `insert_edition` and `upsert_book` mutations. For
+    the tested ordinary full token, both returned HTTP 200 with exactly one
+    `validation-failed` error with `data` absent: `insert_edition` reported message `missing
+    required field 'book_id'` and path
+    `$.selectionSet.insert_edition.args.book_id`; `upsert_book` reported
+    `missing required field 'book'` and path
+    `$.selectionSet.upsert_book.args.book`. The tested limited token received
+    HTTP 403 with the exact `insufficient_scope` body for
+    `write:catalog:append` before validation for both mutations. These
+    argument-free requests cannot execute imports. The earlier `book_id: -1`
+    probe is historical evidence recorded in the plan update dated
+    2026-09-22: it was described as HTTP 200 with a "Couldn't find Book"
+    error for a scope-capable token and HTTP 403 for a limited one, without an
+    edition created. Its 2026-09-27 recheck returned HTTP 200 with nonnull
+    `data`, but resolver result fields were not retained, so it is inconclusive
+    and not positive scope evidence; no further `book_id: -1` request was
+    made. Step 9 accepts only the exact argument-free validation message,
+    path, code, and response shape, or the exact known denial body; other
+    outcomes remain `unverified`. These signals are time-bound evidence for
+    the tested credentials and do not establish successful valid imports or
+    future server behavior.
 
 Sources: [Audnex API schema](https://github.com/laxamentumtech/audnexus/blob/develop/docs/index.html),
 [Hardcover capability map](https://github.com/hardcoverapp/hardcover-docs/blob/main/capability-scopes.json),

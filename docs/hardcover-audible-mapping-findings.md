@@ -263,28 +263,51 @@ normal library-progress sync.
 
 ## 15. Live catalogue-write scope response (2026-09-27)
 
-A limited API token and an ordinary full token were each sent two validation-only
-mutations: `insert_edition` without its required `book_id` and `edition`
-arguments, and `upsert_book` without its required `book` argument. Neither
-request could execute a catalogue write. The full token reached GraphQL
-validation and received HTTP 200 with `validation-failed` errors for the missing
-arguments.
+A limited API token and an ordinary full token were each sent the following
+argument-free GraphQL mutations, with no variables. GraphQL validation rejected
+the full-token requests before either mutation could execute:
 
-The limited token instead received HTTP 403 for both fields, before GraphQL
-validation, with this response body:
+```graphql
+mutation ProbeInsertEditionCapability { insert_edition { id } }
+mutation ProbeUpsertBookCapability { upsert_book { id } }
+```
+
+The ordinary full token received HTTP 200 for both. The exact sanitized
+responses were:
+
+```json
+{"errors":[{"message":"missing required field 'book_id'","extensions":{"path":"$.selectionSet.insert_edition.args.book_id","code":"validation-failed"}}]}
+```
+
+```json
+{"errors":[{"message":"missing required field 'book'","extensions":{"path":"$.selectionSet.upsert_book.args.book","code":"validation-failed"}}]}
+```
+
+The limited token received HTTP 403 for both, before GraphQL validation, with
+this exact sanitized response body:
 
 ```json
 {"error":"insufficient_scope","error_description":"Missing scopes: write:catalog:append","scope":"write:catalog:append"}
 ```
 
-The tested permission denial is therefore an HTTP error, not the GraphQL
-`field '<mutation>' not found in type: 'mutation_root'` error used in the
-original stub test. A client can classify this exact HTTP 403 body as a known
-pre-execution catalogue-scope denial. Other HTTP errors and unrecognized
-response bodies remain ambiguous after a mutation request, because they do
-not establish that Hardcover rejected the write before execution. This probe
-establishes the response shape for these two mutations and tokens at the time
-of testing; it does not establish every permission-denial variant.
+An earlier live `insert_edition` probe supplied `book_id: -1`; that result was
+recorded in the prior plan on 2026-09-22 as HTTP 200 with a "Couldn't find
+Book" error for a scope-capable token and HTTP 403 for a limited token, with
+no edition created either way. A
+2026-09-27 recheck of that form returned HTTP 200 with nonnull `data`, but the
+resolver result fields were not retained, so it is inconclusive and is not
+positive scope evidence. No further `book_id: -1` request was made. Step 9
+uses the argument-free validation-only request above instead.
+
+For these tested tokens on this date, the exact HTTP 200 validation responses
+show that the requests reached GraphQL validation, and the exact HTTP 403 body
+shows a pre-execution `write:catalog:append` scope denial. This evidence is
+only a scope signal for the tested credentials and argument-free requests. It
+does not establish that a valid `insert_edition` or `upsert_book` import will
+succeed, nor does it establish future server behavior or every denial variant.
+Only the exact recorded validation message, error path, and `validation-failed`
+code can be recognized as the expected response; changed or unknown outcomes
+remain unverified.
 
 ## ISBN import and omitted book ID
 
