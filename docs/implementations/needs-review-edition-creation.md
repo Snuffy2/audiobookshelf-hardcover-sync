@@ -33,7 +33,7 @@ calls the create API. An audiobook sync cannot resolve through an exact
 mapping, a local association, or another independent match remains
 `needs_review` with enough detail for the user to add the edition.
 
-The user-approved identifier rules for the completed flow (after Step 10) are:
+The user-approved identifier rules for the completed flow (after Step 11) are:
 
 - Use a durable, profile-scoped association from the ABS item and its source
   identifiers (ASIN, ISBN-10, and ISBN-13, whichever the item has) to the
@@ -57,7 +57,7 @@ The user-approved identifier rules for the completed flow (after Step 10) are:
   ranks above ISBN, as it does today. Audible mappings are not queried for
   ebooks.
 - Do not use `editions.asin` to match an ABS audiobook to Hardcover, to
-  choose a candidate, or as a duplicate guard for an audiobook import. Step 10
+  choose a candidate, or as a duplicate guard for an audiobook import. Step 11
   removes the current audiobook `editions.asin` matching once the
   user-initiated create flow and UI can resolve the items this exposes. An
   older edition that contains an Audible ASIN only in that field may coexist
@@ -174,6 +174,7 @@ when requested. Step 3 keeps its existing branch name. Every future step uses
 | 8 | `step_8_needs_review_add_edition` |
 | 9 | `step_9_needs_review_add_edition` |
 | 10 | `step_10_needs_review_add_edition` |
+| 11 | `step_11_needs_review_add_edition` |
 
 The existing Step 4 and Step 5 branch refs contain work from the old ordering.
 Rework those refs for their revised steps instead of creating alternate branch
@@ -188,16 +189,17 @@ branches and is not opened as a PR itself.
 | 2 | Edition creator hardening and ebook support | 1 | Merged |
 | 3 | Read-only ABS/Audnex edition draft. Its audiobook ASIN is a source Audible identifier, never an instruction to write `edition.asin`. Add the shared Audnex region discovery with typed client errors and take `releaseDate` from the region that resolves it. Show a region only when established and distinguish unknown and temporarily unavailable. Audiobook metadata is preview-only; the submitted Audible identifier may be corrected. The endpoint makes no Hardcover request and works by itself. | 2 | Merged upstream PR #199 |
 | 4 | Land the existing ISBN-10/ISBN-13 counterpart matching as its own PR. Keep its diff confined to ISBN behavior and format protection. | 2 | Merged upstream PR #200 |
-| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 10. No catalogue writes. | 4 | Merged upstream PR #201 |
+| 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 11. No catalogue writes. | 4 | Merged upstream PR #201 |
 | 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Merged upstream PR #202 |
 | 7a | Enforce the Step 6 ABS URL policy at the shared client boundary for profile settings, sync, the draft endpoint, and CLI configuration, including redirect targets, and add the server-wide `audiobookshelf.network_trust` setting. Send `Retry-After` on draft 429 responses. No create path and no catalogue writes. | 6 | Merged upstream PR #205 |
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Open upstream PR #208 |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Implementation on existing Step 7c branch; no upstream PR |
-| 8 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7b | Not started |
-| 9 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. | 8 | Not started |
-| 10 | Stop matching ABS books to Hardcover by `editions.asin`: remove the sync fallback and the audiobook `editions.asin` duplicate guard. Items that relied on it become `needs_review`, which the Step 7–9 create flow resolves. | 9 | Not started |
+| 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. No new Hardcover requests; only the write path for already-fetched lookup results changes. | 5 | Open PR #41; not yet opened upstream |
+| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7b | Open PR #42; not yet opened upstream |
+| 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. | 9 | Open PR #43; not yet opened upstream |
+| 11 | Stop matching ABS books to Hardcover by `editions.asin`: remove the sync fallback and the audiobook `editions.asin` duplicate guard. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44; not yet opened upstream |
 
-Step 10 is last so that every user has the create API, CLI, and UI before
+Step 11 is last so that every user has the create API, CLI, and UI before
 matches that depended on `editions.asin` become reviewable.
 
 ### Step 3: source draft
@@ -359,9 +361,9 @@ wraps it, and the edition creator's duplicate check calls that. The mismatch
 export calls it in `AddWithMetadata` to attach Hardcover book details to the
 exported JSON. Audit every production caller when splitting the query, keep
 each caller's current results in this step, and cover them with tests. Their
-`editions.asin` use is removed in Step 10.
+`editions.asin` use is removed in Step 11.
 
-Until Step 10, preserve the existing `editions.asin` fallback for an
+Until Step 11, preserve the existing `editions.asin` fallback for an
 unresolved audiobook so behavior does not regress before the create flow
 exists. Never write that fallback into the durable association. Retire the old
 in-memory and 24-hour positive ASIN caches without importing them into the new
@@ -458,7 +460,7 @@ profile owners cannot change it. Keep that README text short and clear.
 
 Add a `Retry-After` response header to the draft endpoint's 429 response,
 using a short wait expressed in seconds. Describe it in OpenAPI and test the
-HTTP response; Step 9 uses it when retrying previews.
+HTTP response; Step 10 uses it when retrying previews.
 
 #### Step 7b: create API
 
@@ -504,7 +506,7 @@ A create response must distinguish an edition already created remotely from a
 failure to save the local association, so retry cannot quietly create an
 unrelated second edition. Dry run makes no Hardcover mutation and saves no
 association. The POST must be usable with curl, and its result must be
-findable by the next normal sync before Step 8 exists.
+findable by the next normal sync before Step 9 exists.
 
 Reuse Step 5's cross-process state-file lock for the create API. Acquire it
 before loading state or making any Hardcover mutation, refuse when busy, and
@@ -602,7 +604,34 @@ restore request and final read also showed 2. These results rule out ISBN
 duplicate checks. Do not treat an ISBN upsert ID or `not_found` import status
 alone as proof of a suitable ebook edition.
 
-### Step 8: optional immediate resync
+### Step 8: persist verified ebook matches
+
+Widen which successful Hardcover matches Step 5's durable local association
+persists, without adding any new Hardcover request: only the write path for
+an already-fetched lookup result changes.
+
+Audiobooks are unchanged: only the exact, region-qualified Audible
+`book_mappings` match persists. Audiobook ISBN and plain-ASIN matches remain
+live-only, re-resolved from scratch every sync; a future step may add
+audiobook ISBN persistence, but that is out of scope here.
+
+Ebooks additionally persist on either an `editions.asin` match or an ISBN
+match (ISBN-10 or ISBN-13), both previously ephemeral. The existing
+provenance-agnostic "confirmed local mapping wins" read-first block and its
+stale-association discard/re-match logic already handle any persisted
+association the same way regardless of how it was created, so only the write
+paths need to change, not the reuse or invalidation logic. Persisting a match
+pins that book to a specific edition until the next explicit forget-match
+call or until the item's source identifiers or reading format change; dry run
+persists nothing.
+
+Test that an ebook `editions.asin` match and an ebook ISBN match each persist
+with the correct book/edition IDs and provenance, that the corresponding
+audiobook cases still do not persist, that dry run persists neither, and that
+a persisted ebook association is actually reused on a later lookup without a
+live Hardcover call, mirroring the existing audiobook mapping-reuse coverage.
+
+### Step 9: optional immediate resync
 
 Add `Service.SyncBook` through the existing per-book processing path. Both
 ordinary create and opt-in create-with-resync are refused with 409 during a
@@ -612,7 +641,7 @@ is reported separately because the edition may already exist. Dry run attempts
 no resync and persists no progress or association. Test success, no-op,
 failure, cancellation, and concurrent full-sync paths with the race detector.
 
-### Step 9: UI
+### Step 10: UI
 
 Show the create action only for authorized profiles and eligible run records
 with an ASIN or ISBN. A confirmed capability or an unverified capability
@@ -636,7 +665,7 @@ select the same edition if Hardcover has not changed. Do not describe this as
 deleting a Hardcover edition or mapping, or as forcing a different target.
 Disable the real forget action in dry run.
 
-### Step 10: stop matching by `editions.asin`
+### Step 11: stop matching by `editions.asin`
 
 Remove `editions.asin` from every production audiobook path that chooses a
 Hardcover book or edition:
@@ -787,14 +816,18 @@ evidence:
   `edition create` imports audiobooks through the regional importer instead
   of inserting editions, and can save the match for an ABS item; existing
   export files keep working. By @Snuffy2`.
-- **Step 8 — Added:** `**Immediate one-book resync**: Optionally sync read
+- **Step 8 — Changed:** `**Ebook Hardcover matches are now remembered**:
+  Matches confirmed by ASIN or ISBN are persisted locally like the existing
+  exact Audible mapping, so future syncs no longer re-resolve them from
+  scratch; use forget-match to clear one. By @Snuffy2`.
+- **Step 9 — Added:** `**Immediate one-book resync**: Optionally sync read
   status after edition creation while excluding an overlapping full sync. By
   @Snuffy2`.
-- **Step 9 — Added:** `**Edition creation in Sync Status**: Preview and
+- **Step 10 — Added:** `**Edition creation in Sync Status**: Preview and
   confirm an eligible needs-review edition in the UI, show capability and
   region uncertainty, optionally resync its read status, and forget a stored
   match for future rematching. By @Snuffy2`.
-- **Step 10 — Changed:** `**Audible matching no longer uses edition ASINs**:
+- **Step 11 — Changed:** `**Audible matching no longer uses edition ASINs**:
   Audiobooks whose only Hardcover link was an edition's ASIN field are no
   longer matched through it; those found by title and author can be resolved
   with the add-edition action. By @Snuffy2`.
@@ -805,9 +838,9 @@ documents its capability route and records the ABS URL policy outside README;
 Step 7a documents the enforced Audiobookshelf network trust setting in
 README; Step 7b documents the create route and exact identifier corrections;
 Step 7c documents the standalone CLI contract and the fields an audiobook
-import reads; Step 8 documents the `resync`
-request/response; Step 9 documents the user flow; Step 10 documents the
-matching change and its migration note.
+import reads; Step 8 documents the widened persistence; Step 9 documents the
+`resync` request/response; Step 10 documents the user flow; Step 11 documents
+the matching change and its migration note.
 Update the field crosswalk as the relevant step lands, rather than leaving its
 old R4 destination as an implementation contract.
 
@@ -1091,7 +1124,26 @@ require the owner's instruction.
   complete the shared validation and PR gates before offering the migrated
   CLI for use.
 
-### Step 8 — immediate one-book resync
+### Step 8 — persist verified ebook matches
+
+- [x] Widen `recordVerifiedASINAssociation` to also persist an ebook
+  `editions.asin` (`ASINMatchEditionASIN`) match; leave the audiobook
+  `editions.asin`-fallback case ephemeral, unchanged.
+- [x] Add a new write path that persists an ebook ISBN match
+  (`SearchBookByISBN13`/`SearchBookByISBN10`), gated by dry run, ebook format,
+  and nil-safety for state/book, matching the existing ASIN path's pattern.
+- [x] Leave the provenance-agnostic read-first reuse block and its stale-
+  association discard/re-match logic unchanged; confirm it already covers the
+  new provenances without modification.
+- [x] Test that ebook `editions.asin` and ISBN matches persist with correct
+  book/edition IDs and provenance, that the corresponding audiobook cases do
+  not, that dry run persists neither, that a persisted ebook association is
+  actually reused on a later lookup with no live Hardcover call, and that a
+  stale ebook association is discarded and re-matched.
+- [x] Update the README's "Remembered edition matches" section, add one
+  CHANGELOG bullet, and complete the shared validation and PR gates.
+
+### Step 9 — immediate one-book resync
 
 - [ ] Add `SyncBook` through existing per-book progress, ownership,
   finished-state, checkpoint, and mutation boundaries.
@@ -1105,7 +1157,7 @@ require the owner's instruction.
 - [ ] Document request/response changes, add one CHANGELOG bullet, and
   complete the shared validation and PR gates.
 
-### Step 9 — Sync Status UI
+### Step 10 — Sync Status UI
 
 - [ ] Show the action only for eligible needs-review records with an ASIN or
   ISBN and permitted profile access. Allow confirmed or unverified capability,
@@ -1132,7 +1184,7 @@ require the owner's instruction.
 - [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared validation and PR gates.
 
-### Step 10 — stop matching by `editions.asin`
+### Step 11 — stop matching by `editions.asin`
 
 - [ ] Remove `editions.asin` from sync's audiobook matching, the mismatch
   export's book lookup, and the audiobook path of `GetEditionByASIN` and the
@@ -1152,8 +1204,8 @@ require the owner's instruction.
    mutation. Imports and insertions happen only through the user-initiated
    create API, CLI, or UI action. Unresolved audiobooks remain `needs_review`.
 2. **No `editions.asin` matching:** ABS books are not matched to Hardcover by
-   `editions.asin`. The existing fallback remains only until Step 10, after
-   the create flow and UI exist. Step 10 removes it from sync, the mismatch
+   `editions.asin`. The existing fallback remains only until Step 11, after
+   the create flow and UI exist. Step 11 removes it from sync, the mismatch
    export, and the audiobook duplicate check. A book whose only link was
    `editions.asin` and that title/author search cannot find becomes
    `not_found` without an in-app fix; this is accepted. Hardcover stores no
