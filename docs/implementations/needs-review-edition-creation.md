@@ -1,8 +1,8 @@
 # Plan: Resolve Audiobookshelf Identifiers and Add Hardcover Editions
 
 **Status:** Revised after the Audible mapping investigation; implementation and
-PR boundaries remain subject to review. Steps 1–7a are merged into `develop`.
-Step 7b is open as upstream PR #208; Step 7c and later are not merged.
+PR boundaries remain subject to review. Steps 1–7c are merged into `develop`.
+Step 8 and later are not merged.
 
 This is the current plan. The [legacy seven-step version](needs-review-edition-creation-legacy.md)
 is retained for its completed-work record and earlier decisions; its unmerged
@@ -192,9 +192,9 @@ branches and is not opened as a PR itself.
 | 5 | Add the durable local association, a profile-scoped forget-match API, read-first lookup, and the exact 10-region Audible `book_mappings` lookup. Invalidate on a freshly confirmed deleted edition and clear the item's incremental checkpoint. Replace the positive 24-hour cache; persist only verified matches. Add the cross-process state-file lock for sync and forget-match. Keep the existing `editions.asin` fallback, unpersisted, until Step 11. No catalogue writes. | 4 | Merged upstream PR #201 |
 | 6 | Report create capability for ebook `insert_edition` and regional Audible `upsert_book`. Keep the route independently useful without exposing a create action that is not implemented. | 3, 5 | Merged upstream PR #202 |
 | 7a | Enforce the Step 6 ABS URL policy at the shared client boundary for profile settings, sync, the draft endpoint, and CLI configuration, including redirect targets, and add the server-wide `audiobookshelf.network_trust` setting. Send `Retry-After` on draft 429 responses. No create path and no catalogue writes. | 6 | Merged upstream PR #205 |
-| 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Open upstream PR #208 |
-| 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Implementation on existing Step 7c branch; no upstream PR |
-| 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. No new Hardcover requests; only the write path for already-fetched lookup results changes. | 5 | Open PR #41; not yet opened upstream |
+| 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Merged upstream PR #208 |
+| 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
+| 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Open PR #41; not yet opened upstream |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Local implementation complete at `b11c96b`; PR not yet opened upstream |
 | 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
@@ -608,8 +608,13 @@ alone as proof of a suitable ebook edition.
 ### Step 8: persist verified ebook matches
 
 Widen which successful Hardcover matches Step 5's durable local association
-persists, without adding any new Hardcover request: only the write path for
-an already-fetched lookup result changes.
+persists. Preserve the existing second live ebook ISBN lookup and require it
+to confirm the same book and edition before saving a match. Move that lookup
+before post-match skips so unread, minimum-progress, and current composite
+checkpoint skips can retain the verified association without checkpointing
+unapplied reading progress. Eligible syncs still use the existing two lookups;
+fresh ISBN matches skipped at that stage now also make the confirmation read.
+Pre-match filtering and audiobook lookup timing remain unchanged.
 
 Audiobooks are unchanged: only the exact, region-qualified Audible
 `book_mappings` match persists. Audiobook ISBN and plain-ASIN matches remain
@@ -868,8 +873,8 @@ paths that clears one.
   upstream PR #200 rather than merging the old stacked branch.
 - The old Step 4 create branch was source material for Steps 6 and 7; its
   combined create path was not merged as-is. Step 6 merged as upstream PR #202.
-- Step 7a merged as upstream PR #205. Step 7b is open as upstream PR #208
-  against `develop`; Step 7c has no upstream PR yet.
+- Steps 7a, 7b, and 7c merged into `develop` as upstream PRs #205, #208,
+  and #210 respectively.
 - Each PR targets `develop`, has one release-facing CHANGELOG bullet, updates
   its affected README/OpenAPI/crosswalk contract, and passes the affected Go
   tests, `make test`, `make lint`, relevant builds, and web tests if touched.
@@ -907,10 +912,10 @@ non-default `develop`.
 
 7. Edition create, delivered in three PRs:
    - ~~7a. Audiobookshelf network trust: Enforce the server-wide ABS URL and redirect policy for sync, drafts, profiles, and CLI settings, and send `Retry-After` on busy draft responses.~~
-   - 7b. Edition create endpoint (this PR): Require an ASIN or ISBN, reject stale run records, and insert format-aware ebooks or import regional Audible identifiers on request. Validate book and format, then save the association under Step 5's lock.
-   - 7c. Standalone edition CLI: Move `edition create` audiobooks to the regional importer, stop audiobook `insert_edition`, and save the association under Step 5's lock when given an ABS item ID.
+   - ~~7b. Edition create endpoint: Require an ASIN or ISBN, reject stale run records, and insert format-aware ebooks or import regional Audible identifiers on request. Validate book and format, then save the association under Step 5's lock.~~
+   - ~~7c. Standalone edition CLI: Move `edition create` audiobooks to the regional importer, stop audiobook `insert_edition`, and save the association under Step 5's lock when given an ABS item ID.~~
 
-8. Persist verified ebook matches: Widen which successful Hardcover matches get a durable local association. Audiobooks are unchanged (exact Audible mapping only); ebooks additionally persist on an `editions.asin` or ISBN match. No new Hardcover requests.
+8. Persist verified ebook matches (this PR): Remember exact ebook `editions.asin` and confirmed ISBN matches while keeping audiobook persistence limited to exact regional Audible mappings. Move the existing ebook ISBN confirmation before post-match skips so skipped ebooks also retain a verified match; eligible syncs still use the existing two lookups.
 
 9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.
 
@@ -926,7 +931,7 @@ update any open PR descriptions. When an upstream PR merges, verify its live
 merged state, strike its line through, and update the delivery table and
 checklist heading in the same plan change. Before publishing the next PR,
 compare its `Multi-Step Project` block against those live states again.
-The example marks Step 7b as the current PR; no Step 7c–10 upstream PR is
+The example marks Step 8 as the current PR; later upstream PRs are not
 implied to exist.
 
 ## Changelog by step
@@ -1180,7 +1185,7 @@ require the owner's instruction.
   out of this PR. Add one CHANGELOG bullet and complete the shared validation
   and PR gates.
 
-### Step 7b — create endpoint (open upstream PR #208)
+### Step 7b — create endpoint (merged upstream PR #208)
 
 - [x] Verify the published `upsert_book` scope (`write:catalog:append` or
   broader catalogue-write scope) and a successful ordinary-token live import.
@@ -1243,7 +1248,7 @@ require the owner's instruction.
   bullet, and complete the shared validation and PR gates before offering the
   create POST for use.
 
-### Step 7c — standalone CLI
+### Step 7c — standalone CLI (merged upstream PR #210)
 
 - [ ] Migrate standalone `edition create` from audiobook `insert_edition` to
   the Step 7b regional resolver. Require a confirmed regional Audible ID,
