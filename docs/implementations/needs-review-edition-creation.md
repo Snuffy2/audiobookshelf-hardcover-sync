@@ -195,7 +195,7 @@ branches and is not opened as a PR itself.
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Open upstream PR #208 |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Implementation on existing Step 7c branch; no upstream PR |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. No new Hardcover requests; only the write path for already-fetched lookup results changes. | 5 | Open PR #41; not yet opened upstream |
-| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Open PR #42; not yet opened upstream |
+| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Local implementation complete at `b11c96b`; PR not yet opened upstream |
 | 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
@@ -1304,22 +1304,22 @@ require the owner's instruction.
 
 ### Step 9 — immediate one-book resync
 
-- [ ] Add `SyncBook` through existing per-book progress, ownership,
+- [x] Add `SyncBook` through existing per-book progress, ownership,
   finished-state, checkpoint, and mutation boundaries.
-- [ ] Make `resync` opt-in. Refuse both ordinary create and create-with-resync
+- [x] Make `resync` opt-in. Refuse both ordinary create and create-with-resync
   during a full sync before any catalogue mutation; hold the profile guard
   and state-file lock through the optional resync.
-- [ ] Report resync failure separately after a successful create; attempt no
+- [x] Report resync failure separately after a successful create; attempt no
   resync or persistent state write in dry run.
-- [ ] Test synced, already-current, skipped, failed, cancellation, full-sync
+- [x] Test synced, already-current, skipped, failed, cancellation, full-sync
   contention, and no-op paths, including the race detector.
-- [ ] Add the pre-flight scope probe the legacy plan specified for Step 6 but
+- [x] Add the pre-flight scope probe the legacy plan specified for Step 6 but
   that shipped without one (PR #202 always reports `unverified`): send the
   argument-free `insert_edition` and `upsert_book` validation-only mutations
   recorded above, with no variables. GraphQL must reject both before
   mutation execution. Do not send either import with valid arguments as a
   probe.
-- [ ] Classify `allowed` only for the exact observed HTTP 200 response shape
+- [x] Classify `allowed` only for the exact observed HTTP 200 response shape
   for each operation: one `validation-failed` error with message
   `missing required field 'book_id'` and path
   `$.selectionSet.insert_edition.args.book_id`, or message
@@ -1330,24 +1330,29 @@ require the owner's instruction.
   other validation errors or changed response shapes, `unverified`. These
   are scope signals only, not evidence that a valid import will succeed;
   retain valid-import evidence separately.
-- [ ] Cache the probe result per profile and per operation in memory: a
+- [x] Cache the probe result per profile and per operation in memory: a
   longer TTL for a definite `allowed`/`denied`, none or a short one for
   `unverified` so a transient failure is retried on the next load; invalidate
   immediately on a Hardcover token change. Route probes through the existing
   per-profile Hardcover rate limiter; at most one probe call per
   operation/profile per cache miss, never per book.
-- [ ] Skip the probe in dry run and keep reporting `allowed`, since a
+- [x] Skip the probe in dry run and keep reporting `allowed`, since a
   dry-run create changes nothing regardless of real scope. Keep the existing
   create-time mapping of a live `403 insufficient_scope` as the backstop for
   a token whose scope changes after the cached probe result.
-- [ ] Test each operation's exact expected response mapping and unknown
+- [x] Test each operation's exact expected response mapping and unknown
   outcomes (including 401, 429, 5xx, and timeout), the per-profile/operation
   cache and its TTL and token-change invalidation, the rate-limiter path, and
-  the dry-run short-circuit. Assert the audiobook request omits required
-  `book` and cannot execute, at the HTTP/client boundary with a stub
+  the dry-run short-circuit. Assert both argument-free requests omit required
+  mutation inputs and cannot execute, at the HTTP/client boundary with a stub
   Hardcover server.
 - [ ] Document request/response changes, add one CHANGELOG bullet, and
   complete the shared validation and PR gates.
+
+Local Step 9 implementation, behavioral validation, README/CHANGELOG, and
+plan/evidence documentation are complete at source HEAD `b11c96b` and evidence
+commit `0ea0460`. This combined checklist item remains open for the outstanding
+upstream PR and publication gates.
 
 ### Step 10 — Sync Status UI
 
