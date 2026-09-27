@@ -195,8 +195,8 @@ branches and is not opened as a PR itself.
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Open upstream PR #208 |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Implementation on existing Step 7c branch; no upstream PR |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. No new Hardcover requests; only the write path for already-fetched lookup results changes. | 5 | Open PR #41; not yet opened upstream |
-| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. | 7b | Open PR #42; not yet opened upstream |
-| 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. | 9 | Open PR #43; not yet opened upstream |
+| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add a real pre-flight scope probe to the Step 6 capability route: an impossible-ID catalogue-write attempt per operation, so `can_attempt`/`status` reports an actual `allowed`/`denied` instead of always `unverified`. | 7b | Open PR #42; not yet opened upstream |
+| 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
@@ -641,12 +641,61 @@ is reported separately because the edition may already exist. Dry run attempts
 no resync and persists no progress or association. Test success, no-op,
 failure, cancellation, and concurrent full-sync paths with the race detector.
 
+Also add the pre-flight scope probe the legacy plan specified for Step 6 but
+that shipped without one: the merged capability route (PR #202) always
+reports `unverified` for a configured token because no read-only signal
+reveals a token's catalogue scopes. Extend `EditionCapabilityForProfile` to
+attempt the mutation each operation actually uses, targeted at a book ID that
+cannot exist, and read the result instead of assuming unverified:
+- **Ebook (`insert_edition`):** call `insert_edition` for book ID `-1` with an
+  otherwise minimal input. This exact probe was validated against the hosted
+  Hardcover API with real tokens: a scope-capable token returned HTTP 200
+  with a "Couldn't find Book" error, a limited token returned
+  `403 insufficient_scope` with the missing scope, and neither call created
+  an edition. Hardcover checks token scope before validating the arguments,
+  so the probe is a safe, no-mutation-result signal.
+- **Audiobook (`upsert_book`):** call the same regional `upsert_book`
+  resolver Step 7b uses, with a book ID (or equivalent identifying argument)
+  chosen so it cannot match a real book, e.g. an out-of-range or reserved
+  ASIN/ID. This was not validated in the legacy plan's live probe session;
+  re-verify against the real Hardcover API that it also returns a
+  not-found-style 200 for a capable token and `403 insufficient_scope` for a
+  limited one before relying on it, and record the result under "Resolved
+  decisions and evidence".
+- Map the outcome to `EditionCapabilityState`: HTTP 200 with the expected
+  not-found error is `allowed`; `403 insufficient_scope` is `denied` with
+  `reason: "insufficient_scope"` (the enum value `docs/openapi.yaml` already
+  reserves for this); any other outcome (network error, timeout, 401, 429,
+  5xx, an unexpected 200 body) stays `unverified`, never `allowed`.
+- Cache the probe result per profile and operation in memory: a longer TTL
+  (a few minutes) for a definite `allowed`/`denied` answer, none or a very
+  short one for `unverified` so a transient failure is retried on the next
+  load. Invalidate the cache immediately when the profile's Hardcover token
+  changes. Route the probe through the existing per-profile Hardcover rate
+  limiter, and make at most one probe call per operation per profile per
+  cache miss, not per book.
+- In dry-run mode the client already blocks every Hardcover mutation, so the
+  probe must not run there: keep reporting `allowed` for dry run, since a
+  dry-run create changes nothing regardless of the real scope.
+- Keep the existing create-time mapping of a live `403 insufficient_scope`
+  response as the backstop for a token whose scope changes after the cached
+  probe result.
+- Test each operation's probe outcome mapping (200/not-found, 403, 401, 429,
+  5xx, timeout), the per-profile/operation cache and its TTL and invalidation
+  on token change, the rate-limiter path, the dry-run short-circuit, and that
+  the probe's book ID/argument never matches a real book, at the HTTP/client
+  boundary with a stub Hardcover server.
+
 ### Step 10: UI
 
 Show the create action only for authorized profiles and eligible run records
-with an ASIN or ISBN. A confirmed capability or an unverified capability
-permits the action; show the unverified-permission warning and report any
-permission failure from the POST clearly. A known denial prevents creation.
+with an ASIN or ISBN. With Step 9's capability probe, the route now reports a
+real `allowed` or `denied` for most tokens instead of always `unverified`:
+an `allowed` or still-`unverified` capability permits the action (showing the
+unverified-permission warning only in the latter case), a `denied` capability
+hides or disables "Add edition" with the probe's reason instead of only
+warning after the fact, and any permission failure the create POST itself
+returns (a scope change since the cached probe) is still reported clearly.
 Preview the ABS source identifier and any established region without implying
 that `edition.asin` is the Audible destination. Show
 only edits that Step 7b can honor, escape ABS-provided strings, and display
@@ -898,13 +947,17 @@ evidence:
   Matches confirmed by ASIN or ISBN are persisted locally like the existing
   exact Audible mapping, so future syncs no longer re-resolve them from
   scratch; use forget-match to clear one. By @Snuffy2`.
-- **Step 9 — Added:** `**Immediate one-book resync**: Optionally sync read
-  status after edition creation while excluding an overlapping full sync. By
-  @Snuffy2`.
+- **Step 9 — Changed:** `**Immediate one-book resync and a real edition
+  capability check**: Optionally sync read status after edition creation
+  while excluding an overlapping full sync; the edition-capability check now
+  attempts each operation's own catalogue write against a book ID/identifier
+  that cannot match a real book and reports allowed or denied instead of
+  always unverified. By @Snuffy2`.
 - **Step 10 — Added:** `**Edition creation in Sync Status**: Preview and
-  confirm an eligible needs-review edition in the UI, show capability and
-  region uncertainty, optionally resync its read status, and forget a stored
-  match for future rematching. By @Snuffy2`.
+  confirm an eligible needs-review edition in the UI, hide or disable the
+  action on a known capability denial, show remaining region uncertainty,
+  optionally resync its read status, and forget a stored match for future
+  rematching. By @Snuffy2`.
 - **Step 11 — Changed:** `**Audible matching no longer uses edition ASINs or
   ISBN**: Audiobooks whose only Hardcover link was an edition's ASIN field or
   ISBN are no longer matched through it and stop syncing until resolved;
@@ -1233,14 +1286,48 @@ require the owner's instruction.
   resync or persistent state write in dry run.
 - [ ] Test synced, already-current, skipped, failed, cancellation, full-sync
   contention, and no-op paths, including the race detector.
+- [ ] Add the pre-flight scope probe the legacy plan specified for Step 6 but
+  that shipped without one (PR #202 always reports `unverified`): extend
+  `EditionCapabilityForProfile` to attempt each operation's own mutation
+  (`insert_edition` for ebook, the Step 7b regional `upsert_book` resolver for
+  audiobook) against a book ID/argument that cannot match a real book, and
+  read the outcome instead of assuming unverified.
+- [ ] Re-validate the `insert_edition` probe against the hosted Hardcover API
+  with real tokens (the legacy plan already confirmed: HTTP 200 with
+  "Couldn't find Book" for a capable token, `403 insufficient_scope` with the
+  missing scope for a limited one, no edition created either way) and
+  separately validate the `upsert_book` probe the same way, since it was not
+  covered before; record both results under "Resolved decisions and
+  evidence".
+- [ ] Map HTTP 200 + expected not-found error to `allowed`, `403
+  insufficient_scope` to `denied` with that reason, and any other outcome
+  (network error, timeout, 401, 429, 5xx, unexpected 200 body) to
+  `unverified`, never `allowed`.
+- [ ] Cache the probe result per profile and per operation in memory: a
+  longer TTL for a definite `allowed`/`denied`, none or a short one for
+  `unverified` so a transient failure is retried on the next load; invalidate
+  immediately on a Hardcover token change. Route probes through the existing
+  per-profile Hardcover rate limiter; at most one probe call per
+  operation/profile per cache miss, never per book.
+- [ ] Skip the probe in dry run and keep reporting `allowed`, since a
+  dry-run create changes nothing regardless of real scope. Keep the existing
+  create-time mapping of a live `403 insufficient_scope` as the backstop for
+  a token whose scope changes after the cached probe result.
+- [ ] Test each probe's outcome mapping (200/not-found, 403, 401, 429, 5xx,
+  timeout) per operation, the per-profile/operation cache and its TTL and
+  token-change invalidation, the rate-limiter path, the dry-run
+  short-circuit, and that the probe argument never matches a real book, at
+  the HTTP/client boundary with a stub Hardcover server.
 - [ ] Document request/response changes, add one CHANGELOG bullet, and
   complete the shared validation and PR gates.
 
 ### Step 10 — Sync Status UI
 
 - [ ] Show the action only for eligible needs-review records with an ASIN or
-  ISBN and permitted profile access. Allow confirmed or unverified capability,
-  warn for unverified permission, and prevent creation on a known denial.
+  ISBN and permitted profile access. With Step 9's capability probe, allow
+  `allowed` or still-`unverified` capability (warning only for the latter),
+  and hide or disable the action with the probe's reason on a known `denied`
+  capability instead of only warning after the fact.
 - [ ] Separately show the current stored Hardcover target and a confirmed
   forget-match action for matched items. Explain that the next sync uses
   normal matching priority and may find the same edition again; do not imply
@@ -1255,11 +1342,12 @@ require the owner's instruction.
   wait to the user, and handle older servers without the header.
 - [ ] Disable create and forget-match while the profile is syncing, explain
   why, and handle a 409 from a sync that started after the page loaded.
-- [ ] Test capability denial, unverified capability with successful creation
-  or permission failure, missing-identifier ineligibility, preview, edits,
-  confirmation, stale-record 409, transient errors,
-  status polling, forget-match authorization/confirmation/same-result, and
-  resync results at the web boundary.
+- [ ] Test a probe-confirmed capability denial hiding/disabling the action,
+  unverified capability with successful creation or permission failure,
+  missing-identifier ineligibility, preview, edits, confirmation,
+  stale-record 409, transient errors, status polling, forget-match
+  authorization/confirmation/same-result, and resync results at the web
+  boundary.
 - [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared validation and PR gates.
 
@@ -1374,6 +1462,20 @@ require the owner's instruction.
     identifiers or progress happen to change or the user forgets it. No
     Hardcover mutation happens for the `needs_review`/`not_found` result this
     produces, so the affected book stops syncing until it is resolved.
+13. **Capability pre-flight probe (from the retired legacy plan's Step 4):**
+    the legacy plan validated an `insert_edition` call against book ID `-1`
+    with real Hardcover tokens: a scope-capable token returned HTTP 200 with
+    a "Couldn't find Book" error, a limited token returned
+    `403 insufficient_scope` with the missing scope, and neither call created
+    an edition, confirming Hardcover checks token scope before validating
+    arguments. The shipped Step 6 capability route (PR #202) omitted this
+    probe and always reports `unverified` for a configured token, since no
+    read-only scope signal exists; Step 9 adds it back, generalized to both
+    operations (`insert_edition` for ebook, the Step 7b regional
+    `upsert_book` resolver for audiobook, each probed with an argument that
+    cannot match a real book). The `upsert_book` probe was not covered by the
+    legacy plan's live session and needs its own real-API verification before
+    Step 9 relies on it.
 
 Sources: [Audnex API schema](https://github.com/laxamentumtech/audnexus/blob/develop/docs/index.html),
 [Hardcover capability map](https://github.com/hardcoverapp/hardcover-docs/blob/main/capability-scopes.json),
