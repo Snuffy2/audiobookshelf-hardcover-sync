@@ -261,6 +261,31 @@ fields; the tested token's exact granted scopes were not independently read.
 This catalogue-write capability is needed only for the import/create path, not
 normal library-progress sync.
 
+## 15. Live catalogue-write scope response (2026-09-27)
+
+A limited API token and an ordinary full token were each sent two validation-only
+mutations: `insert_edition` without its required `book_id` and `edition`
+arguments, and `upsert_book` without its required `book` argument. Neither
+request could execute a catalogue write. The full token reached GraphQL
+validation and received HTTP 200 with `validation-failed` errors for the missing
+arguments.
+
+The limited token instead received HTTP 403 for both fields, before GraphQL
+validation, with this response body:
+
+```json
+{"error":"insufficient_scope","error_description":"Missing scopes: write:catalog:append","scope":"write:catalog:append"}
+```
+
+The tested permission denial is therefore an HTTP error, not the GraphQL
+`field '<mutation>' not found in type: 'mutation_root'` error used in the
+original stub test. A client can classify this exact HTTP 403 body as a known
+pre-execution catalogue-scope denial. Other HTTP errors and unrecognized
+response bodies remain ambiguous after a mutation request, because they do
+not establish that Hardcover rejected the write before execution. This probe
+establishes the response shape for these two mutations and tokens at the time
+of testing; it does not establish every permission-denial variant.
+
 ## ISBN import and omitted book ID
 
 Hardcover staff describe `upsert_book` with virtual ISBN platform ID 8 and the
