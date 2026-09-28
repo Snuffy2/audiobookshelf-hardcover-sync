@@ -6,7 +6,7 @@ This plan follows the
 [needs-review edition creation plan](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
 (the "edition plan") and starts after its Step 11. It reuses that plan's
 local association, exact Audible `book_mappings` lookup, regional
-`upsert_book` resolver, Audnex region discovery, state-file lock,
+`upsert_book` resolver, Audnexus region discovery, state-file lock,
 stale-record checks, capability reporting, and dry-run rules without
 restating them. Where this plan is silent, the edition plan applies.
 
@@ -19,7 +19,7 @@ guess, so:
 
 - the item does not need a Hardcover `book_id` to be added;
 - sync does not run title/author discovery for it;
-- the user validates that the **Audnex** record for the regional ASIN
+- the user validates that the **Audnexus** record for the regional ASIN
   matches the **ABS** item; there is no Hardcover-to-ABS candidate review.
 
 Unchanged:
@@ -67,8 +67,8 @@ import item from a title/author candidate. The edition plan's Step 11 migration
 already routes affected checkpoints into this path; no extra migration is
 needed.
 
-**Draft: Audnex-to-ABS comparison.** For these items the edition draft adds
-an `audnex_record` next to the existing ABS preview, taken from the Audnex
+**Draft: Audnexus-to-ABS comparison.** For these items the edition draft adds
+an `audnexus_record` next to the existing ABS preview, taken from the Audnexus
 response that established the region: title, subtitle, authors, narrators,
 series and position, publisher, release date, runtime, language, and cover
 URL. Add a per-field comparison (`match`, `differs`, `missing`) using the
@@ -96,12 +96,12 @@ mode:
 
 **Create API.** For an audiobook create with a usable ASIN, the create POST:
 
-- requires `audnex_confirmed: true` with the regional identifier (ASIN and
+- requires `audnexus_confirmed: true` with the regional identifier (ASIN and
   region) the user confirmed; missing or mismatched confirmation is 400
   before any mutation;
 - refetches the ABS item and applies the existing stale-record check against
   the run snapshot (409 on change);
-- re-reads Audnex for exactly the confirmed region and requires a response
+- re-reads Audnexus for exactly the confirmed region and requires a response
   for that ASIN: a miss is 409 (the confirmed record no longer resolves); a
   rate limit or transient error is retryable; no region sweep is repeated;
 - imports through the unanchored resolver. Never send the run record's book
@@ -112,15 +112,15 @@ mode:
 
 Save the association under the state-file lock as the existing create API
 does, with provenance `audible_import_unanchored`, the regional external ID,
-the source snapshot, and the Audnex confirmation (region and time). The next
+the source snapshot, and the Audnexus confirmation (region and time). The next
 sync uses it like any other association. Capability reporting, the profile
 run guard, 409 during sync, the distinct "remote success, local save failed"
 outcome, and dry run are unchanged.
 
 **CLI.** `edition create` accepts audiobook input with a usable ASIN and no
-`book_id`. It prints the Audnex record for the regional ASIN and, when an ABS
+`book_id`. It prints the Audnexus record for the regional ASIN and, when an ABS
 item ID is given, the ABS metadata and per-field comparison, then requires
-interactive confirmation or `--confirm-audnex` before importing without
+interactive confirmation or `--confirm-audnexus` before importing without
 `book_id`. Input that includes a `book_id` keeps the existing anchored
 import, so existing export files behave as before. The mismatch export omits
 `book_id` for `audible_import_available` items and includes the reason.
@@ -132,7 +132,7 @@ Extend the Sync Status add-edition flow for `audible_import_available`
 items:
 
 - label the action "Import from Audible";
-- show ABS and Audnex values side by side with differences highlighted;
+- show ABS and Audnexus values side by side with differences highlighted;
 - require a confirmation checkbox ("The Audible record matches this book")
   before submitting; show no Hardcover candidate;
 - offer the regional identifier correction with a re-preview;
@@ -141,14 +141,14 @@ items:
 - after success, show the returned Hardcover book and edition.
 
 Capability, dry-run, sync-in-progress, and optional resync behavior follow
-the existing UI. Escape all ABS- and Audnex-provided strings.
+the existing UI. Escape all ABS- and Audnexus-provided strings.
 
 ## Acceptance
 
 - An unmatched audiobook with a usable ASIN is
   `needs_review`/`audible_import_available` with no title/author request.
 - Creating it sends `upsert_book` without `book_id` only after an explicit
-  Audnex confirmation, saves a verified association for `loaded` and
+  Audnexus confirmation, saves a verified association for `loaded` and
   `created`, and the next sync matches it without another import.
 - Audiobooks without a usable ASIN and all ebooks behave as before.
 - Dry run makes no mutation and saves nothing.
@@ -160,21 +160,21 @@ the existing UI. Escape all ABS- and Audnex-provided strings.
 - [ ] Classify unmatched usable-ASIN audiobooks as `needs_review` with reason
   `audible_import_available`, no Hardcover IDs, the source snapshot, and no
   title/author search. Leave other audiobooks and ebooks unchanged.
-- [ ] Add the draft's `audnex_record` and per-field ABS comparison; allow
+- [ ] Add the draft's `audnexus_record` and per-field ABS comparison; allow
   previewing a corrected regional identifier; make no Hardcover request.
 - [ ] Add the resolver's explicit unanchored mode with the same bounds and
   fresh-read verification; keep the anchored mode's zero-ID validation.
-- [ ] In the create API, require `audnex_confirmed` with the matching
-  regional identifier, apply the stale-record check, re-read Audnex for the
+- [ ] In the create API, require `audnexus_confirmed` with the matching
+  regional identifier, apply the stale-record check, re-read Audnexus for the
   confirmed region, import without `book_id`, and save the association with
   `audible_import_unanchored` provenance under the state-file lock.
-- [ ] In `edition create`, accept ASIN-only audiobook input, show the Audnex
+- [ ] In `edition create`, accept ASIN-only audiobook input, show the Audnexus
   record (and ABS comparison with an item ID), require confirmation or
-  `--confirm-audnex`, and keep the anchored path when `book_id` is given.
+  `--confirm-audnexus`, and keep the anchored path when `book_id` is given.
   Export `audible_import_available` items without `book_id`.
 - [ ] Test classification (no title/author request), draft comparison
   (match, differs, missing, unknown and unavailable region), missing or
-  mismatched confirmation, stale record, Audnex miss or 429 at create,
+  mismatched confirmation, stale record, Audnexus miss or 429 at create,
   `loaded` and `created` without `book_id`, non-audiobook result, failed
   import, timeout, local-save failure, next-sync reuse, CLI with and without
   `book_id`, and dry run at the HTTP, client, and command boundaries. Assert
@@ -189,7 +189,7 @@ the existing UI. Escape all ABS- and Audnex-provided strings.
 - [ ] Support identifier correction with re-preview; disable the action for
   unknown or unavailable regions and honor `Retry-After`.
 - [ ] Show the returned Hardcover book and edition after success; escape ABS
-  and Audnex strings.
+  and Audnexus strings.
 - [ ] Test confirmation required, differences shown, correction re-preview,
   region unavailable, success, errors, and dry run at the web boundary.
 - [ ] Update the user-facing README for the UI flow; add one CHANGELOG
@@ -218,7 +218,7 @@ the existing UI. Escape all ABS- and Audnex-provided strings.
 1. **No book ID for Audible ASIN audiobooks (user decision):** an audiobook
    with a usable source ASIN is imported through `upsert_book` without
    `book_id`, so it needs no title/author match first. The user confirms that
-   the Audnex record for the regional ASIN matches the ABS item; there is no
+   the Audnexus record for the regional ASIN matches the ABS item; there is no
    Hardcover-to-ABS review. This applies only to audiobooks with a usable
    ASIN, and it gives those items an in-app path where the edition plan left
    them `not_found`.
