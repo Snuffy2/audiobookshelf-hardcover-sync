@@ -1,8 +1,8 @@
 # Plan: Resolve Audiobookshelf Identifiers and Add Hardcover Editions
 
 **Status:** Revised after the Audible mapping investigation; implementation and
-PR boundaries remain subject to review. Steps 1–7c are merged into `develop`.
-Step 8 and later are not merged.
+PR boundaries remain subject to review. Steps 1–8 are merged into `develop`.
+Step 9 and later are not merged.
 
 This is the current plan. The [legacy seven-step version](needs-review-edition-creation-legacy.md)
 is retained for its completed-work record and earlier decisions; its unmerged
@@ -194,8 +194,8 @@ branches and is not opened as a PR itself.
 | 7a | Enforce the Step 6 ABS URL policy at the shared client boundary for profile settings, sync, the draft endpoint, and CLI configuration, including redirect targets, and add the server-wide `audiobookshelf.network_trust` setting. Send `Retry-After` on draft 429 responses. No create path and no catalogue writes. | 6 | Merged upstream PR #205 |
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Merged upstream PR #208 |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
-| 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Open upstream PR #211 (fork PR #41) |
-| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Local implementation complete at `b11c96b`; PR not yet opened upstream |
+| 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
+| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Open upstream PR #212 (fork PR #42); implementation and local validation complete |
 | 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
@@ -915,7 +915,7 @@ non-default `develop`.
    - ~~7b. Edition create endpoint: Require an ASIN or ISBN, reject stale run records, and insert format-aware ebooks or import regional Audible identifiers on request. Validate book and format, then save the association under Step 5's lock.~~
    - ~~7c. Standalone edition CLI: Move `edition create` audiobooks to the regional importer, stop audiobook `insert_edition`, and save the association under Step 5's lock when given an ABS item ID.~~
 
-8. Persist verified ebook matches (this PR): Remember exact ebook `editions.asin` and confirmed ISBN matches while keeping audiobook persistence limited to exact regional Audible mappings. Move the existing ebook ISBN confirmation before post-match skips so skipped ebooks also retain a verified match; eligible syncs still use the existing two lookups.
+8. ~~Persist verified ebook matches: Remember exact ebook `editions.asin` and confirmed ISBN matches while keeping audiobook persistence limited to exact regional Audible mappings. Move the existing ebook ISBN confirmation before post-match skips so skipped ebooks also retain a verified match; eligible syncs still use the existing two lookups.~~
 
 9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.
 
@@ -931,7 +931,7 @@ update any open PR descriptions. When an upstream PR merges, verify its live
 merged state, strike its line through, and update the delivery table and
 checklist heading in the same plan change. Before publishing the next PR,
 compare its `Multi-Step Project` block against those live states again.
-The example marks Step 8 as the current PR; later upstream PRs are not
+The example records Step 8 as merged; Step 9 and later upstream PRs are not
 implied to exist.
 
 ## Changelog by step
@@ -1288,7 +1288,7 @@ require the owner's instruction.
   complete the shared validation and PR gates before offering the migrated
   CLI for use.
 
-### Step 8 — persist verified ebook matches (open upstream PR #211)
+### Step 8 — persist verified ebook matches (merged upstream PR #211)
 
 - [x] Widen `recordVerifiedASINAssociation` to also persist an ebook
   `editions.asin` (`ASINMatchEditionASIN`) match; leave the audiobook
@@ -1354,10 +1354,11 @@ require the owner's instruction.
 - [ ] Document request/response changes, add one CHANGELOG bullet, and
   complete the shared validation and PR gates.
 
-Local Step 9 implementation, behavioral validation, README/CHANGELOG, and
-plan/evidence documentation are complete at source HEAD `b11c96b` and evidence
-commit `0ea0460`. This combined checklist item remains open for the outstanding
-upstream PR and publication gates.
+Step 9 implementation and local validation are complete and published in
+upstream PR #212 to `develop`. README, OpenAPI, the field crosswalk, and the
+single CHANGELOG bullet include the current contract and upstream PR reference.
+The combined checklist item remains open until upstream CI and review gates
+are verified; publication does not imply those checks have passed.
 
 ### Step 10 — Sync Status UI
 
