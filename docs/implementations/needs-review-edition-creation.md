@@ -196,7 +196,7 @@ branches and is not opened as a PR itself.
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Open upstream PR #212 (fork PR #42); implementation and local validation complete |
-| 10 | Add the Sync Status preview, confirmation, capability, optional resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
+| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
@@ -731,8 +731,14 @@ Preview the ABS source identifier and any established region without implying
 that `edition.asin` is the Audible destination. Show
 only edits that Step 7b can honor, escape ABS-provided strings, and display
 unknown or temporarily unavailable region and unresolved candidate results as
-review states. Confirmation uses the create POST; the resync checkbox is
-opt-in. Dry run is clearly identified and does not offer a real resync.
+review states. Confirmation uses the create POST. The UI has no resync
+checkbox: outside dry run it always sends `resync: true` (the API stays
+opt-in for other callers) and reports a resync failure separately. Dry run is
+clearly identified and does not offer a real resync.
+
+Offer the action for eligible needs-review records from completed or canceled
+non-dry-run runs; a canceled run keeps its partial snapshot, and the create API
+accepts a record from either phase. Every other run state remains stale (409).
 
 When a draft preview receives 429, use its `Retry-After` header to defer the
 next attempt and show when the user can retry. Keep a sensible fallback for
@@ -919,7 +925,7 @@ non-default `develop`.
 
 9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.
 
-10. Sync Status UI: Preview and confirm edition creation for eligible needs-review items, offer optional resync, and let users forget a stored match for a future retry.
+10. Sync Status UI: Preview and confirm edition creation for eligible needs-review items, resync the book automatically, and let users forget a stored match for a future retry.
 
 11. Stop matching audiobooks by edition ASIN and ISBN: Match audiobooks only by association or exact Audible mapping; a book whose only link was `editions.asin` or ISBN becomes reviewable in the same sync run it is first evaluated, not the next one, and stops syncing until resolved.
 
@@ -1377,8 +1383,11 @@ are verified; publication does not imply those checks have passed.
   temporarily unavailable region, warnings, and only supported editable
   fields (regional Audible identifier correction for audiobooks;
   format-aware insertion fields for ebooks); escape ABS-provided strings.
+- [ ] Offer the action for eligible records from completed or canceled
+  non-dry-run runs; the create API accepts either phase.
 - [ ] Confirm through the create POST, display reused/created and error
-  outcomes, and make resync an explicit option except in dry run.
+  outcomes; always request resync except in dry run, with no resync
+  checkbox.
 - [ ] Respect draft 429 `Retry-After` before retrying a preview, show the
   wait to the user, and handle older servers without the header.
 - [ ] Disable create and forget-match while the profile is syncing, explain
