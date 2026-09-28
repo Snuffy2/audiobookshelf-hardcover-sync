@@ -1,6 +1,6 @@
 # Plan: Import Audible ASIN Audiobooks Without a Hardcover Book ID
 
-**Status:** Planned. Not started. Delivered as one PR.
+**Status:** Planned. Not started. Delivered as two PRs.
 
 This plan follows the
 [needs-review edition creation plan](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
@@ -37,16 +37,21 @@ Unchanged:
 
 ## Delivery
 
-One PR to `develop` on branch `audible_asin_import`, created only when
-requested. It depends on edition plan Steps 10 and 11. The backend and UI
-parts below ship together; the PR can still be split into backend and UI
-later if review finds it too broad, as long as each half works on its own.
+Two PRs to `develop`, created only when requested. Each must work on its
+own when merged.
+
+| Step | Branch | Scope | Depends on |
+|---|---|---|---|
+| 1 | `audible_asin_import_step_1` | Backend: sync classification, draft comparison, unanchored resolver, create API, CLI. Usable through the create API and `edition create` without the UI. | Edition plan Step 11 |
+| 2 | `audible_asin_import_step_2` | Sync Status UI for Audible imports. | Step 1, edition plan Step 10 |
+
+The two PRs could later be combined if review prefers one change.
 
 No live-API gate remains: `upsert_book` without `book_id` has been confirmed
 against Hardcover for this flow (see
 [Resolved decisions and evidence](#resolved-decisions-and-evidence)).
 
-### Backend
+### Step 1: backend
 
 **Sync classification.** After edition plan Step 11, an audiobook is matched
 only by a valid local association or the exact regional `book_mappings`
@@ -121,7 +126,7 @@ import, so existing export files behave as before. The mismatch export omits
 `book_id` for `audible_import_available` items and includes the reason.
 Association saving, the lock, and dry run follow the existing CLI behavior.
 
-### UI
+### Step 2: UI
 
 Extend the Sync Status add-edition flow for `audible_import_available`
 items:
@@ -150,7 +155,7 @@ the existing UI. Escape all ABS- and Audnex-provided strings.
 
 ## Step checklists
 
-### Backend
+### Step 1 — backend
 
 - [ ] Classify unmatched usable-ASIN audiobooks as `needs_review` with reason
   `audible_import_available`, no Hardcover IDs, the source snapshot, and no
@@ -175,9 +180,9 @@ the existing UI. Escape all ABS- and Audnex-provided strings.
   `book_id`, and dry run at the HTTP, client, and command boundaries. Assert
   no `book_id` is sent in unanchored imports.
 - [ ] Update README, OpenAPI, `cmd/edition/README.md`, and the field
-  crosswalk.
+  crosswalk; add one CHANGELOG bullet; run the PR gates below.
 
-### UI
+### Step 2 — UI
 
 - [ ] Show "Import from Audible" with the side-by-side comparison,
   highlighted differences, required confirmation, and no Hardcover candidate.
@@ -187,22 +192,26 @@ the existing UI. Escape all ABS- and Audnex-provided strings.
   and Audnex strings.
 - [ ] Test confirmation required, differences shown, correction re-preview,
   region unavailable, success, errors, and dry run at the web boundary.
-- [ ] Update the user-facing README for the UI flow.
+- [ ] Update the user-facing README for the UI flow; add one CHANGELOG
+  bullet; run the PR gates below.
 
-### PR gates
+### PR gates (each PR)
 
-- [ ] Add one CHANGELOG bullet covering the whole change.
-- [ ] Run `gofmt`, `make test`, `make lint`, `make build`,
-  `go build ./cmd/edition-tool` if touched, and `node --test web/app.test.js`.
+- [ ] Run `gofmt`, `make test`, `make lint`, `make build`, and
+  `go build ./cmd/edition-tool` if touched; run
+  `node --test web/app.test.js` when web code changes.
 - [ ] Use the repository PR template.
 
 ## Changelog wording
 
-- **Added:** `**Import Audible ASIN audiobooks without a Hardcover match**:
-  Unmatched audiobooks with an Audible ASIN skip title and author search.
-  After you confirm the Audible record matches the ABS item in Sync Status,
-  the create API, or `edition create`, they are imported without a Hardcover
-  book ID. By @Snuffy2`.
+- **Step 1 — Changed:** `**Audible ASIN audiobooks import without a
+  Hardcover match**: Unmatched audiobooks with an Audible ASIN skip title and
+  author search; after you confirm the Audible record matches the ABS item,
+  the create API and `edition create` import them without a Hardcover book
+  ID. By @Snuffy2`.
+- **Step 2 — Added:** `**Import from Audible in Sync Status**: Compare an
+  audiobook with its Audible record and confirm the import in the UI.
+  By @Snuffy2`.
 
 ## Resolved decisions and evidence
 
