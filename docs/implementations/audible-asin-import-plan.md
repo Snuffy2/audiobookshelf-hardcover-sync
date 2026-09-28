@@ -131,10 +131,14 @@ Association saving, the lock, and dry run follow the existing CLI behavior.
 Extend the Sync Status add-edition flow for `audible_import_available`
 items:
 
-- label the action "Import from Audible";
-- show ABS and Audnexus values side by side with differences highlighted;
-- require a confirmation checkbox ("The Audible record matches this book")
-  before submitting; show no Hardcover candidate;
+- use the same "Add Edition" button as other add-edition items, so the row
+  looks the same;
+- the modal may differ from the standard add-edition modal only as needed to
+  show the data to validate: ABS and Audnexus values side by side with
+  differences highlighted, and no Hardcover candidate;
+- no separate confirmation checkbox: submitting the modal is the user's
+  confirmation, and the UI sends `audnexus_confirmed` with the regional
+  identifier shown;
 - offer the regional identifier correction with a re-preview;
 - disable the action while the region is unknown or temporarily
   unavailable, honoring `Retry-After`;
@@ -184,13 +188,16 @@ the existing UI. Escape all ABS- and Audnexus-provided strings.
 
 ### Step 2 — UI
 
-- [ ] Show "Import from Audible" with the side-by-side comparison,
-  highlighted differences, required confirmation, and no Hardcover candidate.
+- [ ] Use the existing "Add Edition" button; adapt the modal only to show
+  the ABS/Audnexus side-by-side comparison with highlighted differences and
+  no Hardcover candidate; no confirmation checkbox (submit sends
+  `audnexus_confirmed`).
 - [ ] Support identifier correction with re-preview; disable the action for
   unknown or unavailable regions and honor `Retry-After`.
 - [ ] Show the returned Hardcover book and edition after success; escape ABS
   and Audnexus strings.
-- [ ] Test confirmation required, differences shown, correction re-preview,
+- [ ] Test the button matches other add-edition items, submit sends
+  `audnexus_confirmed` with the shown identifier, differences shown, correction re-preview,
   region unavailable, success, errors, and dry run at the web boundary.
 - [ ] Update the user-facing README for the UI flow; add one CHANGELOG
   bullet; run the PR gates below.
@@ -209,9 +216,9 @@ the existing UI. Escape all ABS- and Audnexus-provided strings.
   author search; after you confirm the Audible record matches the ABS item,
   the create API and `edition create` import them without a Hardcover book
   ID. By @Snuffy2`.
-- **Step 2 — Added:** `**Import from Audible in Sync Status**: Compare an
-  audiobook with its Audible record and confirm the import in the UI.
-  By @Snuffy2`.
+- **Step 2 — Added:** `**Add Edition for Audible ASIN audiobooks in Sync
+  Status**: The Add Edition modal compares the audiobook with its Audible
+  record before importing it. By @Snuffy2`.
 
 ## Resolved decisions and evidence
 
