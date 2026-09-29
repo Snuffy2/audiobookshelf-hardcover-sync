@@ -742,6 +742,21 @@ Offer the action for eligible needs-review records from completed or canceled
 non-dry-run runs; a canceled run keeps its partial snapshot, and the create API
 accepts a record from either phase. Every other run state remains stale (409).
 
+Explain create errors with stable `error_code` and `outcome` fields:
+`not_submitted`, `unconfirmed`, `failed`, or `created` with an unsaved local
+match. Keep the HTTP statuses and show technical details. An unavailable or
+malformed response has an unknown outcome; do not offer a blind create retry.
+For an unconfirmed Audible import, offer **Check import status** and **Open
+Hardcover**; use **Save match** when creation succeeded but local saving failed.
+The profile-authorized `edition-drafts/check-import` POST uses the original
+run/item IDs, regional identifier, and signed recovery token. It rechecks the
+remote book, edition, and audiobook format without a Hardcover mutation, then
+saves the confirmed association idempotently. It shares the draft/create slots
+and sync, source-identity, and dry-run guards, with a 25-second deadline. It does
+not resync; the next sync applies read status. Retain pending recovery across
+reloads; invalid recovery or stale source records require inspecting Hardcover
+and a new sync rather than another import. Proxy settings remain operator-owned.
+
 When a draft preview receives 429, use its `Retry-After` header to defer the
 next attempt and show when the user can retry. Keep a sensible fallback for
 older servers that omit the header.
@@ -993,11 +1008,10 @@ evidence:
   leaves other outcomes unverified. The probes are scope evidence; the create
   response determines import success. By @Snuffy2`.
 - **Step 10 — Added:** `**Resolve needs-review books in Sync Status**:
-  Preview and add or reuse a Hardcover edition for an eligible needs-review
-  book from a completed or canceled run, then resync its read status
-  automatically. A known permission denial disables the action, dry runs
-  allow previews only, and matched books can forget their saved match for
-  normal rematching. By @Snuffy2`.
+  Preview and add or reuse Hardcover editions, then resync their read status.
+  Clear import outcomes, technical details, and a read-only status check help
+  recover unconfirmed imports without resubmitting. Permission and dry-run
+  safeguards apply; matched books can forget their saved match. By @Snuffy2`.
 - **Step 11 — Changed:** `**Audible matching no longer uses edition ASINs or
   ISBN**: Audiobooks whose only Hardcover link was an edition's ASIN field or
   ISBN are no longer matched through it and stop syncing until resolved;
@@ -1390,6 +1404,16 @@ are verified; publication does not imply those checks have passed.
 - [ ] Confirm through the create POST, display reused/created and error
   outcomes; always request resync except in dry run, with no resync
   checkbox.
+- [x] Explain submission, unconfirmed, failed, and created-but-unsaved outcomes
+  with stable codes and technical details; preserve HTTP statuses and treat
+  unusable responses as unknown rather than safe to resubmit.
+- [x] Add the authorized read-only import check with signed recovery details,
+  fresh identity verification, idempotent association saving, and existing
+  concurrency, stale-source, and dry-run guards. Do not resubmit or resync.
+- [x] Offer Check import status / Save match and Open Hardcover, retain pending
+  recovery across reloads, and prevent blind retries after ambiguous outcomes.
+  Cover pending, confirmed, failed, invalid-token, and stale-source recovery at
+  the API and UI boundaries, including the concrete Hardcover client.
 - [ ] Respect draft 429 `Retry-After` before retrying a preview, show the
   wait to the user, and handle older servers without the header.
 - [ ] Disable create and forget-match while the profile is syncing, explain
@@ -1403,11 +1427,12 @@ are verified; publication does not imply those checks have passed.
 - [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared validation and PR gates.
 
-Step 10 is published in upstream PR #213 to `develop`. Local Go 1.26.8
-`make all` (including 47 web tests), `go vet`, formatting, and diff checks
-passed. README and OpenAPI describe the shipped flow, and the single changelog
-bullet references the upstream PR. Upstream CI remains pending; publication
-does not mark the combined validation and review gate complete.
+Step 10 is published in upstream PR #213 to `develop` and remains unmerged.
+The import-transparency and recovery additions passed Go 1.26.8 `make all`
+(race tests, 60 web tests, lint, and builds), formatting, and diff checks.
+README stays concise, OpenAPI contains the detailed recovery contract, and
+all Step 10 changes share the existing changelog bullet for PR #213.
+These local checks do not mark the combined validation and review gate complete.
 
 ### Step 11 — stop matching audiobooks by `editions.asin` and ISBN
 
