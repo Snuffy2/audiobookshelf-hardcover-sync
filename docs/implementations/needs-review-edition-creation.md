@@ -1,8 +1,8 @@
 # Plan: Resolve Audiobookshelf Identifiers and Add Hardcover Editions
 
 **Status:** Revised after the Audible mapping investigation; implementation and
-PR boundaries remain subject to review. Steps 1–8 are merged into `develop`.
-Step 9 and later are not merged.
+PR boundaries remain subject to review. Steps 1–9 are merged into `develop`.
+Step 10 and later are not merged.
 
 This is the current plan. The [legacy seven-step version](needs-review-edition-creation-legacy.md)
 is retained for its completed-work record and earlier decisions; its unmerged
@@ -195,7 +195,7 @@ branches and is not opened as a PR itself.
 | 7b | Add the user-initiated create POST: format-aware `insert_edition` for ebooks and the bounded regional `upsert_book` resolver for audiobooks. Validate returned book and format and save a local association before reporting success, under Step 5's state-file lock. The standalone CLI is unchanged. | 3, 5, 6, 7a | Merged upstream PR #208 |
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
-| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Open upstream PR #212 (fork PR #42); implementation and local validation complete |
+| 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Merged upstream PR #212 (fork PR #42) |
 | 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
@@ -925,7 +925,7 @@ non-default `develop`.
 
 8. ~~Persist verified ebook matches: Remember exact ebook `editions.asin` and confirmed ISBN matches while keeping audiobook persistence limited to exact regional Audible mappings. Move the existing ebook ISBN confirmation before post-match skips so skipped ebooks also retain a verified match; eligible syncs still use the existing two lookups.~~
 
-9. Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.
+9. ~~Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.~~
 
 10. Sync Status UI: Preview and confirm edition creation for eligible needs-review items, resync the book automatically, and let users forget a stored match for a future retry.
 
@@ -939,8 +939,7 @@ update any open PR descriptions. When an upstream PR merges, verify its live
 merged state, strike its line through, and update the delivery table and
 checklist heading in the same plan change. Before publishing the next PR,
 compare its `Multi-Step Project` block against those live states again.
-The example records Step 8 as merged; Step 9 and later upstream PRs are not
-implied to exist.
+The example records Steps 1–9 as merged; Step 10 and later remain unmerged.
 
 ## Changelog by step
 
@@ -1316,7 +1315,7 @@ require the owner's instruction.
 - [x] Update the README's "Remembered edition matches" section, add one
   CHANGELOG bullet, and complete the shared validation and PR gates.
 
-### Step 9 — immediate one-book resync
+### Step 9 — immediate one-book resync (merged upstream PR #212)
 
 - [x] Add `SyncBook` through existing per-book progress, ownership,
   finished-state, checkpoint, and mutation boundaries.
