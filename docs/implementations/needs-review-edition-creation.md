@@ -196,7 +196,7 @@ branches and is not opened as a PR itself.
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Open upstream PR #212 (fork PR #42); implementation and local validation complete |
-| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to hide or disable "Add edition" on a known denial instead of only warning on unverified permission. | 9 | Open PR #43; not yet opened upstream |
+| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open PR #43; not yet opened upstream |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
@@ -385,10 +385,10 @@ and `write:catalog` scopes); `write:catalog:map` is separate. Identify a
 read-only signal that reveals a token's catalogue scopes before relying on
 one. The route reports the capability as unverified unless a probe matches its
 exact expected response. The UI still offers creation to otherwise eligible,
-authorized users with a warning when permission is unverified; a known denial
-prevents the action. A probe that reaches GraphQL validation is only scope
-evidence, not a promise that a valid import will succeed; the create action
-reports its actual result. Never infer editability from a successful
+authorized users when permission is unverified, without a warning (Step 10);
+a known denial prevents the action. A probe that reaches GraphQL validation is
+only scope evidence, not a promise that a valid import will succeed; the
+create action reports its actual result. Never infer editability from a successful
 `update_edition` response without a read-back.
 
 Before adding create paths, define one deployment-aware policy for configured
@@ -722,11 +722,13 @@ Show the create action only for authorized profiles and eligible run records
 with an ASIN or ISBN. With Step 9's capability probe, the route can report
 `allowed` or `denied` when the exact expected response is observed; unknown
 responses stay `unverified`. An `allowed` or still-`unverified` result permits
-the action (showing the unverified-permission warning only in the latter
-case), while a `denied` result hides or disables "Add edition" with the
-probe's reason. An `allowed` result from either validation-only probe is scope
-evidence, not an import-success guarantee; show the create POST's actual
-result, including any permission failure after a token change.
+the action without a permission warning, while a `denied` result hides or
+disables "Add edition" with the probe's reason. The unverified-permission
+warning was intentionally removed from the UI: an `allowed` result from either
+validation-only probe is scope evidence, not an import-success guarantee, so
+the create POST's actual result, including any permission failure after a
+token change, is what the UI reports. README documents the scope-evidence
+limitation.
 Preview the ABS source identifier and any established region without implying
 that `edition.asin` is the Audible destination. Show
 only edits that Step 7b can honor, escape ABS-provided strings, and display
@@ -991,11 +993,12 @@ evidence:
   reports allowed or denied only for the exact observed response shapes and
   leaves other outcomes unverified. The probes are scope evidence; the create
   response determines import success. By @Snuffy2`.
-- **Step 10 — Added:** `**Edition creation in Sync Status**: Preview and
-  confirm an eligible needs-review edition in the UI, hide or disable the
-  action on a known capability denial, show remaining region uncertainty,
-  optionally resync its read status, and forget a stored match for future
-  rematching. By @Snuffy2`.
+- **Step 10 — Added:** `**Resolve needs-review books in Sync Status**:
+  Preview and add or reuse a Hardcover edition for an eligible needs-review
+  book from a completed or canceled run, then resync its read status
+  automatically. A known permission denial disables the action, dry runs
+  allow previews only, and matched books can forget their saved match for
+  normal rematching. By @Snuffy2`.
 - **Step 11 — Changed:** `**Audible matching no longer uses edition ASINs or
   ISBN**: Audiobooks whose only Hardcover link was an edition's ASIN field or
   ISBN are no longer matched through it and stop syncing until resolved;
@@ -1370,11 +1373,11 @@ are verified; publication does not imply those checks have passed.
 
 - [ ] Show the action only for eligible needs-review records with an ASIN or
   ISBN and permitted profile access. With Step 9's capability probe, allow
-  `allowed` or still-`unverified` capability (warning only for the latter),
-  and hide or disable the action with the probe's reason on a known `denied`
-  capability instead of only warning after the fact. Explain that a probe
-  matching GraphQL validation is scope evidence, while the create response
-  determines whether the import actually succeeded.
+  `allowed` or still-`unverified` capability without a permission warning
+  (intentionally removed), and hide or disable the action with the probe's
+  reason on a known `denied` capability. Report the create response as the
+  authority on whether the import succeeded; README explains that a probe
+  matching GraphQL validation is only scope evidence.
 - [ ] Separately show the current stored Hardcover target and a confirmed
   forget-match action for matched items. Explain that the next sync uses
   normal matching priority and may find the same edition again; do not imply
