@@ -230,10 +230,11 @@ mismatch export enrichment keeps its current region behavior; if the draft
 reuses the mismatch enrichment code, the region sweep must be injected only
 for the draft so sync makes no additional Audnex requests.
 
-For audiobooks, offer a correction to the submitted regional Audible
-identifier (ASIN and one of the supported regions), which Step 7b passes to
-`upsert_book`; show title, subtitle, date, edition information, ISBNs, and
-other imported metadata as read-only preview. Do not accept audiobook metadata
+For audiobooks, the Step 7b API accepts a correction to the submitted regional
+Audible identifier (ASIN and one of the supported regions), which it passes to
+`upsert_book`. Step 10 does not expose this correction in the UI: the source
+identifier, region, title, subtitle, date, edition information, ISBNs, and
+other imported metadata are read-only previews. Do not accept audiobook metadata
 edits that the import cannot save. For ebooks, retain candidate edition fields
 in the draft, including an optional corrected ISBN; Step 7b may accept only
 fields its format-aware insertion has verified to persist. An ISBN is optional
@@ -719,7 +720,9 @@ observed response shapes:
 ### Step 10: UI
 
 Show the create action only for authorized profiles and eligible run records
-with an ASIN or ISBN. With Step 9's capability probe, the route can report
+with an ASIN or ISBN. The audiobook UI additionally requires a valid source
+ASIN from Audiobookshelf; an ISBN alone does not enable the action. With
+Step 9's capability probe, the route can report
 `allowed` or `denied` when the exact expected response is observed; unknown
 responses stay `unverified`. An `allowed` or still-`unverified` result permits
 the action without a permission warning, while a `denied` result hides or
@@ -730,11 +733,15 @@ the create POST's actual result, including any permission failure after a
 token change, is what the UI reports. README documents the scope-evidence
 limitation.
 Preview the ABS source identifier and any established region without implying
-that `edition.asin` is the Audible destination. Show
-only edits that Step 7b can honor, escape ABS-provided strings, and display
-unknown or temporarily unavailable region and unresolved candidate results as
-review states. Confirmation uses the create POST. The UI has no resync
-checkbox: outside dry run it always sends `resync: true` (the API stays
+that `edition.asin` is the Audible destination. Audiobook identifiers and
+metadata are read-only: regional identifier correction is outside the UI
+scope, while the API and CLI retain their supported corrections. Send an
+automatically confirmed regional identifier when available; otherwise retry
+source-ASIN region discovery during creation and proceed only after a region
+is confirmed. For ebooks, show only edits that Step 7b can honor. Escape
+ABS-provided strings and display unknown or temporarily unavailable region
+and unresolved candidate results as review states. Confirmation uses the
+create POST. The UI has no resync checkbox: outside dry run it always sends `resync: true` (the API stays
 opt-in for other callers) and reports a resync failure separately. Dry run is
 clearly identified and does not offer a real resync.
 
@@ -753,9 +760,13 @@ run/item IDs, regional identifier, and signed recovery token. It rechecks the
 remote book, edition, and audiobook format without a Hardcover mutation, then
 saves the confirmed association idempotently. It shares the draft/create slots
 and sync, source-identity, and dry-run guards, with a 25-second deadline. It does
-not resync; the next sync applies read status. Retain pending recovery across
-reloads; invalid recovery or stale source records require inspecting Hardcover
-and a new sync rather than another import. Proxy settings remain operator-owned.
+not resync; the next sync applies read status. A required-read failure during
+a valid recovery check keeps the original import unconfirmed and returns its
+signed recovery data; it does not report that the original import was never
+submitted. Persist an unknown-outcome marker before dispatching create so a
+reload during the request cannot offer another import. Retain pending recovery
+across reloads; invalid recovery or stale source records require inspecting
+Hardcover and a new sync rather than another import. Proxy settings remain operator-owned.
 
 When a draft preview receives 429, use its `Retry-After` header to defer the
 next attempt and show when the user can retry. Keep a sensible fallback for
@@ -1396,9 +1407,10 @@ are verified; publication does not imply those checks have passed.
   normal matching priority and may find the same edition again; do not imply
   any Hardcover record is deleted or another edition is forced.
 - [ ] Render the draft's source identifier, established, unknown, or
-  temporarily unavailable region, warnings, and only supported editable
-  fields (regional Audible identifier correction for audiobooks;
-  format-aware insertion fields for ebooks); escape ABS-provided strings.
+  temporarily unavailable region, and warnings. Keep audiobook identifiers
+  and metadata read-only; require a valid Audiobookshelf source ASIN and
+  retry region discovery during creation when needed. Only ebooks expose
+  supported format-aware insertion fields; escape ABS-provided strings.
 - [ ] Offer the action for eligible records from completed or canceled
   non-dry-run runs; the create API accepts either phase.
 - [ ] Confirm through the create POST, display reused/created and error
@@ -1412,8 +1424,11 @@ are verified; publication does not imply those checks have passed.
   concurrency, stale-source, and dry-run guards. Do not resubmit or resync.
 - [x] Offer Check import status / Save match and Open Hardcover, retain pending
   recovery across reloads, and prevent blind retries after ambiguous outcomes.
-  Cover pending, confirmed, failed, invalid-token, and stale-source recovery at
-  the API and UI boundaries, including the concrete Hardcover client.
+  Persist the unknown-outcome marker before the create request starts. Keep
+  valid recovery details and an unconfirmed outcome after required-read failures.
+  Cover in-flight reloads, pending, confirmed, failed, invalid-token, and
+  stale-source recovery at the API and UI boundaries, including the concrete
+  Hardcover client.
 - [ ] Respect draft 429 `Retry-After` before retrying a preview, show the
   wait to the user, and handle older servers without the header.
 - [ ] Disable create and forget-match while the profile is syncing, explain
