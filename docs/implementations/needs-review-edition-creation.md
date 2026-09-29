@@ -196,7 +196,7 @@ branches and is not opened as a PR itself.
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Merged upstream PR #212 (fork PR #42) |
-| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open PR #43; not yet opened upstream |
+| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open upstream PR #213 (fork PR #43); local validation complete, upstream CI pending |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
@@ -1368,7 +1368,7 @@ single CHANGELOG bullet include the current contract and upstream PR reference.
 The combined checklist item remains open until upstream CI and review gates
 are verified; publication does not imply those checks have passed.
 
-### Step 10 — Sync Status UI
+### Step 10 — Sync Status UI (open upstream PR #213)
 
 - [ ] Show the action only for eligible needs-review records with an ASIN or
   ISBN and permitted profile access. With Step 9's capability probe, allow
@@ -1402,6 +1402,12 @@ are verified; publication does not imply those checks have passed.
   boundary.
 - [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared validation and PR gates.
+
+Step 10 is published in upstream PR #213 to `develop`. Local Go 1.26.8
+`make all` (including 47 web tests), `go vet`, formatting, and diff checks
+passed. README and OpenAPI describe the shipped flow, and the single changelog
+bullet references the upstream PR. Upstream CI remains pending; publication
+does not mark the combined validation and review gate complete.
 
 ### Step 11 — stop matching audiobooks by `editions.asin` and ISBN
 
