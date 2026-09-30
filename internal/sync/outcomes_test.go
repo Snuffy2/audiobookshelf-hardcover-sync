@@ -32,8 +32,8 @@ func expectASINMatch(mockClient *MockHardcoverClient, asin string, bookID, editi
 	}, nil).Once()
 	mockClient.On("GetEdition", mock.Anything, editionID).Return(&models.Edition{
 		ID: editionID, BookID: bookID,
-	}, nil)
-	mockClient.On("GetUserBookID", mock.Anything, mock.AnythingOfType("int")).Return(userBookID, nil)
+	}, nil).Maybe()
+	mockClient.On("GetUserBookID", mock.Anything, mock.AnythingOfType("int")).Return(userBookID, nil).Maybe()
 }
 
 func assertNoHardcoverBookSearches(t *testing.T, mockClient *MockHardcoverClient) {
@@ -831,10 +831,7 @@ func TestProcessBookSnapshotKeepsTitleOnlyEnrichment(t *testing.T) {
 		ID: "901", Title: "Title Only Candidate", Slug: "candidate-slug",
 		Authors: []models.Author{{Name: "Candidate Author"}},
 	}}, nil).Once()
-	hc.On("GetBookByID", mock.Anything, "901").Return(&models.HardcoverBook{
-		ID: "901", Title: "Title Only Candidate", Slug: "candidate-slug",
-		Authors: []models.Author{{Name: "Candidate Author"}},
-	}, nil).Once()
+	// The search hit already carries the authors, so no follow-up book lookup is made.
 	// AddWithMetadata's own enrichment lookup is unaffected by Step 11 (it is
 	// mismatch-export enrichment, not audiobook matching).
 	hc.On("SearchBookByISBN13", mock.Anything, book.Media.Metadata.ISBN).Return(&models.HardcoverBook{
