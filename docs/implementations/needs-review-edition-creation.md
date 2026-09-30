@@ -196,7 +196,7 @@ branches and is not opened as a PR itself.
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Merged upstream PR #212 (fork PR #42) |
-| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open upstream PR #213 (fork PR #43); local validation complete, upstream CI pending |
+| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open upstream draft PR #213 (fork PR #43); local validation complete; published-head CI passed; upstream review pending |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
@@ -1395,25 +1395,25 @@ are verified; publication does not imply those checks have passed.
 
 ### Step 10 — Sync Status UI (open upstream PR #213)
 
-- [ ] Show the action only for eligible needs-review records with an ASIN or
+- [x] Show the action only for eligible needs-review records with an ASIN or
   ISBN and permitted profile access. With Step 9's capability probe, allow
   `allowed` or still-`unverified` capability without a permission warning
   (intentionally removed), and hide or disable the action with the probe's
   reason on a known `denied` capability. Report the create response as the
   authority on whether the import succeeded; README explains that a probe
   matching GraphQL validation is only scope evidence.
-- [ ] Separately show the current stored Hardcover target and a confirmed
+- [x] Separately show the current stored Hardcover target and a confirmed
   forget-match action for matched items. Explain that the next sync uses
   normal matching priority and may find the same edition again; do not imply
   any Hardcover record is deleted or another edition is forced.
-- [ ] Render the draft's source identifier, established, unknown, or
+- [x] Render the draft's source identifier, established, unknown, or
   temporarily unavailable region, and warnings. Keep audiobook identifiers
   and metadata read-only; require a valid Audiobookshelf source ASIN and
   retry region discovery during creation when needed. Only ebooks expose
   supported format-aware insertion fields; escape ABS-provided strings.
-- [ ] Offer the action for eligible records from completed or canceled
+- [x] Offer the action for eligible records from completed or canceled
   non-dry-run runs; the create API accepts either phase.
-- [ ] Confirm through the create POST, display reused/created and error
+- [x] Confirm through the create POST, display reused/created and error
   outcomes; always request resync except in dry run, with no resync
   checkbox.
 - [x] Explain submission, unconfirmed, failed, and created-but-unsaved outcomes
@@ -1429,25 +1429,30 @@ are verified; publication does not imply those checks have passed.
   Cover in-flight reloads, pending, confirmed, failed, invalid-token, and
   stale-source recovery at the API and UI boundaries, including the concrete
   Hardcover client.
-- [ ] Respect draft 429 `Retry-After` before retrying a preview, show the
+- [x] Respect draft 429 `Retry-After` before retrying a preview, show the
   wait to the user, and handle older servers without the header.
-- [ ] Disable create and forget-match while the profile is syncing, explain
+- [x] Disable create and forget-match while the profile is syncing, explain
   why, and handle a 409 from a sync that started after the page loaded.
-- [ ] Test a probe-confirmed capability denial hiding/disabling the action,
+- [x] Test a probe-confirmed capability denial hiding/disabling the action,
   unverified capability with successful creation or permission failure,
   missing-identifier ineligibility, preview, edits, confirmation,
   stale-record 409, transient errors, status polling, forget-match
   authorization/confirmation/same-result, and resync results at the web
   boundary.
-- [ ] Update the user-facing README, add one CHANGELOG bullet, and complete
-  the shared validation and PR gates.
+- [x] Update the user-facing README, add one CHANGELOG bullet, and complete
+  the shared local validation and PR-template gates.
 
-Step 10 is published in upstream PR #213 to `develop` and remains unmerged.
-The import-transparency and recovery additions passed Go 1.26.8 `make all`
-(race tests, 60 web tests, lint, and builds), formatting, and diff checks.
-README stays concise, OpenAPI contains the detailed recovery contract, and
-all Step 10 changes share the existing changelog bullet for PR #213.
-These local checks do not mark the combined validation and review gate complete.
+Step 10 is published in upstream draft PR #213 to `develop` and remains
+unmerged. The implementation and readiness fixes passed Go 1.26.8 `make all`
+(race tests, 62 web tests, lint, and builds) and `git diff --check`. Dialog
+keyboard navigation includes links, expandable details, and other focusable
+controls in document order; the regression test also excludes disabled, hidden,
+and programmatic-only controls. README stays concise, OpenAPI contains the
+detailed recovery contract, and all Step 10 changes share one changelog bullet
+for PR #213. CI passed for published commit `ce32b6b`; follow-up `884c9fb` for focus and
+changelog is validated locally and awaits publication and its own CI.
+The upstream review gate remains pending; checked implementation items do not
+claim maintainer approval.
 
 ### Step 11 — stop matching audiobooks by `editions.asin` and ISBN
 
