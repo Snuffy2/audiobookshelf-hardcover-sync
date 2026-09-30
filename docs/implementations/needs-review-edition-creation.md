@@ -753,6 +753,10 @@ Explain create errors with stable `error_code` and `outcome` fields:
 `not_submitted`, `unconfirmed`, `failed`, or `created` with an unsaved local
 match. Keep the HTTP statuses and show technical details. An unavailable or
 malformed response has an unknown outcome; do not offer a blind create retry.
+Before the browser sends a create POST, require its pending marker to be written
+to session storage and verified by readback. If storage is unavailable or that
+check fails, send nothing, remove any unsent marker where possible, preserve the
+form, and allow a retry after storage recovers.
 For an unconfirmed Audible import, offer **Check import status** and **Open
 Hardcover**; use **Save match** when creation succeeded but local saving failed.
 The profile-authorized `edition-drafts/check-import` POST uses the original
@@ -763,10 +767,13 @@ and sync, source-identity, and dry-run guards, with a 25-second deadline. It doe
 not resync; the next sync applies read status. A required-read failure during
 a valid recovery check keeps the original import unconfirmed and returns its
 signed recovery data; it does not report that the original import was never
-submitted. Persist an unknown-outcome marker before dispatching create so a
-reload during the request cannot offer another import. Retain pending recovery
-across reloads; invalid recovery or stale source records require inspecting
-Hardcover and a new sync rather than another import. Proxy settings remain operator-owned.
+submitted. A successful create or check response may mark the item added and
+clear recovery only when its success flag, Audiobookshelf item, expected
+Hardcover book, format, supported status, and positive edition ID match the
+reviewed request. An unusable check result preserves its marker and token for
+another read-only check. Retain pending recovery across reloads; invalid
+recovery or stale source records require inspecting Hardcover and a new sync
+rather than another import. Proxy settings remain operator-owned.
 
 When a draft preview receives 429, use its `Retry-After` header to defer the
 next attempt and show when the user can retry. Keep a sensible fallback for
@@ -1400,8 +1407,10 @@ are verified; publication does not imply those checks have passed.
   `allowed` or still-`unverified` capability without a permission warning
   (intentionally removed), and hide or disable the action with the probe's
   reason on a known `denied` capability. Report the create response as the
-  authority on whether the import succeeded; README explains that a probe
-  matching GraphQL validation is only scope evidence.
+  authority on whether the import succeeded. Keep pending recovery available
+  for inspection if a late capability result is denied, without allowing a new
+  create; README explains that a probe matching GraphQL validation is only
+  scope evidence.
 - [x] Separately show the current stored Hardcover target and a confirmed
   forget-match action for matched items. Explain that the next sync uses
   normal matching priority and may find the same edition again; do not imply
@@ -1415,17 +1424,22 @@ are verified; publication does not imply those checks have passed.
   non-dry-run runs; the create API accepts either phase.
 - [x] Confirm through the create POST, display reused/created and error
   outcomes; always request resync except in dry run, with no resync
-  checkbox.
+  checkbox. Before dispatch, require the pending marker to save and read back
+  from browser session storage; if this fails, send no POST, remove any unsent
+  marker where possible, preserve the form, and allow retry after recovery.
 - [x] Explain submission, unconfirmed, failed, and created-but-unsaved outcomes
   with stable codes and technical details; preserve HTTP statuses and treat
   unusable responses as unknown rather than safe to resubmit.
 - [x] Add the authorized read-only import check with signed recovery details,
   fresh identity verification, idempotent association saving, and existing
   concurrency, stale-source, and dry-run guards. Do not resubmit or resync.
+  Accept a create/check success only when its success flag and returned ABS
+  item, expected Hardcover book, format, supported status, and positive edition
+  ID match the reviewed request. An unusable create result remains unknown; an
+  unusable check preserves recovery and allows another read-only check.
 - [x] Offer Check import status / Save match and Open Hardcover, retain pending
   recovery across reloads, and prevent blind retries after ambiguous outcomes.
-  Persist the unknown-outcome marker before the create request starts. Keep
-  valid recovery details and an unconfirmed outcome after required-read failures.
+  Keep valid recovery details and an unconfirmed outcome after required-read failures.
   Cover in-flight reloads, pending, confirmed, failed, invalid-token, and
   stale-source recovery at the API and UI boundaries, including the concrete
   Hardcover client.
@@ -1442,17 +1456,19 @@ are verified; publication does not imply those checks have passed.
 - [x] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared local validation and PR-template gates.
 
-Step 10 is published in upstream draft PR #213 to `develop` and remains
-unmerged. The implementation and readiness fixes passed Go 1.26.8 `make all`
-(race tests, 62 web tests, lint, and builds) and `git diff --check`. Dialog
+Step 10 is in upstream draft PR #213 to `develop` and remains unmerged; its
+upstream review gate is pending. The integrated local implementation, including
+the unpublished focus follow-up `884c9fb` and current recovery safeguards, passed
+Go 1.26.8 `make all` (race tests, 65 web tests, lint, and builds) and
+`git diff --check`. Dialog
 keyboard navigation includes links, expandable details, and other focusable
 controls in document order; the regression test also excludes disabled, hidden,
 and programmatic-only controls. README stays concise, OpenAPI contains the
 detailed recovery contract, and all Step 10 changes share one changelog bullet
-for PR #213. CI passed for published commit `ce32b6b`; follow-up `884c9fb` for focus and
-changelog is validated locally and awaits publication and its own CI.
-The upstream review gate remains pending; checked implementation items do not
-claim maintainer approval.
+for PR #213. CI passed for published commit `ce32b6b`; `884c9fb` and the current
+recovery follow-up remain unpublished and have no upstream CI result. Do not
+mark upstream CI or review complete for these unpublished changes; checked
+implementation items do not claim maintainer approval.
 
 ### Step 11 — stop matching audiobooks by `editions.asin` and ISBN
 
