@@ -196,7 +196,7 @@ branches and is not opened as a PR itself.
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Merged upstream PR #212 (fork PR #42) |
-| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. | 9 | Open upstream draft PR #213 (fork PR #43); local validation complete; published-head CI passed; upstream review pending |
+| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. Recognized application pre-write authorization denials clear the pending marker for a safe retry after access is restored; other no-outcome replies retain duplicate protection. Tokenless ambiguous ebook inserts require manual Hardcover inspection and a new sync, with no unusable status-check action. | 9 | Open upstream draft PR #213 (fork PR #43); local validation complete; GitHub tests and security scans passed for code head `ec4dd27`; maintainer review pending |
 | 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
@@ -1430,6 +1430,14 @@ are verified; publication does not imply those checks have passed.
 - [x] Explain submission, unconfirmed, failed, and created-but-unsaved outcomes
   with stable codes and technical details; preserve HTTP statuses and treat
   unusable responses as unknown rather than safe to resubmit.
+- [x] Clear the marker only for recognized application pre-write sign-in,
+  profile-access, and missing-profile denials, allowing a retry after access
+  is restored; retain it for malformed, proxy, or otherwise unrecognized
+  no-outcome replies. For tokenless ambiguous ebook inserts, show manual
+  Hardcover inspection and new-sync guidance, preserve HTTP diagnostics and
+  reload protection, and offer no status check or create retry. A tokenless
+  created-but-unsaved result must still state that Hardcover created the
+  edition while the local match save failed.
 - [x] Add the authorized read-only import check with signed recovery details,
   fresh identity verification, idempotent association saving, and existing
   concurrency, stale-source, and dry-run guards. Do not resubmit or resync.
@@ -1457,18 +1465,18 @@ are verified; publication does not imply those checks have passed.
   the shared local validation and PR-template gates.
 
 Step 10 is in upstream draft PR #213 to `develop` and remains unmerged; its
-upstream review gate is pending. The integrated local implementation, including
-the unpublished focus follow-up `884c9fb` and current recovery safeguards, passed
-Go 1.26.8 `make all` (race tests, 65 web tests, lint, and builds) and
-`git diff --check`. Dialog
-keyboard navigation includes links, expandable details, and other focusable
-controls in document order; the regression test also excludes disabled, hidden,
-and programmatic-only controls. README stays concise, OpenAPI contains the
-detailed recovery contract, and all Step 10 changes share one changelog bullet
-for PR #213. CI passed for published commit `ce32b6b`; `884c9fb` and the current
-recovery follow-up remain unpublished and have no upstream CI result. Do not
-mark upstream CI or review complete for these unpublished changes; checked
-implementation items do not claim maintainer approval.
+upstream review gate is pending. The integrated implementation, including the
+focus and recovery fixes plus three cleanup commits, passed Go 1.26.8 `make all`
+(race tests, all 70 web tests, lint, and builds); the final 70-test browser run
+and `git diff --check` also passed. GitHub tests and security scans passed for
+published code head `ec4dd27`. The local Claude follow-up commit `d9d4c52` is
+unpublished and awaits its own CI. Dialog keyboard navigation includes links,
+expandable details, and other focusable controls in document order; the regression test
+also excludes disabled, hidden, and programmatic-only controls. README stays
+concise, OpenAPI contains the detailed recovery contract, and all Step 10
+changes share one changelog bullet for PR #213. PR #213 remains draft and
+unmerged, with maintainer review pending; these checks do not claim maintainer
+approval.
 
 ### Step 11 — stop matching audiobooks by `editions.asin` and ISBN
 
