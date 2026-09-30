@@ -1478,7 +1478,46 @@ changes share one changelog bullet for PR #213. PR #213 remains draft and
 unmerged, with maintainer review pending; these checks do not claim maintainer
 approval.
 
-### Step 11 — stop matching audiobooks by `editions.asin` and ISBN
+### Step 11 — stop matching audiobooks by `editions.asin` and ISBN and reduce Add edition API usage
+
+Add edition request budget:
+
+- [x] Replace one-second Audible import polling with an immediate check,
+  followed by waits of 1, 2, 4, then at most 5 seconds. Keep the existing
+  30-second import deadline, cancellation, fresh edition identity verification,
+  and ambiguous-outcome recovery; never resend the catalogue mutation just
+  because the import remains pending. Completion may be shown a few seconds
+  later in exchange for fewer API requests.
+- [x] Carry the freshly verified edition into the immediate one-book resync
+  and reuse fetched user-book details within that operation, refreshing or
+  updating them after mutations as appropriate. Consolidate redundant
+  user-book existence lookups while retaining a fresh pre-insertion check.
+  Keep the regular sync path, ownership reconciliation, finished/read progress
+  behavior, profile isolation, and dry-run safety; do not defer immediate
+  resync.
+- [x] Check catalogue permissions when View Details first needs them, then
+  retain that profile/token's evidence until an explicit permission refresh
+  or token change. Do not probe at sync startup or on five-minute TTL expiry.
+  Provide an explicit UI refresh so a denied result can recover after scopes
+  are granted; unverified evidence remains nonblocking and actual creation
+  still enforces authorization at the concrete client boundary. Preserve
+  per-profile isolation, token invalidation, and concurrent probe deduplication.
+- [x] Cover quota savings at the HTTP boundary for pending/completed imports
+  and common new/existing user-book resync paths, plus cancellation, no-op,
+  failure, and dry-run behavior. Record measured request counts rather than
+  promising a fixed total; polling, ownership, and cleanup remain variable.
+
+Validation: Go 1.26.8 `make all` passes, including race-enabled core tests,
+63 web tests, lint, and builds. HTTP-boundary fixtures confirm one fresh
+edition verification read across create and resync and one user-book detail
+read on the existing-book path. A new user-book fixture keeps one concrete
+existence lookup sequence before insertion and performs no edition refetch;
+lookup failure prevents insertion and dry run performs no writes. Virtual-time
+polling fixtures measure two checks before a 2.5-second cancellation, eight
+checks before the 30-second pending deadline, and three checks plus one fresh
+verification read for a third-check completion. These counts exclude query
+retries. Permission fixtures confirm two probes on first demand or explicit
+refresh and zero on cached reads, including coalesced overlapping refreshes.
 
 - [x] Remove `editions.asin` from sync's audiobook matching, the mismatch
   export's book lookup, and the audiobook path of `GetEditionByASIN` and the
