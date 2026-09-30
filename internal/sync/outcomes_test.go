@@ -828,10 +828,10 @@ func TestProcessBookSnapshotKeepsTitleOnlyEnrichment(t *testing.T) {
 	// This is an audiobook, so ISBN no longer applies to its initial match
 	// attempt (Step 11); title/author search runs directly.
 	hc.On("SearchBooks", mock.Anything, "Title Only Author", "").Return([]models.HardcoverBook{{
-		ID: "901", Title: "Title Only Candidate", Slug: "candidate-slug",
+		ID: "901", Title: "Title Only Candidate", Slug: "candidate-slug", CoverImageURL: "candidate-cover",
 		Authors: []models.Author{{Name: "Candidate Author"}},
 	}}, nil).Once()
-	// The search hit already carries the authors, so no follow-up book lookup is made.
+	// The search hit already carries authors, cover and slug, so no follow-up book lookup is made.
 	// AddWithMetadata's own enrichment lookup is unaffected by Step 11 (it is
 	// mismatch-export enrichment, not audiobook matching).
 	hc.On("SearchBookByISBN13", mock.Anything, book.Media.Metadata.ISBN).Return(&models.HardcoverBook{
