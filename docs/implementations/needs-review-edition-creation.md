@@ -1,7 +1,7 @@
 # Plan: Resolve Audiobookshelf Identifiers and Add Hardcover Editions
 
 **Status:** Revised after the Audible mapping investigation; implementation and
-PR boundaries remain subject to review. Steps 1–9 are merged into `develop`.
+PR boundaries remain subject to review. Steps 1–10 are merged into `develop`.
 Step 10 and later are not merged.
 
 This is the current plan. The [legacy seven-step version](needs-review-edition-creation-legacy.md)
@@ -173,8 +173,8 @@ when requested. Step 3 keeps its existing branch name. Every future step uses
 | 7c | `step_7c_needs_review_add_edition` |
 | 8 | `step_8_needs_review_add_edition` |
 | 9 | `step_9_needs_review_add_edition` |
-| 10 | `step_10_needs_review_add_edition` |
-| 11 | `step_11_needs_review_add_edition` |
+| 10 | Merged upstream PR #213 (fork PR #43) |
+| 11 | Stop audiobook `editions.asin` and ISBN matching, clear legacy checkpoints before incremental filtering, and reduce Add edition API usage with bounded polling, verified-data reuse, and explicit permission refresh. | 10 | Implementation and local validation complete; fork PR #44; upstream publication pending |
 
 The existing Step 4 and Step 5 branch refs contain work from the old ordering.
 Rework those refs for their revised steps instead of creating alternate branch
@@ -196,8 +196,8 @@ branches and is not opened as a PR itself.
 | 7c | Migrate standalone `edition create` to the 7b resolver and remove audiobook `insert_edition` from `edition.Creator`. With an ABS item ID, the CLI verifies the item and saves the association under Step 5's lock; the mismatch export adds `abs_item_id`. | 7a, 7b | Merged upstream PR #210 |
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Merged upstream PR #212 (fork PR #42) |
-| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. Recognized application pre-write authorization denials clear the pending marker for a safe retry after access is restored; other no-outcome replies retain duplicate protection. Tokenless ambiguous ebook inserts require manual Hardcover inspection and a new sync, with no unusable status-check action. | 9 | Open upstream draft PR #213 (fork PR #43); local validation complete; GitHub tests and security scans passed for code head `ec4dd27`; maintainer review pending |
-| 11 | Stop matching audiobooks by `editions.asin` (implemented) and by ISBN (planned): remove the sync fallback, the audiobook `editions.asin` duplicate guard, and audiobook ISBN matching, plus a one-pass checkpoint-clearing migration so a book whose only link was one of those stops syncing and becomes reviewable in the same sync run, not the next one. Items that relied on it become `needs_review`, which the Step 7–10 create flow resolves. | 10 | Open PR #44 covers `editions.asin`; ISBN removal and the migration are not yet implemented; not yet opened upstream |
+| 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. Recognized application pre-write authorization denials clear the pending marker for a safe retry after access is restored; other no-outcome replies retain duplicate protection. Tokenless ambiguous ebook inserts require manual Hardcover inspection and a new sync, with no unusable status-check action. | 9 | Merged upstream PR #213 (fork PR #43) |
+| 11 | Stop audiobook `editions.asin` and ISBN matching, clear legacy checkpoints before incremental filtering, and reduce Add edition API usage with bounded polling, verified-data reuse, and explicit permission refresh. | 10 | Implementation and local validation complete; fork PR #44; upstream publication pending |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
 matches that depended on `editions.asin` become reviewable.
@@ -960,9 +960,9 @@ non-default `develop`.
 
 9. ~~Immediate read-status resync: Optionally sync the created edition's one ABS item's read status. Both ordinary create and create-with-resync refuse overlap with a full sync.~~
 
-10. Sync Status UI: Preview and confirm edition creation for eligible needs-review items, resync the book automatically, and let users forget a stored match for a future retry.
+10. ~~Sync Status UI: Preview and confirm edition creation for eligible needs-review items, resync the book automatically, and let users forget a stored match for a future retry.~~
 
-11. Stop matching audiobooks by edition ASIN and ISBN: Match audiobooks only by association or exact Audible mapping; a book whose only link was `editions.asin` or ISBN becomes reviewable in the same sync run it is first evaluated, not the next one, and stops syncing until resolved.
+11. Stop matching audiobooks by edition ASIN and ISBN: Match audiobooks only by association or exact Audible mapping; a book whose only link was `editions.asin` or ISBN becomes reviewable in the same sync run it is first evaluated, not the next one, and stops syncing until resolved. Reduce Add edition requests with bounded import polling backoff, verified-data reuse during immediate resync, and profile/token permission evidence retained until explicit refresh or token change.
 
 [Full Plan Document](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
 ```
@@ -972,7 +972,7 @@ update any open PR descriptions. When an upstream PR merges, verify its live
 merged state, strike its line through, and update the delivery table and
 checklist heading in the same plan change. Before publishing the next PR,
 compare its `Multi-Step Project` block against those live states again.
-The example records Steps 1–9 as merged; Step 10 and later remain unmerged.
+The example records Steps 1–10 as merged; Step 11 remains unmerged.
 
 ## Changelog by step
 
@@ -1400,7 +1400,7 @@ single CHANGELOG bullet include the current contract and upstream PR reference.
 The combined checklist item remains open until upstream CI and review gates
 are verified; publication does not imply those checks have passed.
 
-### Step 10 — Sync Status UI (open upstream PR #213)
+### Step 10 — Sync Status UI (merged upstream PR #213)
 
 - [x] Show the action only for eligible needs-review records with an ASIN or
   ISBN and permitted profile access. With Step 9's capability probe, allow
@@ -1464,19 +1464,10 @@ are verified; publication does not imply those checks have passed.
 - [x] Update the user-facing README, add one CHANGELOG bullet, and complete
   the shared local validation and PR-template gates.
 
-Step 10 is in upstream draft PR #213 to `develop` and remains unmerged; its
-upstream review gate is pending. The integrated implementation, including the
-focus and recovery fixes plus three cleanup commits, passed Go 1.26.8 `make all`
-(race tests, all 70 web tests, lint, and builds); the final 70-test browser run
-and `git diff --check` also passed. GitHub tests and security scans passed for
-published code head `ec4dd27`. The local Claude follow-up commit `d9d4c52` is
-unpublished and awaits its own CI. Dialog keyboard navigation includes links,
-expandable details, and other focusable controls in document order; the regression test
-also excludes disabled, hidden, and programmatic-only controls. README stays
-concise, OpenAPI contains the detailed recovery contract, and all Step 10
-changes share one changelog bullet for PR #213. PR #213 remains draft and
-unmerged, with maintainer review pending; these checks do not claim maintainer
-approval.
+Step 10 merged into upstream `develop` through PR #213 on 2026-10-01;
+its live merged state was verified before Step 11 publication. The delivered
+UI and recovery contracts above are prerequisites already present in Step 11's
+base, rather than changes carried in Step 11.
 
 ### Step 11 — stop matching audiobooks by `editions.asin` and ISBN and reduce Add edition API usage
 
@@ -1526,13 +1517,13 @@ refresh and zero on cached reads, including coalesced overlapping refreshes.
   (`needs_review`) and one it does not (`not_found`), the mismatch export for
   such a book, exact mapping, association, ISBN still matching (at the time),
   and an ebook that matches by `editions.asin` ahead of a conflicting ISBN.
-- [ ] Remove ISBN from sync's audiobook matching; ebooks keep ISBN,
+- [x] Remove ISBN from sync's audiobook matching; ebooks keep ISBN,
   unchanged, persisted per Step 8.
-- [ ] Add the new `state` method that unconditionally drops an item's
+- [x] Add the new `state` method that unconditionally drops an item's
   checkpoint (and composite `itemID:editionID` entries) by item ID,
   independent of whether an `Association` exists, alongside the existing
   `RemoveAssociation`.
-- [ ] Add the one-pass migration check at the top of the per-book incremental
+- [x] Add the one-pass migration check at the top of the per-book incremental
   block, strictly after every existing policy skip (ebook-excluded,
   unfinished, book filter, unread book) and immediately before `NeedsSync`
   (or the detailed composite-key comparison) is evaluated: for an audiobook
@@ -1554,6 +1545,14 @@ refresh and zero on cached reads, including coalesced overlapping refreshes.
   affected books stop syncing until resolved, alongside the existing
   `editions.asin` documentation, in README and `MIGRATION.md`; add one
   CHANGELOG bullet, and complete the shared validation and PR gates.
+
+Step 11 code head `5b9f259` passed Go 1.26.8 `make all` (race-enabled
+core tests, all 75 web tests, lint, and builds), `go vet ./...`, and
+`git diff --check`. A regression reproduced and then verified the fix for
+first-pass removal of composite-only checkpoints; the table covers base-only,
+composite-only, and combined state, with same-run reclassification, preserved
+unrelated checkpoints, and a read-only Hardcover mock boundary. The combined
+publication/CI/review checklist item remains pending upstream checks and review.
 
 ## Resolved decisions and evidence
 
