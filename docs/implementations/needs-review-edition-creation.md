@@ -174,7 +174,7 @@ when requested. Step 3 keeps its existing branch name. Every future step uses
 | 8 | `step_8_needs_review_add_edition` |
 | 9 | `step_9_needs_review_add_edition` |
 | 10 | Merged upstream PR #213 (fork PR #43) |
-| 11 | Stop audiobook `editions.asin` and ISBN matching, clear legacy checkpoints before incremental filtering, and reduce Add edition API usage with bounded polling, verified-data reuse, and explicit permission refresh. | 10 | Implementation and local validation complete; fork PR #44; upstream publication pending |
+| 11 | Stop audiobook `editions.asin` and ISBN matching, clear legacy checkpoints before incremental filtering, and reduce Add edition API usage with bounded polling, verified-data reuse, and explicit permission refresh. | 10 | Open upstream PR #216 (fork PR #44); implementation and local validation complete; upstream CI and review pending |
 
 The existing Step 4 and Step 5 branch refs contain work from the old ordering.
 Rework those refs for their revised steps instead of creating alternate branch
@@ -197,7 +197,7 @@ branches and is not opened as a PR itself.
 | 8 | Widen which successful Hardcover matches Step 5's durable local association persists. Audiobooks are unchanged (exact regional `book_mappings` match only). Ebooks additionally persist on an `editions.asin` match or an ISBN match, both previously re-resolved live every sync. Reuse the existing ebook ISBN confirmation before post-match skips; eligible syncs still use two lookups, while fresh skipped ISBN matches also receive confirmation. | 5 | Merged upstream PR #211 (fork PR #41) |
 | 9 | Add opt-in single-book read-status resync after creation, sharing the normal sync path and excluding overlapping full syncs. Add argument-free validation-only `insert_edition` and `upsert_book` probes to the Step 6 capability route; classify only exact observed message/path/code responses and the exact scope-denial body, and leave unknown outcomes `unverified`. | 7b | Merged upstream PR #212 (fork PR #42) |
 | 10 | Add the Sync Status preview, confirmation, capability, automatic resync, and forget-match UI. Use the Step 9 capability probe result to disable "Add edition" on a known denial; unverified permission permits an attempt without a warning. Recognized application pre-write authorization denials clear the pending marker for a safe retry after access is restored; other no-outcome replies retain duplicate protection. Tokenless ambiguous ebook inserts require manual Hardcover inspection and a new sync, with no unusable status-check action. | 9 | Merged upstream PR #213 (fork PR #43) |
-| 11 | Stop audiobook `editions.asin` and ISBN matching, clear legacy checkpoints before incremental filtering, and reduce Add edition API usage with bounded polling, verified-data reuse, and explicit permission refresh. | 10 | Implementation and local validation complete; fork PR #44; upstream publication pending |
+| 11 | Stop audiobook `editions.asin` and ISBN matching, clear legacy checkpoints before incremental filtering, and reduce Add edition API usage with bounded polling, verified-data reuse, and explicit permission refresh. | 10 | Open upstream PR #216 (fork PR #44); implementation and local validation complete; upstream CI and review pending |
 
 Step 11 is last so that every user has the create API, CLI, and UI before
 matches that depended on `editions.asin` become reviewable.
@@ -1469,7 +1469,7 @@ its live merged state was verified before Step 11 publication. The delivered
 UI and recovery contracts above are prerequisites already present in Step 11's
 base, rather than changes carried in Step 11.
 
-### Step 11 — stop matching audiobooks by `editions.asin` and ISBN and reduce Add edition API usage
+### Step 11 — stop matching audiobooks by `editions.asin` and ISBN and reduce Add edition API usage (open upstream PR #216)
 
 Add edition request budget:
 
@@ -1551,8 +1551,10 @@ core tests, all 75 web tests, lint, and builds), `go vet ./...`, and
 `git diff --check`. A regression reproduced and then verified the fix for
 first-pass removal of composite-only checkpoints; the table covers base-only,
 composite-only, and combined state, with same-run reclassification, preserved
-unrelated checkpoints, and a read-only Hardcover mock boundary. The combined
-publication/CI/review checklist item remains pending upstream checks and review.
+unrelated checkpoints, and a read-only Hardcover mock boundary. Upstream PR #216 targets `develop` and is ready for review. Publication
+follow-ups consolidate the changelog into one bullet and reference that PR.
+The combined publication/CI/review checklist item remains pending upstream
+checks and maintainer review; publication does not claim those gates passed.
 
 ## Resolved decisions and evidence
 
