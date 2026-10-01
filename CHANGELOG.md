@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Show confirmed edition additions across browsers and server restarts using saved matches, while preserving the original sync outcomes and counts.
+
 ### Added
 
 - **Edition capability reporting**: Added a read-only, profile-authorized API that reports ebook insertion and audiobook Audible import capability separately without probing a Hardcover write. Because Hardcover has no read-only scope check, a configured token is reported as unverified with a warning rather than promised permission; a profile without a Hardcover token is reported as denied. By @Snuffy2. (#202)

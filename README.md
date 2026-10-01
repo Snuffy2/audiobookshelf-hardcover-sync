@@ -100,6 +100,10 @@ scopes; changing the token also clears the result. Pending Audible imports
 are checked with increasing waits of up to five seconds to conserve API
 requests, and the immediate resync reuses freshly verified data.
 
+Confirmed additions show **Hardcover Edition Added** in View Details across browsers
+and after server restarts, using the saved match. The original sync outcomes and
+counts remain unchanged. Forgetting the saved match removes this server marker.
+
 Review the preview, then confirm to add or reuse a Hardcover edition. Audiobooks
 need an Audible ASIN in Audiobookshelf; their metadata is read-only, and the app
 finds the Audible region automatically. Ebooks need an ASIN or ISBN, and you can
