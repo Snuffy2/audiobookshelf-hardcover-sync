@@ -72,15 +72,18 @@ an `audnexus_record` next to the existing ABS preview, taken from the Audnexus
 response that established the region: title, subtitle, authors, narrators,
 series and position, publisher, release date, runtime, language, and cover
 URL. Add a per-field comparison (`match`, `differs`, `missing`) using the
-existing name and title normalization. Differences are informational, never
+existing name and title normalization for every field except the cover: the
+ABS cover is a local item path and the Audnexus cover is an image URL, so the
+record carries the cover URL for display but the comparison omits it.
+Differences are informational, never
 an automatic rejection. An unknown or temporarily unavailable region yields
 no record and cannot be confirmed. The draft accepts an optional corrected
 ASIN and region so the user can preview a corrected regional identifier
 before submitting it. The draft still makes no Hardcover request.
 
 **Unanchored resolver mode.** Add an explicit unanchored mode to the regional
-`upsert_book` resolver (for example an `Anchor` field on
-`RegionalAudiobookInput`) instead of treating a zero `BookID` as "no book",
+`upsert_book` resolver (an `Unanchored` field on
+`RegionalAudiobookInput`, which then requires a zero `BookID`) instead of treating a zero `BookID` as "no book",
 so an unset ID in the anchored path still fails validation. The unanchored
 mode:
 
@@ -90,15 +93,23 @@ mode:
 - verifies with a fresh read that the returned edition exists, belongs to
   the returned book, and has audiobook reading format; there is no expected
   book to compare;
-- treats a non-audiobook edition or inconsistent IDs as an identity
-  conflict: report it, save nothing, and state that Hardcover may already
-  have changed.
+- treats inconsistent IDs as an identity conflict: report it, save nothing,
+  and state that Hardcover may already have changed;
+- treats a non-audiobook edition as the existing wrong-format outcome (409
+  with a link to the edition): save nothing and reuse the anchored message,
+  which says retrying returns the same edition and asks the user to report
+  the edition's format on Hardcover.
 
 **Create API.** For an audiobook create with a usable ASIN, the create POST:
 
 - requires `audnexus_confirmed: true` with the regional identifier (ASIN and
-  region) the user confirmed; missing or mismatched confirmation is 400
-  before any mutation;
+  region) the user confirmed: a missing confirmation flag or identifier is
+  400, and a malformed identifier (not `ASIN:region` with a valid ASIN and
+  supported region) is 422, both before any mutation. The server keeps no
+  record of what the user previewed, so it does not compare the identifier
+  with an earlier draft; the submitted identifier is what gets re-read and
+  imported, and it is saved as the association's correction. Sending
+  `audnexus_confirmed` for any other create is also 400;
 - refetches the ABS item and applies the existing stale-record check against
   the run snapshot (409 on change);
 - re-reads Audnexus for exactly the confirmed region and requires a response
@@ -164,12 +175,13 @@ the existing UI. Escape all ABS- and Audnexus-provided strings.
 - [ ] Classify unmatched usable-ASIN audiobooks as `needs_review` with reason
   `audible_import_available`, no Hardcover IDs, the source snapshot, and no
   title/author search. Leave other audiobooks and ebooks unchanged.
-- [ ] Add the draft's `audnexus_record` and per-field ABS comparison; allow
+- [ ] Add the draft's `audnexus_record` and per-field ABS comparison (cover
+  shown but not compared); allow
   previewing a corrected regional identifier; make no Hardcover request.
-- [ ] Add the resolver's explicit unanchored mode with the same bounds and
+- [ ] Add the resolver's explicit `Unanchored` mode with the same bounds and
   fresh-read verification; keep the anchored mode's zero-ID validation.
-- [ ] In the create API, require `audnexus_confirmed` with the matching
-  regional identifier, apply the stale-record check, re-read Audnexus for the
+- [ ] In the create API, require `audnexus_confirmed` with a regional
+  identifier (400 when missing, 422 when malformed), apply the stale-record check, re-read Audnexus for the
   confirmed region, import without `book_id`, and save the association with
   `audible_import_unanchored` provenance under the state-file lock.
 - [ ] In `edition create`, accept ASIN-only audiobook input, show the Audnexus
@@ -177,8 +189,8 @@ the existing UI. Escape all ABS- and Audnexus-provided strings.
   `--confirm-audnexus`, and keep the anchored path when `book_id` is given.
   Export `audible_import_available` items without `book_id`.
 - [ ] Test classification (no title/author request), draft comparison
-  (match, differs, missing, unknown and unavailable region), missing or
-  mismatched confirmation, stale record, Audnexus miss or 429 at create,
+  (match, differs, missing, unknown and unavailable region), missing
+  confirmation or malformed identifier, stale record, Audnexus miss or 429 at create,
   `loaded` and `created` without `book_id`, non-audiobook result, failed
   import, timeout, local-save failure, next-sync reuse, CLI with and without
   `book_id`, and dry run at the HTTP, client, and command boundaries. Assert
