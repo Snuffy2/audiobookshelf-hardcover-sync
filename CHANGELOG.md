@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Unraid Docker template**: Added a manually installable template with web UI access, masked API token fields, persistent appdata storage, and installation instructions. By @Snuffy2.
+
 - **Audiobook ISBN fallback and insertion**: Sync may search an Audiobookshelf ISBN only when the source ASIN is absent or malformed; a valid canonical ASIN remains authoritative if regional lookup fails. Incremental sync rechecks ISBN matches while preserving checkpoints to avoid repeated writes for unchanged books. Add Edition can create an audiobook-format edition from the read-only Audiobookshelf ISBN preview in that case. Normal sync still makes no Hardcover catalogue writes. By @Snuffy2 (#217)
 - **Edition capability reporting**: Added a read-only, profile-authorized API that reports ebook insertion and audiobook Audible import capability separately without probing a Hardcover write. Because Hardcover has no read-only scope check, a configured token is reported as unverified with a warning rather than promised permission; a profile without a Hardcover token is reported as denied. By @Snuffy2. (#202)
 - **Persistent, read-only edition matching**: Sync saves verified regional Audible matches in state schema `4.0` and reuses them across runs; other matches remain read-only lookups. A profile API forgets a saved match and its checkpoint, while confirmed deleted editions are retried on later runs. Cross-process locking protects the resolved state file through each transaction, and dry runs leave it unchanged. Sync makes no Hardcover catalogue writes. By @Snuffy2. (#201)

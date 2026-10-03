@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Container version="2">
+  <Name>audiobookshelf-hardcover-sync</Name>
+  <Repository>ghcr.io/drallgood/audiobookshelf-hardcover-sync:latest</Repository>
+  <Registry>https://github.com/drallgood/audiobookshelf-hardcover-sync/pkgs/container/audiobookshelf-hardcover-sync</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Shell>sh</Shell>
+  <Project>https://github.com/drallgood/audiobookshelf-hardcover-sync</Project>
+  <Support>https://github.com/drallgood/audiobookshelf-hardcover-sync/issues</Support>
+  <TemplateURL>https://raw.githubusercontent.com/drallgood/audiobookshelf-hardcover-sync/develop/unraid/audiobookshelf-hardcover-sync.xml</TemplateURL>
+  <WebUI>http://[IP]:[PORT:8080]</WebUI>
+  <Overview>Sync Audiobookshelf reading progress, book status, and ownership with Hardcover. Manage sync profiles in the web UI. Set the Audiobookshelf URL before starting, then add profiles and API tokens in the web UI. Global token fields are available for migration from an existing config.yaml. Keep the appdata directories when updating or reinstalling, including the generated encryption key. Authentication is disabled by default; use only on a trusted network until authentication is configured.</Overview>
+  <Category>MediaApp:Books Tools:</Category>
+  <ExtraSearchTerms>audiobook hardcover reading progress</ExtraSearchTerms>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs>--config /app/config/config.yaml</PostArgs>
+  <Config Name="Web UI port" Target="8080" Default="8080" Mode="tcp" Description="Host port for the web UI. Change the host port if 8080 is already in use; keep the container port at 8080." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/audiobookshelf-hardcover-sync/data" Mode="rw" Description="Persistent database, encryption key, sync state, caches, and mismatch reports. Back up this directory and retain it across updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/audiobookshelf-hardcover-sync/data</Config>
+  <Config Name="Configuration" Target="/app/config" Default="/mnt/user/appdata/audiobookshelf-hardcover-sync/config" Mode="rw" Description="Optional config.yaml directory. No config file is required when using the template variables. Environment variables override YAML settings." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/audiobookshelf-hardcover-sync/config</Config>
+  <Config Name="Audiobookshelf URL" Target="AUDIOBOOKSHELF_URL" Default="" Mode="" Description="URL reachable from this container, for example http://192.168.1.10:13378. Required even when configuring tokens in the web UI." Type="Variable" Display="always" Required="true" Mask="false" />
+  <Config Name="Audiobookshelf API token" Target="AUDIOBOOKSHELF_TOKEN" Default="" Mode="" Description="Global Audiobookshelf API token for migration from config.yaml. Configure new profile tokens in the web UI." Type="Variable" Display="always" Required="false" Mask="true" />
+  <Config Name="Hardcover API token" Target="HARDCOVER_TOKEN" Default="" Mode="" Description="Global Hardcover API token for migration from config.yaml. Configure new profile tokens in the web UI." Type="Variable" Display="always" Required="false" Mask="true" />
+  <Config Name="Enable web UI" Target="ENABLE_WEB_UI" Default="true" Mode="" Description="Enable profile management in the web UI. If false, both API tokens must be supplied." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Sync interval" Target="SYNC_INTERVAL" Default="1h" Mode="" Description="Periodic sync interval as a Go duration, for example 30m or 1h." Type="Variable" Display="always" Required="false" Mask="false">1h</Config>
+  <Config Name="Dry run" Target="DRY_RUN" Default="false" Mode="" Description="Set true to preview sync actions without changing Hardcover." Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Time zone" Target="TZ" Default="UTC" Mode="" Description="IANA time zone, for example America/New_York." Type="Variable" Display="always" Required="false" Mask="false">UTC</Config>
+  <Config Name="Log level" Target="LOG_LEVEL" Default="info" Mode="" Description="Logging level: debug, info, warn, or error." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+  <Config Name="Enable authentication" Target="AUTH_ENABLED" Default="false" Mode="" Description="Enable login. Also set an admin password and session secret before enabling." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Admin password" Target="AUTH_DEFAULT_ADMIN_PASSWORD" Default="" Mode="" Description="Initial password for the default admin user when authentication is enabled. Does not reset an existing account password." Type="Variable" Display="advanced" Required="false" Mask="true" />
+  <Config Name="Session secret" Target="AUTH_SESSION_SECRET" Default="" Mode="" Description="Long random secret for authentication sessions. Keep the same value across restarts." Type="Variable" Display="advanced" Required="false" Mask="true" />
+  <Config Name="Data directory" Target="DATA_DIR" Default="/data" Mode="" Description="Container directory for persistent data and the generated encryption key." Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
+  <Config Name="Database path" Target="DATABASE_PATH" Default="/data/db/audiobookshelf-hardcover-sync.db" Mode="" Description="Persistent SQLite database path inside the container." Type="Variable" Display="advanced" Required="true" Mask="false">/data/db/audiobookshelf-hardcover-sync.db</Config>
+  <Config Name="Sync state file" Target="SYNC_STATE_FILE" Default="/data/sync_state.json" Mode="" Description="Base path for persistent sync state; profiles use separate state files." Type="Variable" Display="advanced" Required="true" Mask="false">/data/sync_state.json</Config>
+  <Config Name="Cache directory" Target="CACHE_DIR" Default="/data/cache" Mode="" Description="Persistent cache directory inside the container." Type="Variable" Display="advanced" Required="true" Mask="false">/data/cache</Config>
+  <Config Name="Mismatch directory" Target="MISMATCH_OUTPUT_DIR" Default="/data/mismatches" Mode="" Description="Persistent mismatch report directory inside the container." Type="Variable" Display="advanced" Required="true" Mask="false">/data/mismatches</Config>
+</Container>

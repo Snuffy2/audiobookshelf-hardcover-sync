@@ -480,6 +480,37 @@ The application will automatically migrate settings from the old `app` section t
 
 ### Main Sync Service
 
+#### Using Unraid
+
+An [Unraid Docker template](unraid/audiobookshelf-hardcover-sync.xml) is included
+for the published `ghcr.io/drallgood/audiobookshelf-hardcover-sync:latest` image.
+It enables the web UI and keeps application data in the `appdata` share.
+
+1. Download the XML file from the repository version you want to install. Copy it
+   to `/boot/config/plugins/dockerMan/templates-user/my-audiobookshelf-hardcover-sync.xml`
+   on your Unraid server.
+2. In **Docker → Add Container**, select `audiobookshelf-hardcover-sync` from the
+   template list. Set **Audiobookshelf URL** to an address reachable from the
+   container, and change the host Web UI port if `8080` is already in use.
+3. Apply the template, then open **WebUI** from the container menu. Add your sync
+   profiles and API tokens there. To migrate an existing single-profile setup,
+   copy its `config.yaml` into the mounted configuration directory before first
+   startup; the optional template token fields can override its credentials.
+
+The default mounts are `/mnt/user/appdata/audiobookshelf-hardcover-sync/data`
+→ `/data` and `/mnt/user/appdata/audiobookshelf-hardcover-sync/config`
+→ `/app/config`. No YAML file is needed; advanced settings can be placed in
+`config/config.yaml`, with template environment variables taking precedence.
+Back up both directories and retain the data directory, including its generated
+`encryption.key`, when updating or reinstalling. The image manages permissions
+with its built-in `app` user; it does not support `PUID` or `PGID` settings.
+
+Authentication is disabled by default. Use a trusted network, or enable the
+advanced authentication setting and supply an admin password and session secret
+before exposing the UI. See [Authentication](#authentication) for details.
+The template is available for manual installation; inclusion in the Unraid
+Community Applications catalogue requires a separate submission.
+
 #### Using Docker Compose (Recommended)
 
 1. **Create a project directory** and navigate to it:
