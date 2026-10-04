@@ -1,6 +1,6 @@
 # Plan: Import Audible ASIN Audiobooks Without a Hardcover Book ID
 
-**Status:** Split and published as three stacked PRs. Local validation passed; merge and CI status are tracked in the PRs.
+**Status:** Step 1 is implemented, validated, and published upstream for review in [#223](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/223). Steps 2 and 3 remain stacked fork PRs. No step is marked merged; upstream CI and review status are tracked in the PRs.
 
 This plan follows the
 [needs-review edition creation plan](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
@@ -43,7 +43,7 @@ for sync and the web API; Step 3 adds the UI.
 
 | Step | Branch | Base | Scope | Depends on | PR |
 |---|---|---|---|---|---|
-| 1 | `audible_asin_import_step_1` | `origin/develop` | CLI Audible import and shared support: Audnexus comparison/confirmation, unanchored regional import, verification/recovery, association reuse, additive source-identifier outcome snapshots. | Edition plan Step 11 | [#52](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/52) |
+| 1 | `audible_asin_import_step_1` | `upstream/develop` | CLI Audible import and shared support: Audnexus comparison/confirmation, unanchored regional import, verification/recovery, association reuse, additive source-identifier outcome snapshots. | Edition plan Step 11 | [Upstream #223](https://github.com/drallgood/audiobookshelf-hardcover-sync/pull/223) ([fork #52](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/52)) |
 | 2 | `audible_asin_import_step_2` | `audible_asin_import_step_1` | Sync classification and exports, API draft/create/revalidation/recovery, and OpenAPI. | Step 1, edition plan Step 11 | [#53](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/53) |
 | 3 | `audible_asin_import_step_3` | `audible_asin_import_step_2` | Sync Status UI for Audible imports. | Step 2, edition plan Step 10 | [#56](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/56) |
 
@@ -242,23 +242,23 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
 
 ### Step 1 — CLI and shared support
 
-- [ ] Add an Audnexus record and per-field ABS comparison for CLI preview;
+- [x] Add an Audnexus record and per-field ABS comparison for CLI preview;
   cover is shown but not compared. Support a corrected regional identifier
   preview and require explicit confirmation before import.
-- [ ] Add the resolver's explicit unanchored mode with existing polling,
+- [x] Add the resolver's explicit unanchored mode with existing polling,
   rate limiting, retry, timeout, dry-run, status, and fresh-read verification;
   keep anchored zero-ID validation.
-- [ ] Save source-checked associations with regional ID and provenance under
+- [x] Save source-checked associations with regional ID and provenance under
   the state-file lock; verify the existing generic matcher reuses this provenance.
   Keep old state files readable without a required migration.
-- [ ] Add normalized source ASIN and separate ISBN-10/ISBN-13 values
+- [x] Add normalized source ASIN and separate ISBN-10/ISBN-13 values
   additively to outcome snapshots. Preserve existing display Format and other
   JSON fields. Do not change sync classification or existing web API behavior.
-- [ ] In `edition create`, accept ASIN-only audiobook input with no
+- [x] In `edition create`, accept ASIN-only audiobook input with no
   `book_id`, keep existing anchored and ebook paths, and support confirmation
   by prompt or `--confirm-audnexus`. Update README and
   `cmd/edition/README.md`.
-- [ ] Cover preview comparison (match, differs, missing, unknown and
+- [x] Cover preview comparison (match, differs, missing, unknown and
   unavailable region), explicit confirmation, `loaded` and `created`
   without `book_id`, non-audiobook result, identity conflict, failed import,
   timeout, local-save failure, next-sync reuse, anchored compatibility, and
@@ -298,10 +298,15 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
 
 ### PR gates (each PR)
 
-- [ ] Run `gofmt`, `make test`, `make lint`, `make build`, and
+The checked gates record Step 1 publication only. Repeat them independently
+for each later PR. Go 1.26.8 validation passed at `767514f`; the publication
+commit changes only the changelog PR reference. The Step 1 upstream PR uses
+the template and the three-step description below.
+
+- [x] Run `gofmt`, `make test`, `make lint`, `make build`, and
   `go build ./cmd/edition-tool` if touched; run
   `node --test web/app.test.js` when web code changes.
-- [ ] Use the repository PR template.
+- [x] Use the repository PR template.
 
 ### PR description guidance
 
