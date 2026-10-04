@@ -1,6 +1,6 @@
 # Plan: Import Audible ASIN Audiobooks Without a Hardcover Book ID
 
-**Status:** In progress. Delivery is being reorganized into three stacked PRs.
+**Status:** Split and published as three stacked PRs. Local validation passed; merge and CI status are tracked in the PRs.
 
 This plan follows the
 [needs-review edition creation plan](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/blob/docs/needs-review-edition-plan/docs/implementations/needs-review-edition-creation.md)
@@ -41,11 +41,11 @@ Three PRs to `develop`, created only when requested, stacked and merged in
 order. Step 1 establishes the shared no-book-ID import path; Step 2 enables it
 for sync and the web API; Step 3 adds the UI.
 
-| Step | Branch | Base | Scope | Depends on |
-|---|---|---|---|---|
-| 1 | `audible_asin_import_step_1` | `origin/develop` | CLI Audible import and shared support: Audnexus comparison/confirmation, unanchored regional import, verification/recovery, association reuse, additive source-identifier outcome snapshots. | Edition plan Step 11 |
-| 2 | `audible_asin_import_step_2` | `audible_asin_import_step_1` | Sync classification and exports, API draft/create/revalidation/recovery, and OpenAPI. | Step 1, edition plan Step 11 |
-| 3 | `audible_asin_import_step_3` | `audible_asin_import_step_2` | Sync Status UI for Audible imports. | Step 2, edition plan Step 10 |
+| Step | Branch | Base | Scope | Depends on | PR |
+|---|---|---|---|---|---|
+| 1 | `audible_asin_import_step_1` | `origin/develop` | CLI Audible import and shared support: Audnexus comparison/confirmation, unanchored regional import, verification/recovery, association reuse, additive source-identifier outcome snapshots. | Edition plan Step 11 | [#52](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/52) |
+| 2 | `audible_asin_import_step_2` | `audible_asin_import_step_1` | Sync classification and exports, API draft/create/revalidation/recovery, and OpenAPI. | Step 1, edition plan Step 11 | [#53](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/53) |
+| 3 | `audible_asin_import_step_3` | `audible_asin_import_step_2` | Sync Status UI for Audible imports. | Step 2, edition plan Step 10 | [#56](https://github.com/Snuffy2/audiobookshelf-hardcover-sync/pull/56) |
 
 Stack: `origin/develop -> audible_asin_import_step_1 -> audible_asin_import_step_2 -> audible_asin_import_step_3`.
 Merge each phase in order. The later branches include the preceding steps.
@@ -210,7 +210,8 @@ items:
 - Do not add a separate confirmation checkbox: submitting the modal is the
   user's confirmation, and the UI sends `audnexus_confirmed` with the
   regional identifier shown.
-- Offer regional identifier correction with a re-preview.
+- Discover the region automatically and offer **Refresh preview** to retry.
+  Preserve the exact submitted identifier when restoring a request for retry.
 - Disable the action while the region is unknown or temporarily unavailable,
   honoring `Retry-After`.
 - After success, show the returned Hardcover book and edition.
@@ -232,8 +233,8 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
 - Step 2: the API imports only after Audnexus confirmation, rechecks the exact
   ABS source snapshot and confirmed regional identifier, verifies the returned
   edition, and saves an association for `loaded` and `created`.
-- Step 3: the UI confirms the displayed regional identifier, supports
-  correction and re-preview, and shows the verified result.
+- Step 3: the UI confirms the displayed regional identifier, supports preview
+  refresh, preserves restored identifiers for retry, and shows the verified result.
 - All steps preserve dry-run's no-mutation/no-association behavior and expose
   recovery guidance when a remote result or local save is ambiguous.
 
@@ -286,11 +287,12 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
 - [ ] Use the existing "Add Edition" button; adapt the modal only to show
   ABS/Audnexus comparison with highlighted differences and no Hardcover
   candidate. Submit sends `audnexus_confirmed` with the shown identifier.
-- [ ] Support identifier correction with re-preview; disable the action for
-  unknown or unavailable regions and honor `Retry-After`.
+- [ ] Support automatic region discovery and preview refresh; preserve a
+  restored request's identifier, disable the action for unknown or unavailable
+  regions, and honor `Retry-After`.
 - [ ] Show the returned Hardcover book and edition after success; escape ABS
   and Audnexus strings.
-- [ ] Cover submit payload, differences, correction re-preview, region
+- [ ] Cover submit payload, differences, preview refresh and restored identifiers, region
   unavailable, success, errors, and dry run at the web boundary. Update the
   user-facing README and add one CHANGELOG bullet.
 
