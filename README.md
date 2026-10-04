@@ -91,17 +91,26 @@ candidate. The Audiobookshelf ASIN links to Audible, and its ISBN links to a
 Goodreads search. Hardcover candidate identifiers are omitted because no
 matching edition has been confirmed.
 
-#### Add an edition or forget a match from View Details
+#### Add an edition, import by Audible ASIN, or forget a match from View Details
 
 After a sync finishes or is canceled, open **View Details** and select **Add
 edition** on an eligible needs-review book. When the run has a Hardcover
 candidate, this adds or reuses an edition on that selected Hardcover book. An
-`audible_import_available` item has no candidate to select. The **Import by
-Audible ASIN** workflow is available through the create API and `edition
-create`; it reviews a regional Audnexus record and imports by its confirmed
-`ASIN:region` without selecting a Hardcover book first. Sync Status does not
-yet expose this review flow. Creating editions requires profile edit access and
-a Hardcover token with `write:catalog:append` access.
+`audible_import_available` audiobook has no candidate to select, so the same
+button opens the **Import by Audible ASIN** review. It compares the
+Audiobookshelf item with its regional Audnexus record, with comparison
+statuses for comparable fields. It imports using the reviewed regional ASIN
+without selecting a Hardcover book first. Review that the record identifies
+the item. The app discovers the region from Audiobookshelf and Audnexus and
+shows the `ASIN:region` as read-only text. The identifier cannot be changed in
+the modal. If the Audnexus lookup fails, the modal shows an error and a
+**Retry preview** button while **Add edition** stays disabled. A successful
+lookup hides the retry button.
+Selecting **Add edition** confirms the displayed record and starts the import;
+there is no separate confirmation checkbox. The action stays unavailable until
+Audnexus confirms the region, and waits out any requested retry delay. Creating
+editions requires profile edit access and a Hardcover token with
+`write:catalog:append` access.
 
 Permission results are retained for the profile and token while the app is
 running. Use **Refresh permissions** in View Details after granting token
@@ -115,17 +124,18 @@ Audiobookshelf ASIN (10 ASCII letters or digits) uses regional Audible import
 on that book. If the source ASIN is absent or malformed, the selected-book
 workflow can insert an audiobook edition from the read-only Audiobookshelf
 ISBN preview. A valid source ASIN remains authoritative if discovery or import
-fails. Ebooks need an ASIN or ISBN and allow detail corrections. After success,
-**Hardcover Edition Added** appears and the app resyncs that book's reading
-progress. If resync fails, the edition remains added; run another sync to retry
+fails. Ebooks need an ASIN or ISBN and allow detail corrections. After an
+Audible import, the dialog shows the returned Hardcover book and edition.
+After success, **Hardcover Edition Added** appears and the app resyncs that
+book's reading progress. If resync fails, the edition remains added; run another sync to retry
 progress updates.
 
 You can preview in dry run, but cannot add editions or forget matches. Wait for
 an active sync to finish before making changes. If the book's Audiobookshelf
 metadata has changed since the displayed run, run a new sync first.
 
-For an import submitted from the existing dialog, if its result cannot be
-confirmed, follow the dialog's recovery guidance:
+If an import submitted from the dialog cannot be confirmed, follow its recovery
+guidance:
 
 - Use **Check import status** when available to confirm a regional Audible import and
   save its match without submitting it again. The recovery link is valid for 48
@@ -179,8 +189,9 @@ successful non-dry-run completion.
 
 `GET /api/profiles/{id}/edition-drafts/source/{itemID}` previews Audiobookshelf
 metadata without calling Hardcover. For audiobooks, it compares source values
-with the regional Audnexus record. Use `audible_identifier=ASIN:region` to
-preview a corrected identifier; an unavailable record can be retried.
+with the regional Audnexus record. The Sync Status UI discovers the region
+automatically; API clients can use `audible_identifier=ASIN:region` to preview
+a corrected identifier. An unavailable record can be retried.
 Ebooks may use an ASIN or ISBN. See [OpenAPI](docs/openapi.yaml) for request
 validation, fields, warnings, and retry guidance. Use a trusted Audiobookshelf
 URL and enable authentication when exposing the API beyond localhost.
@@ -193,8 +204,9 @@ access and a Hardcover token with `write:catalog:append` access. Sync never
 creates catalogue editions automatically.
 
 - **Import by Audible ASIN** applies to `audible_import_available` audiobooks.
-  Review the regional Audnexus record, then submit its `audible_identifier`
-  with `audnexus_confirmed: true`. The import resolves the Hardcover book and
+  The UI discovers the region automatically and requires confirmation of the
+  displayed Audnexus record. API clients submit its `audible_identifier` with
+  `audnexus_confirmed: true`. The import resolves the Hardcover book and
   edition without a selected book or title/author candidate.
 - **Selected-book audiobooks** keep the existing regional Audible workflow.
   When the source ASIN is absent or malformed, an ISBN can be used to insert
