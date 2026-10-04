@@ -212,9 +212,11 @@ items:
   regional identifier shown.
 - Discover the region automatically and display the submitted `ASIN:region`
   as read-only text. The modal has no identifier edit control, separate
-  confirmation control, or preview refresh action. To retry an unavailable
-  lookup, close and reopen the modal. Preserve the exact submitted identifier
-  when restoring a request for retry; the server validates supported regions.
+  confirmation control, or refresh action after a successful lookup. A failed
+  Audnexus lookup shows an error and a retry button with Add Edition disabled.
+  Hide the retry button after lookup succeeds. Preserve the exact submitted
+  identifier when restoring a request for retry; the server validates supported
+  regions.
 - Disable the action while the region is unknown or temporarily unavailable,
   honoring `Retry-After`.
 - After success, show the returned Hardcover book and edition.
@@ -238,7 +240,9 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
   edition, and saves an association for `loaded` and `created`.
 - Step 3: submitting the modal confirms the displayed read-only regional
   identifier, preserves restored identifiers for retry, and shows the verified
-  result. No separate confirmation or identifier editing control is offered.
+  result. Failed lookups show an error and retry action with Add Edition
+  disabled; successful lookups hide retry. No separate confirmation or
+  identifier editing control is offered.
 - All steps preserve dry-run's no-mutation/no-association behavior and expose
   recovery guidance when a remote result or local save is ambiguous.
 
@@ -293,12 +297,13 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
   candidate. Submit sends `audnexus_confirmed` with the shown identifier.
 - [ ] Support automatic region discovery and read-only `ASIN:region` display;
   preserve a restored request's identifier, disable the action for unknown or
-  unavailable regions, and honor `Retry-After` where provided. Offer no preview
-  refresh control; closing and reopening retries discovery.
+  unavailable regions, and honor `Retry-After` where provided. Show an error
+  and retry button only when the lookup fails; hide retry after success.
 - [ ] Show the returned Hardcover book and edition after success; escape ABS
   and Audnexus strings.
 - [ ] Cover submit payload, differences, read-only and restored identifiers,
-  region unavailable, success, errors, and dry run at the web boundary. Update the
+  region unavailable, failed-preview retry followed by success, errors, and
+  dry run at the web boundary. Update the
   user-facing README and add one CHANGELOG bullet.
 
 ### PR gates (each PR)
