@@ -210,8 +210,11 @@ items:
 - Do not add a separate confirmation checkbox: submitting the modal is the
   user's confirmation, and the UI sends `audnexus_confirmed` with the
   regional identifier shown.
-- Discover the region automatically and offer **Refresh preview** to retry.
-  Preserve the exact submitted identifier when restoring a request for retry.
+- Discover the region automatically and display the submitted `ASIN:region`
+  as read-only text. The modal has no identifier edit control, separate
+  confirmation control, or preview refresh action. To retry an unavailable
+  lookup, close and reopen the modal. Preserve the exact submitted identifier
+  when restoring a request for retry; the server validates supported regions.
 - Disable the action while the region is unknown or temporarily unavailable,
   honoring `Retry-After`.
 - After success, show the returned Hardcover book and edition.
@@ -233,8 +236,9 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
 - Step 2: the API imports only after Audnexus confirmation, rechecks the exact
   ABS source snapshot and confirmed regional identifier, verifies the returned
   edition, and saves an association for `loaded` and `created`.
-- Step 3: the UI confirms the displayed regional identifier, supports preview
-  refresh, preserves restored identifiers for retry, and shows the verified result.
+- Step 3: submitting the modal confirms the displayed read-only regional
+  identifier, preserves restored identifiers for retry, and shows the verified
+  result. No separate confirmation or identifier editing control is offered.
 - All steps preserve dry-run's no-mutation/no-association behavior and expose
   recovery guidance when a remote result or local save is ambiguous.
 
@@ -287,13 +291,14 @@ existing UI. Escape all ABS- and Audnexus-provided strings.
 - [ ] Use the existing "Add Edition" button; adapt the modal only to show
   ABS/Audnexus comparison with highlighted differences and no Hardcover
   candidate. Submit sends `audnexus_confirmed` with the shown identifier.
-- [ ] Support automatic region discovery and preview refresh; preserve a
-  restored request's identifier, disable the action for unknown or unavailable
-  regions, and honor `Retry-After`.
+- [ ] Support automatic region discovery and read-only `ASIN:region` display;
+  preserve a restored request's identifier, disable the action for unknown or
+  unavailable regions, and honor `Retry-After` where provided. Offer no preview
+  refresh control; closing and reopening retries discovery.
 - [ ] Show the returned Hardcover book and edition after success; escape ABS
   and Audnexus strings.
-- [ ] Cover submit payload, differences, preview refresh and restored identifiers, region
-  unavailable, success, errors, and dry run at the web boundary. Update the
+- [ ] Cover submit payload, differences, read-only and restored identifiers,
+  region unavailable, success, errors, and dry run at the web boundary. Update the
   user-facing README and add one CHANGELOG bullet.
 
 ### PR gates (each PR)
