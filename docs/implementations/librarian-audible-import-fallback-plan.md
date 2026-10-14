@@ -26,16 +26,17 @@ editions that carry the ASIN mapping, fail without offering edition choices.
    book, or when an edition that carries the ASIN mapping is not an audiobook.
    Other profiles keep the existing behavior: wrong-format or conflicting
    results stop.
-3. For mapping-capable profiles, look up editions whose Audible
-   `book_mappings` contain the ASIN in any supported region, plus valid ABS ISBN
-   identifiers, including equivalent ISBN-10/13 forms. Do not match on
-   `editions.asin`; audiobook matching does not use it. Use a dedicated lookup
-   across formats; leave ordinary sync matching unchanged.
-4. Reuse one unambiguous audiobook edition. An edition already mapped to the
-   ASIN in another region is the match; step 6 adds the missing regional
-   mapping. **If ASIN and ISBN match separate editions, fail.** Also fail for multiple distinct candidates, wrong-format
-   ASIN candidates, or disagreement with the confirmed book. Do not present
-   edition options.
+3. For mapping-capable profiles, look up editions by exact `editions.asin`, by
+   Audible `book_mappings` containing the ASIN in any supported region, and by
+   valid ABS ISBN identifiers, including equivalent ISBN-10/13 forms. Use a
+   dedicated lookup across formats; leave ordinary sync matching unchanged.
+4. Reuse one unambiguous audiobook edition. An edition matched by
+   `editions.asin`, or already mapped to the ASIN in another region, is the
+   match; step 6 adds the Audible ASIN to that edition's `book_mappings`.
+   `editions.asin` and `book_mappings` matches on different editions are a
+   conflict. **If ASIN and ISBN match separate editions, fail.** Also fail for
+   multiple distinct candidates, wrong-format ASIN candidates, or disagreement
+   with the confirmed book. Do not present edition options.
    - An ISBN-only match on a non-audiobook edition is not a reuse candidate.
      ABS audiobook ISBNs are often print ISBNs. Treat its book as identity
      evidence: it must agree with the confirmed book, or supply it when none is
@@ -106,8 +107,10 @@ edition creation. Verify conflicts fail without writes or an edition-selection
 UI. Cover a returned edition without the ASIN mapping, both audiobook and
 print (book used, edition ignored, fallback continues); a returned non-audiobook
 edition that carries the mapping (fails); an edition mapped to the ASIN in
-another region (reused, regional mapping added); an ISBN match on a print edition (book
-evidence, ISBN omitted from the new edition), and reuse-only fallback without
+another region (reused, regional mapping added); an `editions.asin` match without
+the mapping (reused, mapping added); `editions.asin` and `book_mappings` matching
+different editions (fails); an ISBN match on a print edition (book evidence,
+ISBN omitted from the new edition); and reuse-only fallback without
 `insert_edition` permission.
 
 Cover permission denial/unverified results, mapping no-op/conflict (including
