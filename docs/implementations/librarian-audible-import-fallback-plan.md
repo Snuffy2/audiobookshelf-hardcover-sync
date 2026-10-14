@@ -10,25 +10,30 @@ matching an existing edition or creating an audiobook edition, then adding its
 regional Audible mapping. Sync itself never writes to the catalogue.
 
 Success requires consistent book/edition identity, audiobook format, and the
-exact Audible mapping. Wrong-format or ambiguous results fail without offering
-edition choices.
+exact Audible mapping. For librarians, an edition matches only when its
+`book_mappings` contain the Audible ASIN. Ambiguous results, and wrong-format
+editions that carry the ASIN mapping, fail without offering edition choices.
 
 ## Import flow
 
 1. Submit the existing regional `upsert_book` request. If its result verifies as
    an audiobook edition with the expected `ASIN:region` mapping, finish normally.
-2. If the returned edition has the wrong format or conflicting identity, stop
-   and report it.
-3. Otherwise, for mapping-capable profiles, search exact `editions.asin` and
-   valid ABS ISBN identifiers, including equivalent ISBN-10/13 forms. Use a
-   dedicated lookup across formats; leave ordinary sync matching unchanged.
-   When `upsert_book` returns an edition whose mapping is missing
-   (`RegionalAudiobookMappingMissingError`), use its book as a match but not its
-   edition: the edition is often the book's first edition rather than a real
-   match. The returned edition is neither a reuse candidate nor a conflict; only
-   the identifier lookup selects the edition.
-4. Reuse one unambiguous audiobook edition. **If ASIN and ISBN match separate
-   editions, fail.** Also fail for multiple distinct candidates, wrong-format
+2. For mapping-capable profiles, the returned edition is a match only if its
+   Audible `book_mappings` contain the ASIN. An edition without it is not a
+   match, whatever its format: it is often just the book's first edition. Do
+   not reuse it or treat it as a conflict; use only its book and continue to
+   step 3. Stop and report when the returned book conflicts with the anchored
+   book, or when an edition that carries the ASIN mapping is not an audiobook.
+   Other profiles keep the existing behavior: wrong-format or conflicting
+   results stop.
+3. For mapping-capable profiles, look up editions whose Audible
+   `book_mappings` contain the ASIN in any supported region, plus valid ABS ISBN
+   identifiers, including equivalent ISBN-10/13 forms. Do not match on
+   `editions.asin`; audiobook matching does not use it. Use a dedicated lookup
+   across formats; leave ordinary sync matching unchanged.
+4. Reuse one unambiguous audiobook edition. An edition already mapped to the
+   ASIN in another region is the match; step 6 adds the missing regional
+   mapping. **If ASIN and ISBN match separate editions, fail.** Also fail for multiple distinct candidates, wrong-format
    ASIN candidates, or disagreement with the confirmed book. Do not present
    edition options.
    - An ISBN-only match on a non-audiobook edition is not a reuse candidate.
@@ -45,7 +50,7 @@ edition choices.
    mapping and edition before saving the association and resyncing progress.
 
 The confirmed book comes from any of: the anchored record's `HardcoverBookID`;
-the book returned by `upsert_book` (including mapping-missing results); or a
+the book returned by `upsert_book` (even when its edition is not a match); or a
 book established by the step 3 identifier lookup. Every available source must
 agree; any disagreement is an identity conflict and fails. Title/author
 anchoring (`unanchoredImportAnchorBook`) treats search errors as "no anchor",
@@ -98,8 +103,10 @@ the mapping write automatically.
 Cover successful import, missing mapping, ASIN/ISBN reuse, ASIN and ISBN matching
 separate editions, multiple candidates, wrong format, missing target book, and
 edition creation. Verify conflicts fail without writes or an edition-selection
-UI. Cover a mapping-missing upsert whose returned edition differs from the
-lookup result (the lookup wins), an ISBN match on a print edition (book
+UI. Cover a returned edition without the ASIN mapping, both audiobook and
+print (book used, edition ignored, fallback continues); a returned non-audiobook
+edition that carries the mapping (fails); an edition mapped to the ASIN in
+another region (reused, regional mapping added); an ISBN match on a print edition (book
 evidence, ISBN omitted from the new edition), and reuse-only fallback without
 `insert_edition` permission.
 
@@ -121,7 +128,8 @@ README, OpenAPI, and one Unreleased changelog entry when implementing the featur
   requires `write:catalog:map`, which the
   [Hardcover PAT documentation](https://docs.hardcover.app/api/pat-link-builder/)
   identifies as requiring the librarian role.
-- Wrong-format results fail for everyone.
+- Wrong-format editions that carry the Audible ASIN mapping fail for everyone.
+  For other profiles, any wrong-format upsert result still fails.
 - No book creation, edition-choice UI, automatic format correction, or
   cover-upload changes.
 - Validate real mapping behavior with a mapping-capable token before deployment;
