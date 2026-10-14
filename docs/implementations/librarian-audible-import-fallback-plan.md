@@ -65,8 +65,9 @@ edition is a no-op; the ASIN mapped to a different edition is a conflict.
 
 Mappings can appear late. If the reread after `insert_book_mapping` does not
 yet show the mapping, record the outcome as unconfirmed, keeping the mutation's
-returned mapping ID, and recover through a later status check. Never resubmit
-the mapping write automatically.
+returned mapping ID when available, and recover through a later read-only
+mapping/edition check against the persisted fallback target. Never resubmit the
+mapping write automatically.
 
 ## Permissions, recovery, and interfaces
 
@@ -93,6 +94,33 @@ the mapping write automatically.
   and source snapshot in the existing action record. After partial success,
   resume verification or mapping for the created edition rather than creating
   another.
+- Before sending `insert_edition`, durably record `creation_outcome_unknown`
+  for the profile/item and regional identifier. If that record cannot be saved,
+  do not send the write. Use the existing single-attempt mutation boundary;
+  never automatically replay an insertion after a transport failure. Persist
+  the returned edition ID before proceeding to mapping. A timeout, lost response,
+  process interruption, or failure to persist that ID leaves creation unknown,
+  even if the request may have succeeded remotely.
+- Within the profile, an unknown creation blocks another insertion for the same
+  item or regional identifier, including continuation requests and later runs. Read-only
+  recovery may resolve it through an exact Audible mapping to a freshly verified
+  audiobook edition on the confirmed book. An absent mapping or an empty
+  ASIN/ISBN lookup does not prove that creation failed: the new edition may have
+  neither identifier. If no verifiable identity appears, report that manual
+  Hardcover investigation is required and keep insertion blocked. Only a definite
+  pre-execution failure permits another creation attempt; elapsed time alone does
+  not clear the unknown state.
+- Make `check-import` recovery stage-aware. Before fallback begins, retain the
+  existing import-status verification. Unknown fallback creation uses the
+  read-only mapping recovery rule above. Once a fallback edition is
+  persisted, verify its exact regional mapping and freshly read edition against
+  that target, the confirmed book, and the original source identity. The old
+  `upsert_book` status may still name an ignored edition, lack an edition ID, or
+  report an old failed/pending state; it must not reject an otherwise verified
+  fallback mapping or cause another upsert. Preserve book-identity conflict
+  checks. Missing mappings remain unconfirmed, and mappings to a different target
+  or wrong-format editions fail. Known created editions with no mapping resume
+  only the mapping stage through the write continuation endpoint.
 - Revalidate profile access, current capability, source identity, and target
   identity before writes. Preserve concurrency guards, rate limiting, retries,
   and concrete-client dry-run protection.
@@ -120,6 +148,19 @@ failures, a mapping not yet visible after
 dry run.
 Confirm retries do not repeat confirmed creation and failures do not save
 associations.
+
+Cover `insert_edition` succeeding remotely with its response lost, interruption
+before the returned ID is persisted, and inability to save the pre-write record.
+Include a new edition with neither ASIN nor ISBN: restarts, continuation, and a
+new run must not insert again while its outcome is unknown, even after an empty
+lookup or the five-minute import window. Verify that an exact late mapping can
+resolve that state through reads.
+
+Cover a persisted fallback target E2 while the original upsert status still
+names E1, omits its edition ID, or reports a failed/pending state. A verified
+mapping to audiobook E2 on the confirmed book must recover successfully without
+another catalogue write. A different mapped edition, wrong format, or conflicting
+book must still fail.
 
 Run focused Go/UI tests, then `make test`, `make lint`, and `make build`. Update
 README, OpenAPI, and one Unreleased changelog entry when implementing the feature.
