@@ -12,7 +12,8 @@ regional Audible mapping. Sync itself never writes to the catalogue.
 Success requires consistent book/edition identity, audiobook format, and the
 exact Audible mapping. For librarians, an edition matches only when its
 `book_mappings` contain the Audible ASIN. Ambiguous results, and wrong-format
-editions that carry the ASIN mapping, fail without offering edition choices.
+editions identified by an Audible mapping, exact `editions.asin`, or ISBN, fail
+without offering edition choices.
 
 ## Import flow
 
@@ -37,16 +38,14 @@ editions that carry the ASIN mapping, fail without offering edition choices.
    `editions.asin`, or by ISBN alone, is the match; step 6 adds the Audible ASIN
    to that edition's `book_mappings`. **If ASIN and ISBN match separate
    editions, fail.** Also fail for multiple distinct candidates, wrong-format
-   ASIN candidates, or disagreement with the confirmed book. Do not present
-   edition options.
-   - An ISBN-only match on a non-audiobook edition is not a reuse candidate.
-     ABS audiobook ISBNs are often print ISBNs. Treat its book as identity
-     evidence: it must agree with the confirmed book, or supply it when none is
-     otherwise confirmed. Fail if it disagrees.
+   ASIN or ISBN candidates, or disagreement with the confirmed book. Do not
+   present edition options. An ISBN-only match on a non-audiobook edition stops
+   the action, even when its book agrees with the confirmed book. Do not use it
+   only as book evidence, discard its ISBN, or continue to edition creation.
 5. If no edition matches, create an audiobook edition from reviewed ABS metadata
    under the confirmed Hardcover book. If no confirmed book exists, fail; do not
-   create a book. Omit any ISBN already owned by another edition, because
-   Hardcover ISBNs are unique. Rerun the ASIN/ISBN lookup immediately before
+   create a book. Do not omit an ISBN to bypass an existing wrong-format or
+   conflicting edition. Rerun the ASIN/ISBN lookup immediately before
    `insert_edition` so a concurrent import by another profile is reused, not
    duplicated.
 6. Add the regional Audible identifier through `insert_book_mapping`. Reread the
@@ -138,8 +137,9 @@ print (book used, edition ignored, fallback continues); a returned non-audiobook
 edition that carries the mapping (fails); an edition found by `book_mappings`
 (done, no writes); an `editions.asin` match without the mapping (reused,
 mapping added); an ISBN-only match on an audiobook edition without the mapping
-(reused, mapping added); an ISBN match on a print edition (book evidence,
-ISBN omitted from the new edition); and reuse-only fallback without
+(reused, mapping added); wrong-format ASIN and ISBN matches (including an
+ISBN-only print match on the confirmed book), which fail without fallback
+creation or mapping writes; and reuse-only fallback without
 `insert_edition` permission.
 
 Cover permission denial/unverified results, mapping no-op/conflict, lookup
@@ -173,8 +173,8 @@ README, OpenAPI, and one Unreleased changelog entry when implementing the featur
   requires `write:catalog:map`, which the
   [Hardcover PAT documentation](https://docs.hardcover.app/api/pat-link-builder/)
   identifies as requiring the librarian role.
-- Wrong-format editions that carry the Audible ASIN mapping fail for everyone.
-  For other profiles, any wrong-format upsert result still fails.
+- Wrong-format editions identified by an Audible mapping, exact `editions.asin`,
+  or ISBN fail. For other profiles, any wrong-format upsert result still fails.
 - No book creation, edition-choice UI, automatic format correction, or
   cover-upload changes.
 - Validate real mapping behavior with a mapping-capable token before deployment;
