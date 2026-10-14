@@ -33,11 +33,12 @@ editions that carry the ASIN mapping, fail without offering edition choices.
    writes. Otherwise, look up editions by exact `editions.asin` and by valid ABS
    ISBN identifiers, including equivalent ISBN-10/13 forms. Use a
    dedicated lookup across formats; leave ordinary sync matching unchanged.
-4. Reuse one unambiguous audiobook edition. An edition matched by
-   `editions.asin` is the match; step 6 adds the Audible ASIN to that edition's
-   `book_mappings`. **If ASIN and ISBN match separate editions, fail.** Also
-   fail for multiple distinct candidates, wrong-format ASIN candidates, or
-   disagreement with the confirmed book. Do not present edition options.
+4. Reuse one unambiguous audiobook edition. An audiobook edition matched by
+   `editions.asin`, or by ISBN alone, is the match; step 6 adds the Audible ASIN
+   to that edition's `book_mappings`. **If ASIN and ISBN match separate
+   editions, fail.** Also fail for multiple distinct candidates, wrong-format
+   ASIN candidates, or disagreement with the confirmed book. Do not present
+   edition options.
    - An ISBN-only match on a non-audiobook edition is not a reuse candidate.
      ABS audiobook ISBNs are often print ISBNs. Treat its book as identity
      evidence: it must agree with the confirmed book, or supply it when none is
@@ -108,7 +109,8 @@ UI. Cover a returned edition without the ASIN mapping, both audiobook and
 print (book used, edition ignored, fallback continues); a returned non-audiobook
 edition that carries the mapping (fails); an edition found by `book_mappings`
 (done, no writes); an `editions.asin` match without the mapping (reused,
-mapping added); an ISBN match on a print edition (book evidence,
+mapping added); an ISBN-only match on an audiobook edition without the mapping
+(reused, mapping added); an ISBN match on a print edition (book evidence,
 ISBN omitted from the new edition); and reuse-only fallback without
 `insert_edition` permission.
 
