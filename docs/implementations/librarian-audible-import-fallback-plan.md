@@ -84,6 +84,18 @@ mapping write automatically.
   existing `unverified` state (which permits ordinary attempts) does not. The
   probe needs its own `write:catalog:map` denial classification alongside the
   existing `write:catalog:append` check.
+- The mapping probe runs with the existing `insert_edition` and `upsert_book`
+  probes when a sync run summary is opened in the web UI
+  (`GET /api/profiles/{id}/edition-capability`). It is not a sync-start or
+  per-book check; sync never writes to the catalogue. The result is cached per
+  profile and token fingerprint and cleared by token or profile changes and
+  the existing refresh endpoint. The UI chooses the fallback or existing
+  pathway from that result.
+- Fallback actions read the cached capability before each write instead of
+  probing again. If a real `insert_book_mapping` or `insert_edition` call
+  returns a scope denial, treat it as authoritative: fail that action without
+  saving an association, and invalidate the profile's cached capability so
+  the next summary probes again.
 - Edition creation (step 5) additionally requires the existing `insert_edition`
   capability to be `allowed`. A profile with mapping but not insertion permission
   gets reuse-only fallback and fails when no edition matches.
@@ -128,7 +140,7 @@ mapping write automatically.
   checks. Missing mappings remain unconfirmed, and mappings to a different target
   or wrong-format editions fail. Known created editions with no mapping resume
   only the mapping stage through the write continuation endpoint.
-- Revalidate profile access, current capability, source identity, and target
+- Revalidate profile access, cached capability, source identity, and target
   identity before writes. Preserve concurrency guards, rate limiting, retries,
   and concrete-client dry-run protection.
 - Create editions with audiobook format and available ABS metadata. Add Audible
@@ -153,7 +165,8 @@ ISBN-only print match on the confirmed book), which fail without fallback
 creation or mapping writes; and reuse-only fallback without
 `insert_edition` permission.
 
-Cover permission denial/unverified results, mapping no-op/conflict, lookup
+Cover permission denial/unverified results, a write-time scope denial after a
+cached `allowed` result (action fails, cache invalidated), mapping no-op/conflict, lookup
 failures, a mapping not yet visible after
 `insert_book_mapping`, delayed imports, partial success, restart recovery, and
 dry run.
