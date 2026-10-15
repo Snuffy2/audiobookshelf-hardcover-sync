@@ -173,8 +173,54 @@ mapping to audiobook E2 on the confirmed book must recover successfully without
 another catalogue write. A different mapped edition, wrong format, or conflicting
 book must still fail.
 
-Run focused Go/UI tests, then `make test`, `make lint`, and `make build`. Update
-README, OpenAPI, and one Unreleased changelog entry when implementing the feature.
+Run focused Go/UI tests, then `make test`, `make lint`, and `make build` for
+each step. Each step's PR updates README and OpenAPI for the behavior it ships
+and adds its own single Unreleased changelog bullet.
+
+## Delivery
+
+Deliver the feature as four PRs, each targeting `develop`. Each step must work
+and be safe on its own: a merged step never leaves a path that writes to the
+catalogue without the safeguards that step's behavior requires. Later steps
+build on earlier ones but do not change their contracts. Validate real mapping
+behavior with a mapping-capable token before step 2 merges, since it is the
+first step that writes mappings.
+
+1. **Hardcover client groundwork.** Add the `insert_book_mapping` client method
+   behind the concrete-client dry-run boundary, with single-attempt mutation
+   budgeting and `write:catalog:map` denial classification. Add the
+   `audible_mapping` capability probe and response field (only `allowed`
+   counts). Add the read-only fallback lookup: exact `ASIN:region` mapping,
+   same ASIN under another region, exact `editions.asin`, and ISBN-10/13. No
+   edition workflow uses these yet; the only visible change is the capability
+   field.
+2. **Reuse-only fallback.** For mapping-capable profiles, implement import-flow
+   steps 1–4 and 6: use the returned book but not its edition, finish on an
+   exact mapping match with no writes, and reuse `editions.asin` or ISBN
+   audiobook matches by adding the mapping. Apply every conflict and stop rule,
+   including other-region mappings and print ISBN matches. When no edition
+   matches, stop and report; there is no creation yet. Persist the mapping
+   stage in the action record. A mapping not yet visible after the write is
+   reported as unconfirmed without saving the association, and the user is
+   told to sync again later. Unknown `upsert_book` outcomes keep today's
+   behavior and do not enter fallback. Update the preview and errors for
+   **Add edition** and **Import Audible edition**.
+3. **Mapping-stage recovery.** Make `check-import` stage-aware for the mapping
+   stage: verify the persisted fallback target's exact mapping and fresh
+   edition, and ignore the edition named by the old upsert status. Add
+   `continue-librarian-import` to resume the mapping stage for a persisted
+   target and to run deferred fallback for unknown `upsert_book` outcomes after
+   the five-minute window and a fresh status/mapping check. Never resubmit a
+   mapping write automatically.
+4. **Edition creation.** Implement import-flow step 5: require `insert_edition`
+   capability, rerun the lookup before the write, record
+   `creation_outcome_unknown` before sending `insert_edition`, block another
+   insertion while the outcome is unknown, and persist the returned edition ID
+   before mapping. Extend `check-import` and `continue-librarian-import` to the
+   creation stage. Profiles without `insert_edition` permission keep step 2's
+   reuse-only behavior.
+
+Each step carries the validation cases for the behavior it ships.
 
 ## Defaults and limits
 
